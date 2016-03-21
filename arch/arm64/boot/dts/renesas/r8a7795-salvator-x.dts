@@ -345,6 +345,29 @@
 			};
 		};
 	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+
+		power {
+			label = "SW-TACT-22";
+			gpios = <&gpio6 13 GPIO_ACTIVE_LOW>;
+			linux,code = <116>;
+			gpio-key,wakeup;
+		};
+
+		volume-up {
+			label = "SW-TACT-20";
+			gpios = <&gpio6 11 GPIO_ACTIVE_LOW>;
+			linux,code = <115>;
+		};
+
+		volume-down {
+			label = "SW-TACT-21";
+			gpios = <&gpio6 12 GPIO_ACTIVE_LOW>;
+			linux,code = <114>;
+		};
+	};
 };
 
 &du_dotclkin0 {

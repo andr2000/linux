@@ -2365,7 +2365,7 @@ static void trace_module_add_events(struct module *mod)
 {
 	struct trace_event_call **call, **start, **end;
 
-	if (!mod->num_trace_events)
+	if (mod->trace_events == NULL || !mod->num_trace_events)
 		return;
 
 	/* Don't add infrastructure for mods without tracepoints */

@@ -31,7 +31,7 @@
 
 #include "internal.h"
 
-#define DEBUGFS_DEFAULT_MODE	0700
+#define DEBUGFS_DEFAULT_MODE	0755
 
 DEFINE_SRCU(debugfs_srcu);
 

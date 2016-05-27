@@ -113,6 +113,15 @@ void tmio_mmc_start_dma(struct tmio_mmc_host *host, struct mmc_data *data)
 	dev_dbg(&host->pdev->dev, "%s: %d, %x\n", __func__, host->sg_len,
 		data->flags);
 
+	/* This DMAC cannot handle if buffer is not 8-bytes alignment */
+	/*Added workaround to fix data corruption when SD and MMC cards are used
+	 * DMA disabled for all hosts except mmc0 */
+	if (!IS_ALIGNED(sg->offset, 8) || host->mmc->index) {
+		host->force_pio = true;
+		tmio_mmc_enable_dma(host, false);
+		return;
+	}
+
 	if (data->flags & MMC_DATA_READ) {
 		dtran_mode |= DTRAN_MODE_CH_NUM_CH1;
 		dir = DMA_FROM_DEVICE;

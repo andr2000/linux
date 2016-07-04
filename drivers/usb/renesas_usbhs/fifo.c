@@ -20,6 +20,9 @@
 #include "common.h"
 #include "pipe.h"
 
+/*This is hack to disable DMA to workaround adb push/pull issue*/
+#define USBHS_DMA_ENABLE 0
+
 #define usbhsf_get_cfifo(p)	(&((p)->fifo_info.cfifo))
 #define usbhsf_is_cfifo(p, f)	(usbhsf_get_cfifo(p) == f)
 
@@ -324,8 +327,10 @@ static int usbhsf_fifo_select(struct usbhs_pipe *pipe,
 	if (usbhs_pipe_is_dcp(pipe)) {
 		base |= (1 == write) << 5;	/* ISEL */
 
+#if USBHS_DMA_ENABLE
 		if (usbhs_mod_is_host(priv))
 			usbhs_dcp_dir_for_host(pipe, write);
+#endif
 	}
 
 	/* "base" will be used below  */
@@ -340,7 +345,7 @@ static int usbhsf_fifo_select(struct usbhs_pipe *pipe,
 			usbhs_pipe_select_fifo(pipe, fifo);
 			return 0;
 		}
-		udelay(10);
+		udelay(100);
 	}
 
 	dev_err(dev, "fifo select error\n");
@@ -768,6 +773,7 @@ static struct dma_chan *usbhsf_dma_chan_get(struct usbhs_fifo *fifo,
 	return NULL;
 }
 
+#if USBHS_DMA_ENABLE
 static struct usbhs_fifo *usbhsf_get_dma_fifo(struct usbhs_priv *priv,
 					      struct usbhs_pkt *pkt)
 {
@@ -782,6 +788,7 @@ static struct usbhs_fifo *usbhsf_get_dma_fifo(struct usbhs_priv *priv,
 
 	return NULL;
 }
+#endif
 
 #define usbhsf_dma_start(p, f)	__usbhsf_dma_ctrl(p, f, DREQE)
 #define usbhsf_dma_stop(p, f)	__usbhsf_dma_ctrl(p, f, 0)
@@ -805,6 +812,8 @@ static int __usbhsf_dma_map_ctrl(struct usbhs_pkt *pkt, int map)
 	return info->dma_map_ctrl(chan->device->dev, pkt, map);
 }
 
+
+#if USBHS_DMA_ENABLE
 static void usbhsf_dma_complete(void *arg);
 static void xfer_work(struct work_struct *work)
 {
@@ -853,22 +862,23 @@ static void xfer_work(struct work_struct *work)
 xfer_work_end:
 	usbhs_unlock(priv, flags);
 }
-
+#endif
 /*
  *		DMA push handler
  */
 static int usbhsf_dma_prepare_push(struct usbhs_pkt *pkt, int *is_done)
 {
 	struct usbhs_pipe *pipe = pkt->pipe;
+#if USBHS_DMA_ENABLE
 	struct usbhs_priv *priv = usbhs_pipe_to_priv(pipe);
 	struct usbhs_fifo *fifo;
 	int len = pkt->length - pkt->actual;
 	int ret;
 	uintptr_t align_mask;
-
+#endif
 	if (usbhs_pipe_is_busy(pipe))
 		return 0;
-
+#if USBHS_DMA_ENABLE
 	/* use PIO if packet is less than pio_dma_border or pipe is DCP */
 	if ((len < usbhs_get_dparam(priv, pio_dma_border)) ||
 	    usbhs_pipe_type_is(pipe, USB_ENDPOINT_XFER_ISOC))
@@ -911,6 +921,7 @@ static int usbhsf_dma_prepare_push(struct usbhs_pkt *pkt, int *is_done)
 usbhsf_pio_prepare_push_unselect:
 	usbhsf_fifo_unselect(pipe, fifo);
 usbhsf_pio_prepare_push:
+#endif
 	/*
 	 * change handler to PIO
 	 */
@@ -963,6 +974,7 @@ static int usbhsf_dma_prepare_pop_with_rx_irq(struct usbhs_pkt *pkt,
 	return usbhsf_prepare_pop(pkt, is_done);
 }
 
+#if USBHS_DMA_ENABLE
 static int usbhsf_dma_prepare_pop_with_usb_dmac(struct usbhs_pkt *pkt,
 						int *is_done)
 {
@@ -1023,27 +1035,31 @@ usbhsf_pio_prepare_pop:
 
 	return pkt->handler->prepare(pkt, is_done);
 }
+#endif
 
 static int usbhsf_dma_prepare_pop(struct usbhs_pkt *pkt, int *is_done)
 {
+#if USBHS_DMA_ENABLE
 	struct usbhs_priv *priv = usbhs_pipe_to_priv(pkt->pipe);
 
 	if (usbhs_get_dparam(priv, has_usb_dmac))
 		return usbhsf_dma_prepare_pop_with_usb_dmac(pkt, is_done);
 	else
+#endif
 		return usbhsf_dma_prepare_pop_with_rx_irq(pkt, is_done);
 }
 
 static int usbhsf_dma_try_pop_with_rx_irq(struct usbhs_pkt *pkt, int *is_done)
 {
 	struct usbhs_pipe *pipe = pkt->pipe;
+#if USBHS_DMA_ENABLE
 	struct usbhs_priv *priv = usbhs_pipe_to_priv(pipe);
 	struct usbhs_fifo *fifo;
 	int len, ret;
-
+#endif
 	if (usbhs_pipe_is_busy(pipe))
 		return 0;
-
+#if USBHS_DMA_ENABLE
 	if (usbhs_pipe_is_dcp(pipe))
 		goto usbhsf_pio_prepare_pop;
 
@@ -1094,6 +1110,7 @@ static int usbhsf_dma_try_pop_with_rx_irq(struct usbhs_pkt *pkt, int *is_done)
 usbhsf_pio_prepare_pop_unselect:
 	usbhsf_fifo_unselect(pipe, fifo);
 usbhsf_pio_prepare_pop:
+#endif
 
 	/*
 	 * change handler to PIO
@@ -1105,10 +1122,11 @@ usbhsf_pio_prepare_pop:
 
 static int usbhsf_dma_try_pop(struct usbhs_pkt *pkt, int *is_done)
 {
+#if USBHS_DMA_ENABLE
 	struct usbhs_priv *priv = usbhs_pipe_to_priv(pkt->pipe);
 
 	BUG_ON(usbhs_get_dparam(priv, has_usb_dmac));
-
+#endif
 	return usbhsf_dma_try_pop_with_rx_irq(pkt, is_done);
 }
 
@@ -1136,6 +1154,7 @@ static int usbhsf_dma_pop_done_with_rx_irq(struct usbhs_pkt *pkt, int *is_done)
 	return 0;
 }
 
+#if USBHS_DMA_ENABLE
 static size_t usbhs_dma_calc_received_size(struct usbhs_pkt *pkt,
 					   struct dma_chan *chan, int dtln)
 {
@@ -1185,14 +1204,16 @@ static int usbhsf_dma_pop_done_with_usb_dmac(struct usbhs_pkt *pkt,
 
 	return 0;
 }
-
+#endif
 static int usbhsf_dma_pop_done(struct usbhs_pkt *pkt, int *is_done)
 {
+#if USBHS_DMA_ENABLE
 	struct usbhs_priv *priv = usbhs_pipe_to_priv(pkt->pipe);
 
 	if (usbhs_get_dparam(priv, has_usb_dmac))
 		return usbhsf_dma_pop_done_with_usb_dmac(pkt, is_done);
 	else
+#endif
 		return usbhsf_dma_pop_done_with_rx_irq(pkt, is_done);
 }
 
@@ -1350,6 +1371,7 @@ static int usbhsf_irq_ready(struct usbhs_priv *priv,
 	return 0;
 }
 
+#if USBHS_DMA_ENABLE
 static void usbhsf_dma_complete(void *arg)
 {
 	struct usbhs_pipe *pipe = arg;
@@ -1362,6 +1384,7 @@ static void usbhsf_dma_complete(void *arg)
 		dev_err(dev, "dma_complete run_error %d : %d\n",
 			usbhs_pipe_number(pipe), ret);
 }
+#endif
 
 void usbhs_fifo_clear_dcp(struct usbhs_pipe *pipe)
 {

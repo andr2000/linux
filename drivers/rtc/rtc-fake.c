@@ -7,7 +7,11 @@
 #include <linux/rtc.h>
 #include <linux/platform_device.h>
 
-static time64_t                     rtc_time_sec = 1474903385; /* Initial time: Sep 26, 2016 */
+static time64_t                     rtc_time_sec = 1474903385;
+/* Initial time: Sep 26, 2016
+ * It's possible to set the initial time by the early module parameter "init_time"
+ */
+static unsigned long                init_time;
 static struct rtc_wkalrm            rtc_alarm;
 static struct platform_device *     rtc_fake_dev = NULL;
 
@@ -104,6 +108,8 @@ static int rtc_fake_probe(struct platform_device *pdev)
     rtc_alarm.time.tm_min = -1;
     rtc_alarm.time.tm_sec = -1;
 
+    if (init_time) rtc_time_sec = init_time;
+
     /* */
     device_init_wakeup(&pdev->dev, 1);
 
@@ -136,6 +142,14 @@ static struct platform_driver rtc_fake_driver = {
         .name = "rtc-fake",
     },
 };
+
+static int __init get_init_time(char *str)
+{
+	if (sscanf(str, "%lu", &init_time) != 1)
+		return -EINVAL;
+	return 0;
+}
+early_param("init_time", get_init_time);
 
 static int __init fake_rtc_init(void)
 {

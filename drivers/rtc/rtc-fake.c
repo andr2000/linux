@@ -33,8 +33,10 @@ static int rtc_fake_proc(struct device *dev, struct seq_file *seq)
 }
 
 static int rtc_fake_read_time(struct device *dev, struct rtc_time *tm)
-{
-    rtc_time64_to_tm(ktime_get_real_seconds() + rtc_time_sec, tm);
+{   time64_t real_seconds = ktime_get_real_seconds();
+    if (real_seconds < rtc_time_sec)
+        real_seconds += rtc_time_sec;
+    rtc_time64_to_tm(real_seconds, tm);
     return 0;
 }
 

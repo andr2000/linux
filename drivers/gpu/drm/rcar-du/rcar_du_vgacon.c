@@ -23,7 +23,7 @@
 
 static int rcar_du_vga_connector_get_modes(struct drm_connector *connector)
 {
-	return drm_add_modes_noedid(connector, 1024, 768);
+	return drm_add_modes_noedid(connector, 1920, 1080);
 }
 
 static const struct drm_connector_helper_funcs connector_helper_funcs = {

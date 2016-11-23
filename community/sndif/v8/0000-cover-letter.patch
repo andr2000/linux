@@ -1,0 +1,35 @@
+From 462693fdbe57dd2b98622e867e0466ab242424fd Mon Sep 17 00:00:00 2001
+From: "Andrushchenko, Oleksandr" <andr2000@gmail.com>
+Date: Fri, 4 Nov 2016 16:38:51 +0200
+Subject: [PATCH v8] sndif: add ABI for Para-virtual sound
+
+Hi, there!
+
+We would like to bring back to life this thread.
+We do hope that the re-worked version of the original patch
+addresses all the issues discussed before.
+What is more we already have a working version of the
+frontend and backend which prove that the protocol works
+(those are in the process of preparing to be pushed to
+the community as well).
+
+Hope you can review the changes and provide some feedback,
+so finally sound devices find their way in the world of Xen
+
+Best regards,
+Andrushchenko, Oleksandr
+Grytsov, Oleksandr
+
+Andrushchenko, Oleksandr (1):
+  This is ABI for the two halves of a Para-virtual     sound driver to
+    communicate with each to other.
+
+ xen/include/public/io/sndif.h       | 583 ++++++++++++++++++++++++++++++++++++
+ xen/include/public/io/sndif_linux.h | 114 +++++++
+ 2 files changed, 697 insertions(+)
+ create mode 100644 xen/include/public/io/sndif.h
+ create mode 100644 xen/include/public/io/sndif_linux.h
+
+-- 
+2.7.4
+

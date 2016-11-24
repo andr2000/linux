@@ -1,0 +1,26 @@
+From 377d26adfd592138ee19a73942c8038b4dc249aa Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <andr2000@gmail.com>
+Date: Thu, 24 Nov 2016 13:28:39 +0200
+Subject: [Xen-devel][PATCH] drmif: add ABI for para-virtual DRM/KMS
+
+Hi, all!
+
+This patch adds support for para-virtualized DRM/KMS.
+Comments, ideas are more than welcome.
+
+With best regards,
+Oleksandr Andrushchenko
+Oleksandr Grytsov
+
+Oleksandr Andrushchenko (1):
+  drmif: add ABI for para-virtual DRM/KMS
+
+ include/xen/interface/io/drmif.h       | 505 +++++++++++++++++++++++++++++++++
+ include/xen/interface/io/drmif_linux.h | 142 +++++++++
+ 2 files changed, 647 insertions(+)
+ create mode 100644 include/xen/interface/io/drmif.h
+ create mode 100644 include/xen/interface/io/drmif_linux.h
+
+-- 
+2.7.4
+

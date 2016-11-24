@@ -1,0 +1,1 @@
+obj-${CONFIG_COPROC_EMULATOR}	+= coproc-emu.o

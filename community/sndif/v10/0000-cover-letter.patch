@@ -1,0 +1,24 @@
+From 496ee2a44d899a95e07757e184d84fbeba2baff9 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <Oleksandr_Andrushchenko@epam.com>
+Date: Thu, 24 Nov 2016 17:54:49 +0200
+Subject: [Xen-devel] [PATCH v10] sndif: add ABI for para-virtual sound
+
+Hi, all!
+
+Please find the next version of the ABI for the PV sound
+after addressing review comments.
+
+Thank you,
+Oleksandr Andrushchenko
+Oleksandr Grytsov
+
+Oleksandr Andrushchenko (1):
+  xen: add para-virtual sound interface header file
+
+ include/xen/interface/io/sndif.h | 700 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 700 insertions(+)
+ create mode 100644 include/xen/interface/io/sndif.h
+
+-- 
+2.7.4
+

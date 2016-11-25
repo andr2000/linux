@@ -1,20 +1,12 @@
-From f31f6162195090c85b70de7e606fadaac6928431 Mon Sep 17 00:00:00 2001
+From 590fdb04809a15d3f1bed7c0eedcbab3577c1e72 Mon Sep 17 00:00:00 2001
 From: Oleksandr Andrushchenko <Oleksandr_Andrushchenko@epam.com>
-Date: Fri, 25 Nov 2016 09:56:12 +0200
-Subject: [Xen-devel][PATCH v11] sndif: add ABI for para-virtual sound
+Date: Fri, 25 Nov 2016 10:41:59 +0200
+Subject: [Xen-devel][PATCH v11][RESEND] sndif: add ABI for para-virtual sound
 
 Hi, all!
 
 Please find the next version of the ABI for the PV sound
 after addressing review comments.
-
-N.B.: after changing tabs to spaces Linux kernel is now not
-so happy:
-
-check patch says:
-
-NOTE: Whitespace errors detected.
-total: 19 errors, 42 warnings, 705 lines checked
 
 Thank you,
 Oleksandr Andrushchenko
@@ -23,9 +15,9 @@ Oleksandr Grytsov
 Oleksandr Andrushchenko (1):
   xen: add para-virtual sound interface header file
 
- include/xen/interface/io/sndif.h | 705 +++++++++++++++++++++++++++++++++++++++
+ xen/include/public/io/sndif.h | 705 +++++++++++++++++++++++++++++++++++++++
  1 file changed, 705 insertions(+)
- create mode 100644 include/xen/interface/io/sndif.h
+ create mode 100644 xen/include/public/io/sndif.h
 
 -- 
 2.7.4

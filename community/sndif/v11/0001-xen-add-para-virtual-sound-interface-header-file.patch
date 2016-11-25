@@ -1,4 +1,4 @@
-From f31f6162195090c85b70de7e606fadaac6928431 Mon Sep 17 00:00:00 2001
+From 590fdb04809a15d3f1bed7c0eedcbab3577c1e72 Mon Sep 17 00:00:00 2001
 From: Oleksandr Andrushchenko <Oleksandr_Andrushchenko@epam.com>
 Date: Mon, 7 Nov 2016 11:41:24 +0200
 Subject: [PATCH v11] xen: add para-virtual sound interface header file
@@ -89,15 +89,15 @@ Changes since v10:
  * added placeholders to empty structures (C89 concern)
  * added missing header includes
 ---
- include/xen/interface/io/sndif.h | 705 +++++++++++++++++++++++++++++++++++++++
+ xen/include/public/io/sndif.h | 705 +++++++++++++++++++++++++++++++++++++++
  1 file changed, 705 insertions(+)
- create mode 100644 include/xen/interface/io/sndif.h
+ create mode 100644 xen/include/public/io/sndif.h
 
-diff --git a/include/xen/interface/io/sndif.h b/include/xen/interface/io/sndif.h
+diff --git a/xen/include/public/io/sndif.h b/xen/include/public/io/sndif.h
 new file mode 100644
-index 0000000..d2cf2ab
+index 0000000..4cb2df6
 --- /dev/null
-+++ b/include/xen/interface/io/sndif.h
++++ b/xen/include/public/io/sndif.h
 @@ -0,0 +1,705 @@
 +/******************************************************************************
 + * sndif.h
@@ -134,8 +134,8 @@ index 0000000..d2cf2ab
 +#ifndef __XEN_PUBLIC_IO_XENSND_H__
 +#define __XEN_PUBLIC_IO_XENSND_H__
 +
-+#include <xen/interface/io/ring.h>
-+#include <xen/interface/grant_table.h>
++#include "ring.h"
++#include "../grant_table.h"
 +
 +/*
 + * Front->back notifications: When enqueuing a new request, sending a
@@ -801,7 +801,7 @@ index 0000000..d2cf2ab
 +    uint8_t raw[64];
 +};
 +
-+DEFINE_RING_TYPES(xen_sndif, struct xensnd_req, struct xensnd_resp);
++DEFINE_RING_TYPES(xen_sndif, union xensnd_req, union xensnd_resp);
 +
 +#endif /* __XEN_PUBLIC_IO_XENSND_H__ */
 -- 

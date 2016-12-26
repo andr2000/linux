@@ -434,7 +434,7 @@ fail:
 }
 
 static int xen_do_dumb_create(struct drm_device *dev,
-	struct xendrm_zcopy_ioctl_create_dumb *req,
+	struct drm_xen_zcopy_create_dumb *req,
 	struct drm_file *file_priv)
 {
 	struct xen_gem_object *xen_obj;
@@ -476,8 +476,8 @@ fail:
 static int xen_create_dumb_ioctl(struct drm_device *dev,
 	void *data, struct drm_file *file_priv)
 {
-	struct xendrm_zcopy_ioctl_create_dumb *req =
-		(struct xendrm_zcopy_ioctl_create_dumb *)data;
+	struct drm_xen_zcopy_create_dumb *req =
+		(struct drm_xen_zcopy_create_dumb *)data;
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
 

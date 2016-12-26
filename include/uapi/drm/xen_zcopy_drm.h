@@ -36,7 +36,7 @@ extern "C" {
  */
 #define DRM_XEN_ZCOPY_CREATE_DUMB	0x00
 
-struct xendrm_zcopy_ioctl_create_dumb {
+struct drm_xen_zcopy_create_dumb {
 	/* Xen */
 	uint32_t num_grefs;
 	/* FIXME: user-space uses uint32_t instead of grant_ref_t

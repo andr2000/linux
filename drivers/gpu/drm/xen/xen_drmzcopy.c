@@ -362,7 +362,7 @@ static int xen_gem_create_with_handle(
 	return ret;
 }
 
-static int xendrm_zcopy_create_dumb_obj(struct xen_gem_object *xen_obj,
+static int xen_zcopy_create_dumb_obj(struct xen_gem_object *xen_obj,
 	struct drm_device *dev, struct drm_file *file_priv, int size)
 {
 	struct drm_gem_object *gem_obj;
@@ -389,7 +389,7 @@ fail:
 	return ret;
 }
 
-static int xendrm_do_dumb_create(struct drm_device *dev,
+static int xen_do_dumb_create(struct drm_device *dev,
 	struct xendrm_zcopy_ioctl_create_dumb *req,
 	struct drm_file *file_priv)
 {
@@ -415,7 +415,7 @@ static int xendrm_do_dumb_create(struct drm_device *dev,
 	ret = xen_do_map(xen_obj);
 	if (ret < 0)
 		goto fail;
-	ret = xendrm_zcopy_create_dumb_obj(xen_obj, dev, file_priv,
+	ret = xen_zcopy_create_dumb_obj(xen_obj, dev, file_priv,
 		round_up(req->dumb.size, PAGE_SIZE));
 	if (ret < 0)
 		goto fail;
@@ -465,7 +465,7 @@ static int xen_create_dumb_ioctl(struct drm_device *dev,
 			(int)DIV_ROUND_UP(args->size, PAGE_SIZE));
 		return -EINVAL;
 	}
-	return xendrm_do_dumb_create(dev, req, file_priv);
+	return xen_do_dumb_create(dev, req, file_priv);
 }
 
 #ifdef CONFIG_SWIOTLB

@@ -112,22 +112,6 @@ struct sdev_card_info {
 	struct sdev_pcm_instance_info *pcm_instances;
 };
 
-struct xdrv_info {
-	struct xenbus_device *xb_dev;
-	spinlock_t io_lock;
-	struct mutex mutex;
-	bool sdrv_registered;
-	/* array of virtual sound platform devices */
-	struct platform_device **sdrv_devs;
-
-	int num_evt_channels;
-	struct xdrv_evtchnl_info *evtchnls;
-
-	/* number of virtual cards */
-	int cfg_num_cards;
-	struct sdev_card_plat_data *cfg_plat_data;
-};
-
 struct cfg_stream {
 	int index;
 	char *xenstore_path;
@@ -160,9 +144,22 @@ struct cfg_card {
 };
 
 struct sdev_card_plat_data {
-	int index;
 	struct xdrv_info *xdrv_info;
 	struct cfg_card cfg_card;
+};
+
+struct xdrv_info {
+	struct xenbus_device *xb_dev;
+	spinlock_t io_lock;
+	struct mutex mutex;
+	bool sdrv_registered;
+	/* virtual sound platform device */
+	struct platform_device *sdrv_pdev;
+
+	int num_evt_channels;
+	struct xdrv_evtchnl_info *evtchnls;
+
+	struct sdev_card_plat_data cfg_plat_data;
 };
 
 static inline void xdrv_evtchnl_flush(
@@ -913,14 +910,11 @@ static int sdrv_probe(struct platform_device *pdev)
 	struct sdev_card_info *card_info;
 	struct sdev_card_plat_data *platdata;
 	struct snd_card *card;
-	char card_id[sizeof(card->id)];
 	int ret, i;
 
 	platdata = dev_get_platdata(&pdev->dev);
-	dev_dbg(&pdev->dev, "Creating virtual sound card %d", platdata->index);
-	snprintf(card_id, sizeof(card->id), XENSND_DRIVER_NAME "%d",
-		platdata->index);
-	ret = snd_card_new(&pdev->dev, platdata->index, card_id, THIS_MODULE,
+	dev_dbg(&pdev->dev, "Creating virtual sound card\n");
+	ret = snd_card_new(&pdev->dev, 0, XENSND_DRIVER_NAME, THIS_MODULE,
 		sizeof(struct sdev_card_info), &card);
 	if (ret < 0)
 		return ret;
@@ -965,7 +959,8 @@ static int sdrv_remove(struct platform_device *pdev)
 	struct snd_card *card = platform_get_drvdata(pdev);
 
 	info = card->private_data;
-	dev_dbg(&pdev->dev, "Removing card %d", info->card->number);
+	dev_dbg(&pdev->dev, "Removing virtual sound card %d\n",
+		info->card->number);
 	snd_card_free(card);
 	return 0;
 }
@@ -980,18 +975,14 @@ static struct platform_driver sdrv_info = {
 
 static void sdrv_cleanup(struct xdrv_info *drv_info)
 {
-	int i;
-
 	if (!drv_info->sdrv_registered)
 		return;
-	if (drv_info->sdrv_devs) {
-		for (i = 0; i < drv_info->cfg_num_cards; i++) {
-			struct platform_device *sdrv_dev;
+	if (drv_info->sdrv_pdev) {
+		struct platform_device *sdrv_pdev;
 
-			sdrv_dev = drv_info->sdrv_devs[i];
-			if (sdrv_dev)
-				platform_device_unregister(sdrv_dev);
-		}
+		sdrv_pdev = drv_info->sdrv_pdev;
+		if (sdrv_pdev)
+			platform_device_unregister(sdrv_pdev);
 	}
 	platform_driver_unregister(&sdrv_info);
 	drv_info->sdrv_registered = false;
@@ -999,35 +990,21 @@ static void sdrv_cleanup(struct xdrv_info *drv_info)
 
 static int sdrv_init(struct xdrv_info *drv_info)
 {
-	int i, num_cards, ret;
+	struct platform_device *sdrv_pdev;
+	int ret;
 
 	ret = platform_driver_register(&sdrv_info);
 	if (ret < 0)
 		return ret;
 	drv_info->sdrv_registered = true;
 
-	num_cards = drv_info->cfg_num_cards;
-	drv_info->sdrv_devs = devm_kzalloc(&drv_info->xb_dev->dev,
-			sizeof(drv_info->sdrv_devs[0]) * num_cards,
-			GFP_KERNEL);
-	if (!drv_info->sdrv_devs)
+	/* pass card configuration via platform data */
+	sdrv_pdev = platform_device_register_data(NULL,
+		XENSND_DRIVER_NAME, 0, &drv_info->cfg_plat_data,
+		sizeof(drv_info->cfg_plat_data));
+	if (IS_ERR(sdrv_pdev))
 		goto fail;
-	for (i = 0; i < num_cards; i++) {
-		struct platform_device *sdrv_dev;
-		struct sdev_card_plat_data *snd_dev_platdata;
-
-		snd_dev_platdata = &drv_info->cfg_plat_data[i];
-		/* pass card configuration via platform data */
-		sdrv_dev = platform_device_register_data(NULL,
-			XENSND_DRIVER_NAME,
-			snd_dev_platdata->index, snd_dev_platdata,
-			sizeof(*snd_dev_platdata));
-		drv_info->sdrv_devs[i] = sdrv_dev;
-		if (IS_ERR(sdrv_dev)) {
-			drv_info->sdrv_devs[i] = NULL;
-			goto fail;
-		}
-	}
+	drv_info->sdrv_pdev = sdrv_pdev;
 	return 0;
 
 fail:
@@ -1229,7 +1206,8 @@ static inline void xdrv_evtchnl_flush(
 static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 		int num_streams)
 {
-	int ret, c, d, s, stream_idx;
+	struct sdev_card_plat_data *plat_data;
+	int ret, d, s, stream_idx;
 
 	drv_info->evtchnls = devm_kcalloc(&drv_info->xb_dev->dev,
 		num_streams, sizeof(struct xdrv_evtchnl_info),
@@ -1238,34 +1216,31 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 		ret = -ENOMEM;
 		goto fail;
 	}
-	for (c = 0; c < drv_info->cfg_num_cards; c++) {
-		struct sdev_card_plat_data *plat_data;
 
-		plat_data = &drv_info->cfg_plat_data[c];
-		for (d = 0; d < plat_data->cfg_card.num_devices; d++) {
-			struct cfg_pcm_instance *pcm_instance;
+	plat_data = &drv_info->cfg_plat_data;
+	for (d = 0; d < plat_data->cfg_card.num_devices; d++) {
+		struct cfg_pcm_instance *pcm_instance;
 
-			pcm_instance = &plat_data->cfg_card.pcm_instances[d];
-			for (s = 0; s < pcm_instance->num_streams_pb; s++) {
-				stream_idx = pcm_instance->streams_pb[s].index;
-				ret = xdrv_evtchnl_create(drv_info,
-					&drv_info->evtchnls[stream_idx],
-					pcm_instance->streams_pb[s].xenstore_path);
-				if (ret < 0)
-					goto fail;
-			}
-			for (s = 0; s < pcm_instance->num_streams_cap; s++) {
-				stream_idx = pcm_instance->streams_cap[s].index;
-				ret = xdrv_evtchnl_create(drv_info,
-					&drv_info->evtchnls[stream_idx],
-					pcm_instance->streams_cap[s].xenstore_path);
-				if (ret < 0)
-					goto fail;
-			}
+		pcm_instance = &plat_data->cfg_card.pcm_instances[d];
+		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
+			stream_idx = pcm_instance->streams_pb[s].index;
+			ret = xdrv_evtchnl_create(drv_info,
+				&drv_info->evtchnls[stream_idx],
+				pcm_instance->streams_pb[s].xenstore_path);
+			if (ret < 0)
+				goto fail;
 		}
-		if (ret < 0)
-			goto fail;
+		for (s = 0; s < pcm_instance->num_streams_cap; s++) {
+			stream_idx = pcm_instance->streams_cap[s].index;
+			ret = xdrv_evtchnl_create(drv_info,
+				&drv_info->evtchnls[stream_idx],
+				pcm_instance->streams_cap[s].xenstore_path);
+			if (ret < 0)
+				goto fail;
+		}
 	}
+	if (ret < 0)
+		goto fail;
 	drv_info->num_evt_channels = num_streams;
 	return 0;
 fail:
@@ -1681,20 +1656,6 @@ fail:
 static void xdrv_cfg_card_common(const char *path,
 		struct cfg_card *card_config)
 {
-	char *str;
-
-	str = xenbus_read(XBT_NIL, path, XENSND_FIELD_CARD_SHORT_NAME, NULL);
-	if (!IS_ERR(str)) {
-		strncpy(card_config->shortname, str,
-			sizeof(card_config->shortname));
-		kfree(str);
-	}
-	str = xenbus_read(XBT_NIL, path, XENSND_FIELD_CARD_LONG_NAME, NULL);
-	if (!IS_ERR(str)) {
-		strncpy(card_config->longname, str,
-			sizeof(card_config->longname));
-		kfree(str);
-	}
 	xdrv_cfg_pcm_hw(path, &sdrv_pcm_hardware_def,
 		&card_config->pcm_hw);
 }
@@ -1704,26 +1665,20 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 		int *stream_idx)
 {
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
-	char *path;
+	char *path = NULL;
 	char **device_nodes = NULL;
 	int ret, num_devices, i;
 
-	path = kasprintf(GFP_KERNEL, "%s/" XENSND_PATH_CARD "/%d",
-		xb_dev->nodename, plat_data->index);
-	if (!path) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	device_nodes = xdrv_cfg_get_num_nodes(path, XENSND_PATH_DEVICE,
-		&num_devices);
+	device_nodes = xdrv_cfg_get_num_nodes(xb_dev->nodename,
+		XENSND_PATH_DEVICE, &num_devices);
 	if (!num_devices) {
 		dev_warn(&xb_dev->dev,
-			"No devices configured for sound card %d at %s/%s",
-			plat_data->index, path, XENSND_PATH_DEVICE);
+			"No devices configured for sound card at %s/%s\n",
+			xb_dev->nodename, XENSND_PATH_DEVICE);
 		ret = -ENODEV;
 		goto fail;
 	}
-	xdrv_cfg_card_common(path, &plat_data->cfg_card);
+	xdrv_cfg_card_common(xb_dev->nodename, &plat_data->cfg_card);
 	/* read configuration for devices of this card */
 	plat_data->cfg_card.pcm_instances = devm_kzalloc(
 		&drv_info->xb_dev->dev,
@@ -1733,10 +1688,8 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 		ret = -ENOMEM;
 		goto fail;
 	}
-	kfree(path);
-	path = kasprintf(GFP_KERNEL,
-		"%s/" XENSND_PATH_CARD "/%d/" XENSND_PATH_DEVICE,
-		xb_dev->nodename, plat_data->index);
+	path = kasprintf(GFP_KERNEL, "%s/" XENSND_PATH_DEVICE,
+		xb_dev->nodename);
 	if (!path) {
 		ret = -ENOMEM;
 		goto fail;
@@ -1959,38 +1912,20 @@ static int xdrv_sh_buf_alloc(struct xenbus_device *xb_dev,
 
 static int xdrv_be_on_initwait(struct xdrv_info *drv_info)
 {
-	struct xenbus_device *xb_dev = drv_info->xb_dev;
-	char **card_nodes;
 	int stream_idx;
-	int i, ret;
+	int ret;
 
-	card_nodes = xdrv_cfg_get_num_nodes(xb_dev->nodename,
-		XENSND_PATH_CARD, &drv_info->cfg_num_cards);
-	kfree(card_nodes);
-	if (!drv_info->cfg_num_cards) {
-		dev_err(&drv_info->xb_dev->dev, "No sound cards configured");
-		return 0;
-	}
-	drv_info->cfg_plat_data = devm_kzalloc(&drv_info->xb_dev->dev,
-		drv_info->cfg_num_cards *
-		sizeof(struct sdev_card_plat_data), GFP_KERNEL);
-	if (!drv_info->cfg_plat_data)
-		return -ENOMEM;
 	/* stream index must be unique through all cards: pass it in to be
 	 * incremented when creating streams
 	 */
 	stream_idx = 0;
-	for (i = 0; i < drv_info->cfg_num_cards; i++) {
-		/* read card configuration from the store and
-		 * set platform data structure
-		 */
-		drv_info->cfg_plat_data[i].index = i;
-		drv_info->cfg_plat_data[i].xdrv_info = drv_info;
-		ret = xdrv_cfg_card(drv_info,
-			&drv_info->cfg_plat_data[i], &stream_idx);
-		if (ret < 0)
-			return ret;
-	}
+	/* read card configuration from the store and
+	 * set platform data structure
+	 */
+	drv_info->cfg_plat_data.xdrv_info = drv_info;
+	ret = xdrv_cfg_card(drv_info, &drv_info->cfg_plat_data, &stream_idx);
+	if (ret < 0)
+		return ret;
 	/* create event channels for all streams and publish */
 	return xdrv_evtchnl_create_all(drv_info, stream_idx);
 }

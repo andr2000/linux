@@ -302,10 +302,6 @@ static struct ALSA_SNDIF_SAMPLE_FORMAT alsa_sndif_formats[] = {
 		.sndif = XENSND_PCM_FORMAT_GSM,
 		.alsa = SNDRV_PCM_FORMAT_GSM
 	},
-	{
-		.sndif = XENSND_PCM_FORMAT_SPECIAL,
-		.alsa = SNDRV_PCM_FORMAT_SPECIAL
-	},
 };
 
 static uint8_t alsa_to_sndif_format(snd_pcm_format_t format)
@@ -315,7 +311,8 @@ static uint8_t alsa_to_sndif_format(snd_pcm_format_t format)
 	for (i = 0; i < ARRAY_SIZE(alsa_sndif_formats); i++)
 		if (alsa_sndif_formats[i].alsa == format)
 			return alsa_sndif_formats[i].sndif;
-	return XENSND_PCM_FORMAT_SPECIAL;
+	WARN_ON(format);
+	return format;
 }
 
 /*

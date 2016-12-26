@@ -553,6 +553,8 @@ static int xen_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static struct xen_info xen_info;
+
 static int xen_probe(struct platform_device *pdev)
 {
 	struct xen_info *info;
@@ -560,10 +562,7 @@ static int xen_probe(struct platform_device *pdev)
 	int ret;
 
 	DRM_INFO("Creating %s\n", xen_driver.desc);
-	info = devm_kzalloc(&pdev->dev, sizeof(*info), GFP_KERNEL);
-	if (!info)
-		return -ENOMEM;
-
+	info = &xen_info;
 	drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);
 	if (!drm_dev)
 		return -ENOMEM;

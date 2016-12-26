@@ -1792,33 +1792,36 @@ static void xdrv_sh_buf_free(struct xdrv_shared_buffer_info *buf)
 	xdrv_sh_buf_clear(buf);
 }
 
+/* number of grefs a page can hold with respect to the
+ * xendispl_page_directory header
+ */
+#define XENSND_NUM_GREFS_PER_PAGE ((XEN_PAGE_SIZE - \
+	offsetof(struct xensnd_page_directory, gref)) / \
+	sizeof(grant_ref_t))
+
 void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
 		int num_pages_dir)
 {
 	struct xensnd_page_directory *page_dir;
 	unsigned char *ptr;
-	int i, cur_gref, grefs_left, num_grefs_per_page, to_copy;
+	int i, cur_gref, grefs_left, to_copy;
 
 	ptr = buf->vdirectory;
 	grefs_left = buf->num_grefs - num_pages_dir;
-	num_grefs_per_page = (PAGE_SIZE - sizeof(
-		struct xensnd_page_directory)) / sizeof(grant_ref_t);
 	/* skip grefs at start, they are for pages granted for the directory */
 	cur_gref = num_pages_dir;
 	for (i = 0; i < num_pages_dir; i++) {
 		page_dir = (struct xensnd_page_directory *)ptr;
-		if (grefs_left <= num_grefs_per_page) {
+		if (grefs_left <= XENSND_NUM_GREFS_PER_PAGE) {
 			to_copy = grefs_left;
-			page_dir->num_grefs = to_copy;
 			page_dir->gref_dir_next_page = GRANT_INVALID_REF;
 		} else {
-			to_copy = num_grefs_per_page;
-			page_dir->num_grefs = to_copy;
+			to_copy = XENSND_NUM_GREFS_PER_PAGE;
 			page_dir->gref_dir_next_page = buf->grefs[i + 1];
 		}
 		memcpy(&page_dir->gref, &buf->grefs[cur_gref],
 			to_copy * sizeof(grant_ref_t));
-		ptr += PAGE_SIZE;
+		ptr += XEN_PAGE_SIZE;
 		grefs_left -= to_copy;
 		cur_gref += to_copy;
 	}
@@ -1895,7 +1898,8 @@ static int xdrv_sh_buf_alloc(struct xenbus_device *xb_dev,
 	num_grefs_per_page = (PAGE_SIZE - sizeof(
 		struct xensnd_page_directory)) / sizeof(grant_ref_t);
 	/* number of pages the directory itself consumes */
-	num_pages_dir = DIV_ROUND_UP(num_pages_vbuffer, num_grefs_per_page);
+	num_pages_dir = DIV_ROUND_UP(num_pages_vbuffer,
+		XENSND_NUM_GREFS_PER_PAGE);
 	num_grefs = num_pages_vbuffer + num_pages_dir;
 
 	ret = xdrv_sh_buf_alloc_buffers(buf, num_pages_dir,
@@ -1947,7 +1951,7 @@ static void xdrv_be_on_changed(struct xenbus_device *xb_dev,
 	int ret;
 
 	dev_dbg(&xb_dev->dev,
-		"Backend state is %s, front is %s",
+		"Backend state is %s, front is %s\n",
 		xenbus_strstate(backend_state),
 		xenbus_strstate(xb_dev->state));
 	switch (backend_state) {

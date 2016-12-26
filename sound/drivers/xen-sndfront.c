@@ -45,7 +45,6 @@
 enum xdrv_evtchnl_state {
 	EVTCHNL_STATE_DISCONNECTED,
 	EVTCHNL_STATE_CONNECTED,
-	EVTCHNL_STATE_SUSPENDED,
 };
 
 struct xdrv_evtchnl_info {
@@ -1752,11 +1751,6 @@ static int xdrv_remove(struct xenbus_device *dev)
 	return 0;
 }
 
-static int xdrv_resume(struct xenbus_device *dev)
-{
-	return 0;
-}
-
 static grant_ref_t xdrv_sh_buf_get_dir_start(
 	struct xdrv_shared_buffer_info *buf)
 {
@@ -2028,7 +2022,6 @@ static struct xenbus_driver xen_driver = {
 	.ids = xdrv_ids,
 	.probe = xdrv_probe,
 	.remove = xdrv_remove,
-	.resume = xdrv_resume,
 	.otherend_changed = xdrv_be_on_changed,
 };
 

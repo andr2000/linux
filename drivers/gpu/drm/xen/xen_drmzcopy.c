@@ -347,7 +347,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 	kfree(xen_obj);
 }
 
-#ifdef CONFIG_SWIOTLB
+#ifdef CONFIG_DRM_XENZCOPY_WA_SWIOTLB
 #define swiotlb_active() swiotlb_nr_tbl()
 #else
 #define swiotlb_active() 0

@@ -348,10 +348,10 @@ static inline struct xensnd_req *sdrv_be_stream_prepare_req(
 
 	req = RING_GET_REQUEST(&stream->evtchnl->ring,
 		stream->evtchnl->ring.req_prod_pvt);
-	req->u.data.operation = operation;
-	req->u.data.stream_idx = stream->index;
-	req->u.data.id = stream->req_next_id++;
-	stream->evtchnl->resp_id = req->u.data.id;
+	req->operation = operation;
+	req->stream_idx = stream->index;
+	req->id = stream->req_next_id++;
+	stream->evtchnl->resp_id = req->id;
 	return req;
 }
 
@@ -401,10 +401,10 @@ int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_OPEN);
-	req->u.data.op.open.pcm_format = alsa_to_sndif_format(runtime->format);
-	req->u.data.op.open.pcm_channels = runtime->channels;
-	req->u.data.op.open.pcm_rate = runtime->rate;
-	req->u.data.op.open.gref_directory_start =
+	req->op.open.pcm_format = alsa_to_sndif_format(runtime->format);
+	req->op.open.pcm_channels = runtime->channels;
+	req->op.open.pcm_rate = runtime->rate;
+	req->op.open.gref_directory_start =
 		xdrv_sh_buf_get_dir_start(&stream->sh_buf);
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 	stream->is_open = ret < 0 ? false : true;
@@ -675,8 +675,8 @@ int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_WRITE);
-	req->u.data.op.write.len = len;
-	req->u.data.op.write.offset = 0;
+	req->op.rw.len = len;
+	req->op.rw.offset = 0;
 	return sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 }
 
@@ -714,8 +714,8 @@ int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream, int channel,
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_READ);
-	req->u.data.op.read.len = len;
-	req->u.data.op.read.offset = 0;
+	req->op.rw.len = len;
+	req->op.rw.offset = 0;
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 	if (ret < 0)
 		return ret;
@@ -1058,14 +1058,14 @@ static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 
 	for (i = channel->ring.rsp_cons; i != rp; i++) {
 		resp = RING_GET_RESPONSE(&channel->ring, i);
-		if (resp->u.data.id != channel->resp_id)
+		if (resp->id != channel->resp_id)
 			continue;
-		switch (resp->u.data.operation) {
+		switch (resp->operation) {
 		case XENSND_OP_OPEN:
 		case XENSND_OP_CLOSE:
 		case XENSND_OP_READ:
 		case XENSND_OP_WRITE:
-			channel->resp_status = resp->u.data.status;
+			channel->resp_status = resp->status;
 			complete(&channel->completion);
 			break;
 		case XENSND_OP_SET_VOLUME:
@@ -1076,7 +1076,7 @@ static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 		default:
 			dev_err(&drv_info->xb_dev->dev,
 				"Operation %d is not supported",
-				resp->u.data.operation);
+				resp->operation);
 			break;
 		}
 	}

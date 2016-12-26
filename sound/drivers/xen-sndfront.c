@@ -36,7 +36,7 @@
 #include <xen/events.h>
 #include <xen/grant_table.h>
 #include <xen/interface/io/ring.h>
-#include <xen/interface/io/sndif_linux.h>
+#include <xen/interface/io/sndif.h>
 
 #define GRANT_INVALID_REF	0
 /* timeout in ms to wait for backend to respond */

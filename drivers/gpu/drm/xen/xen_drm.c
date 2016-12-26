@@ -252,7 +252,7 @@ int xendrm_probe(struct platform_device *pdev,
 	if (ret < 0)
 		goto fail_vblank;
 	/* DRM/KMS objects */
-	ret = xendrm_modeset_init(xendrm_dev);
+	ret = xendrm_kms_init(xendrm_dev);
 	if (ret < 0) {
 		if (ret != -EPROBE_DEFER)
 			dev_err(&pdev->dev,

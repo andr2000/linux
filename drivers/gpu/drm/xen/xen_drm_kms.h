@@ -21,6 +21,6 @@
 
 struct xendrm_device;
 
-int xendrm_modeset_init(struct xendrm_device *xendrm_dev);
+int xendrm_kms_init(struct xendrm_device *xendrm_dev);
 
 #endif /* __XEN_DRM_KMS_H_ */

@@ -26,7 +26,7 @@
 #include "xen_drm_gem.h"
 #include "xen_drm_kms.h"
 
-static void xendrm_fb_destroy(struct drm_framebuffer *fb)
+static void xendrm_kms_fb_destroy(struct drm_framebuffer *fb)
 {
 	struct xendrm_device *xendrm_dev = fb->dev->dev_private;
 
@@ -36,11 +36,11 @@ static void xendrm_fb_destroy(struct drm_framebuffer *fb)
 }
 
 static struct drm_framebuffer_funcs xendr_du_fb_funcs = {
-	.destroy = xendrm_fb_destroy,
+	.destroy = xendrm_kms_fb_destroy,
 };
 
 static struct drm_framebuffer *
-xendrm_fb_create(struct drm_device *dev, struct drm_file *file_priv,
+xendrm_kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
@@ -62,13 +62,13 @@ xendrm_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	return fb;
 }
 
-static const struct drm_mode_config_funcs xendrm_mode_config_funcs = {
-	.fb_create = xendrm_fb_create,
+static const struct drm_mode_config_funcs xendrm_kms_config_funcs = {
+	.fb_create = xendrm_kms_fb_create,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
-int xendrm_modeset_init(struct xendrm_device *xendrm_dev)
+int xendrm_kms_init(struct xendrm_device *xendrm_dev)
 {
 	struct drm_device *drm_dev = xendrm_dev->drm;
 	int i, ret;
@@ -79,7 +79,7 @@ int xendrm_modeset_init(struct xendrm_device *xendrm_dev)
 	drm_dev->mode_config.min_height = 0;
 	drm_dev->mode_config.max_width = 4095;
 	drm_dev->mode_config.max_height = 2047;
-	drm_dev->mode_config.funcs = &xendrm_mode_config_funcs;
+	drm_dev->mode_config.funcs = &xendrm_kms_config_funcs;
 
 	for (i = 0; i < xendrm_dev->num_crtcs; i++) {
 		struct xendrm_crtc *crtc;

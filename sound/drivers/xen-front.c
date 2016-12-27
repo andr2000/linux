@@ -301,15 +301,14 @@ static struct ALSA_SNDIF_SAMPLE_FORMAT alsa_sndif_formats[] = {
 	},
 };
 
-static uint8_t alsa_to_sndif_format(snd_pcm_format_t format)
+static int alsa_to_sndif_format(snd_pcm_format_t format)
 {
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(alsa_sndif_formats); i++)
 		if (alsa_sndif_formats[i].alsa == format)
 			return alsa_sndif_formats[i].sndif;
-	WARN_ON(format);
-	return format;
+	return -EINVAL;
 }
 
 struct sdev_pcm_stream_info *sdrv_stream_get(
@@ -390,10 +389,16 @@ int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	unsigned long flags;
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
+	ret = alsa_to_sndif_format(runtime->format);
+	if (ret < 0) {
+		dev_err(&xdrv_info->xb_dev->dev,
+			"Unsupported sample format: %d", runtime->format);
+		return ret;
+	}
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_OPEN);
-	req->op.open.pcm_format = alsa_to_sndif_format(runtime->format);
+	req->op.open.pcm_format = (uint8_t)ret;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
 	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;

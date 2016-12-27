@@ -1577,8 +1577,7 @@ static int xdrv_cfg_device(struct xdrv_info *drv_info,
 		ret = -ENOMEM;
 		goto fail;
 	}
-	str = xenbus_read(XBT_NIL, device_path,
-		XENSND_FIELD_DEVICE_NAME, NULL);
+	str = xenbus_read(XBT_NIL, device_path, XENSND_FIELD_DEVICE_NAME, NULL);
 	if (!IS_ERR(str)) {
 		strncpy(pcm_instance->name, str, sizeof(pcm_instance->name));
 		kfree(str);

@@ -312,12 +312,8 @@ static uint8_t alsa_to_sndif_format(snd_pcm_format_t format)
 	return format;
 }
 
-/*
- * Sound driver start
- */
-
 struct sdev_pcm_stream_info *sdrv_stream_get(
-		struct snd_pcm_substream *substream)
+	struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
@@ -338,8 +334,7 @@ static void sdrv_stream_clear(struct sdev_pcm_stream_info *stream)
 }
 
 static inline struct xensnd_req *sdrv_be_stream_prepare_req(
-		struct sdev_pcm_stream_info *stream,
-		uint8_t operation)
+	struct sdev_pcm_stream_info *stream, uint8_t operation)
 {
 	struct xensnd_req *req;
 
@@ -384,7 +379,7 @@ int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 }
 
 int sdrv_be_stream_open(struct snd_pcm_substream *substream,
-		struct sdev_pcm_stream_info *stream)
+	struct sdev_pcm_stream_info *stream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
@@ -508,7 +503,7 @@ static void sdrv_alsa_timer_callback(unsigned long data)
 }
 
 static snd_pcm_uframes_t sdrv_alsa_timer_pointer(
-		struct snd_pcm_substream *substream)
+	struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	struct sdev_alsa_timer_info *dpcm = &stream->dpcm;
@@ -586,7 +581,7 @@ int sdrv_alsa_close(struct snd_pcm_substream *substream)
 }
 
 int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
-		 struct snd_pcm_hw_params *params)
+	struct snd_pcm_hw_params *params)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
@@ -660,7 +655,7 @@ snd_pcm_uframes_t sdrv_alsa_pointer(struct snd_pcm_substream *substream)
 }
 
 int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
-		snd_pcm_uframes_t len)
+	snd_pcm_uframes_t len)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -684,7 +679,6 @@ int sdrv_alsa_playback_copy(struct snd_pcm_substream *substream, int channel,
 	ssize_t len;
 
 	len = frames_to_bytes(substream->runtime, count);
-	/* TODO: use XC_PAGE_SIZE */
 	if (len > stream->sh_buf.vbuffer_sz)
 		return -EFAULT;
 	if (copy_from_user(stream->sh_buf.vbuffer, buf, len))
@@ -705,7 +699,6 @@ int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream, int channel,
 	ssize_t len;
 
 	len = frames_to_bytes(substream->runtime, count);
-	/* TODO: use XC_PAGE_SIZE */
 	if (len > stream->sh_buf.vbuffer_sz)
 		return -EFAULT;
 	xdrv_info = pcm_instance->card_info->xdrv_info;
@@ -726,7 +719,6 @@ int sdrv_alsa_playback_silence(struct snd_pcm_substream *substream, int channel,
 	ssize_t len;
 
 	len = frames_to_bytes(substream->runtime, count);
-	/* TODO: use XC_PAGE_SIZE */
 	if (len > stream->sh_buf.vbuffer_sz)
 		return -EFAULT;
 	if (memset(stream->sh_buf.vbuffer, 0, len))
@@ -734,8 +726,6 @@ int sdrv_alsa_playback_silence(struct snd_pcm_substream *substream, int channel,
 	return sdrv_alsa_playback_do_write(substream, len);
 }
 
-/* defaults */
-/* TODO: use XC_PAGE_SIZE */
 #define MAX_XEN_BUFFER_SIZE	(64 * 1024)
 #define MAX_BUFFER_SIZE		MAX_XEN_BUFFER_SIZE
 #define MIN_PERIOD_SIZE		64
@@ -796,8 +786,8 @@ static struct snd_pcm_ops sdrv_alsa_capture_ops = {
 };
 
 static int sdrv_new_pcm(struct sdev_card_info *card_info,
-		struct cfg_pcm_instance *instance_config,
-		struct sdev_pcm_instance_info *pcm_instance_info)
+	struct cfg_pcm_instance *instance_config,
+	struct sdev_pcm_instance_info *pcm_instance_info)
 {
 	struct snd_pcm *pcm;
 	int ret, i;
@@ -877,13 +867,13 @@ static void sdrv_copy_pcm_hw(struct snd_pcm_hardware *dst,
 		dst->formats = src->formats;
 	if (src->buffer_bytes_max)
 		dst->buffer_bytes_max =
-				src->buffer_bytes_max;
+			src->buffer_bytes_max;
 	if (src->period_bytes_min)
 		dst->period_bytes_min =
-				src->period_bytes_min;
+			src->period_bytes_min;
 	if (src->period_bytes_max)
 		dst->period_bytes_max =
-				src->period_bytes_max;
+			src->period_bytes_max;
 	if (src->periods_min)
 		dst->periods_min = src->periods_min;
 	if (src->periods_max)
@@ -901,7 +891,7 @@ static void sdrv_copy_pcm_hw(struct snd_pcm_hardware *dst,
 	if (src->buffer_bytes_max) {
 		dst->buffer_bytes_max = src->buffer_bytes_max;
 		dst->period_bytes_max = src->buffer_bytes_max /
-				src->periods_max;
+			src->periods_max;
 	}
 }
 
@@ -1012,10 +1002,6 @@ fail:
 	sdrv_cleanup(drv_info);
 	return -ENODEV;
 }
-
-/*
- * Sound driver stop
- */
 
 static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 {
@@ -1132,8 +1118,7 @@ static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info,
 		goto fail;
 	}
 	SHARED_RING_INIT(sring);
-	/* TODO: use XC_PAGE_SIZE */
-	FRONT_RING_INIT(&evt_channel->ring, sring, PAGE_SIZE);
+	FRONT_RING_INIT(&evt_channel->ring, sring, XEN_PAGE_SIZE);
 
 	ret = xenbus_grant_ring(xb_dev, sring, 1, &gref);
 	if (ret < 0)
@@ -1392,7 +1377,7 @@ static struct CFG_HW_SAMPLE_FORMAT xdrv_cfg_hw_supported_formats[] = {
 };
 
 static void xdrv_cfg_hw_rates(char *list, unsigned int len,
-		const char *path, struct snd_pcm_hardware *pcm_hw)
+	const char *path, struct snd_pcm_hardware *pcm_hw)
 {
 	char *cur_rate;
 	unsigned int cur_mask;
@@ -1430,7 +1415,7 @@ static void xdrv_cfg_hw_rates(char *list, unsigned int len,
 }
 
 static void xdrv_cfg_formats(char *list, unsigned int len,
-		const char *path, struct snd_pcm_hardware *pcm_hw)
+	const char *path, struct snd_pcm_hardware *pcm_hw)
 {
 	u64 formats;
 	char *cur_format;
@@ -1450,8 +1435,8 @@ static void xdrv_cfg_formats(char *list, unsigned int len,
 }
 
 static void xdrv_cfg_pcm_hw(const char *path,
-		struct snd_pcm_hardware *parent_pcm_hw,
-		struct snd_pcm_hardware *pcm_hw)
+	struct snd_pcm_hardware *parent_pcm_hw,
+	struct snd_pcm_hardware *pcm_hw)
 {
 	char *list;
 	int val;
@@ -1487,7 +1472,7 @@ static void xdrv_cfg_pcm_hw(const char *path,
 }
 
 static int xdrv_cfg_get_stream_type(const char *path, int index,
-		int *num_pb, int *num_cap)
+	int *num_pb, int *num_cap)
 {
 	int ret;
 	char *str = NULL;
@@ -1524,9 +1509,9 @@ fail:
 }
 
 static int xdrv_cfg_stream(struct xdrv_info *drv_info,
-		struct cfg_pcm_instance *pcm_instance,
-		const char *path, int index, int *cur_pb, int *cur_cap,
-		int *stream_idx)
+	struct cfg_pcm_instance *pcm_instance,
+	const char *path, int index, int *cur_pb, int *cur_cap,
+	int *stream_idx)
 {
 	int ret;
 	char *str = NULL;
@@ -1570,10 +1555,10 @@ fail:
 }
 
 static int xdrv_cfg_device(struct xdrv_info *drv_info,
-		struct cfg_pcm_instance *pcm_instance,
-		struct snd_pcm_hardware *parent_pcm_hw,
-		const char *path, const char *device_node,
-		int *stream_idx)
+	struct cfg_pcm_instance *pcm_instance,
+	struct snd_pcm_hardware *parent_pcm_hw,
+	const char *path, const char *device_node,
+	int *stream_idx)
 {
 	char **stream_nodes;
 	char *str;
@@ -1654,15 +1639,14 @@ fail:
 }
 
 static void xdrv_cfg_card_common(const char *path,
-		struct cfg_card *card_config)
+	struct cfg_card *card_config)
 {
 	xdrv_cfg_pcm_hw(path, &sdrv_pcm_hardware_def,
 		&card_config->pcm_hw);
 }
 
 static int xdrv_cfg_card(struct xdrv_info *drv_info,
-		struct sdev_card_plat_data *plat_data,
-		int *stream_idx)
+	struct sdev_card_plat_data *plat_data, int *stream_idx)
 {
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
 	char *path = NULL;
@@ -1717,7 +1701,7 @@ static void xdrv_remove_internal(struct xdrv_info *drv_info)
 }
 
 static int xdrv_probe(struct xenbus_device *xb_dev,
-				const struct xenbus_device_id *id)
+	const struct xenbus_device_id *id)
 {
 	struct xdrv_info *drv_info;
 	int ret;
@@ -1780,10 +1764,8 @@ static void xdrv_sh_buf_free(struct xdrv_shared_buffer_info *buf)
 						0, 0UL);
 		kfree(buf->grefs);
 	}
-	if (buf->vdirectory)
-		vfree(buf->vdirectory);
-	if (buf->vbuffer)
-		vfree(buf->vbuffer);
+	vfree(buf->vdirectory);
+	vfree(buf->vbuffer);
 	xdrv_sh_buf_clear(buf);
 }
 
@@ -1795,7 +1777,7 @@ static void xdrv_sh_buf_free(struct xdrv_shared_buffer_info *buf)
 	sizeof(grant_ref_t))
 
 void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
-		int num_pages_dir)
+	int num_pages_dir)
 {
 	struct xensnd_page_directory *page_dir;
 	unsigned char *ptr;

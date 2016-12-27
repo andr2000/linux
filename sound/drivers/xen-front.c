@@ -596,7 +596,6 @@ int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
 	buffer_size = params_buffer_bytes(params);
 	xdrv_sh_buf_clear(&stream->sh_buf);
 	sdrv_stream_clear(stream);
-	/* number of pages needed for the runtime buffer */
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	ret = xdrv_sh_buf_alloc(xdrv_info->xb_dev,
 		&stream->sh_buf, buffer_size);
@@ -1841,7 +1840,7 @@ int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
 			return cur_ref;
 		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
 			xen_page_to_gfn(vmalloc_to_page(buf->vdirectory +
-				PAGE_SIZE * i)), 0);
+				XEN_PAGE_SIZE * i)), 0);
 		buf->grefs[j++] = cur_ref;
 	}
 	for (i = 0; i < num_pages_vbuffer; i++) {
@@ -1850,7 +1849,7 @@ int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
 			return cur_ref;
 		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
 			xen_page_to_gfn(vmalloc_to_page(buf->vbuffer +
-				PAGE_SIZE * i)), 0);
+				XEN_PAGE_SIZE * i)), 0);
 		buf->grefs[j++] = cur_ref;
 	}
 	gnttab_free_grant_references(priv_gref_head);
@@ -1862,35 +1861,33 @@ int xdrv_sh_buf_alloc_buffers(struct xdrv_shared_buffer_info *buf,
 		int num_pages_dir, int num_pages_vbuffer,
 		int num_grefs)
 {
-	/* TODO: use XC_PAGE_SIZE */
 	buf->grefs = kcalloc(num_grefs, sizeof(*buf->grefs), GFP_KERNEL);
 	if (!buf->grefs)
 		return -ENOMEM;
-	buf->vdirectory = vmalloc(num_pages_dir * PAGE_SIZE);
+	buf->vdirectory = vmalloc(num_pages_dir * XEN_PAGE_SIZE);
 	if (!buf->vdirectory)
-		return -ENOMEM;
-	buf->vbuffer_sz = num_pages_vbuffer * PAGE_SIZE;
+		goto fail;
+	buf->vbuffer_sz = num_pages_vbuffer * XEN_PAGE_SIZE;
 	buf->vbuffer = vmalloc(buf->vbuffer_sz);
 	if (!buf->vbuffer)
-		return -ENOMEM;
+		goto fail;
 	return 0;
+fail:
+	kfree(buf->grefs);
+	vfree(buf->vdirectory);
+	return -ENOMEM;
+
 }
 
 static int xdrv_sh_buf_alloc(struct xenbus_device *xb_dev,
 	struct xdrv_shared_buffer_info *buf,
 	unsigned int buffer_size)
 {
-	int num_pages_vbuffer, num_grefs_per_page, num_pages_dir, num_grefs;
+	int num_pages_vbuffer, num_pages_dir, num_grefs;
 	int ret;
 
 	xdrv_sh_buf_clear(buf);
-	/* TODO: use XC_PAGE_SIZE */
-	num_pages_vbuffer = DIV_ROUND_UP(buffer_size, PAGE_SIZE);
-	/* number of grefs a page can hold with respect to the
-	 * xensnd_page_directory header
-	 */
-	num_grefs_per_page = (PAGE_SIZE - sizeof(
-		struct xensnd_page_directory)) / sizeof(grant_ref_t);
+	num_pages_vbuffer = DIV_ROUND_UP(buffer_size, XEN_PAGE_SIZE);
 	/* number of pages the directory itself consumes */
 	num_pages_dir = DIV_ROUND_UP(num_pages_vbuffer,
 		XENSND_NUM_GREFS_PER_PAGE);

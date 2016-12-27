@@ -181,6 +181,7 @@ struct SNDIF_TO_KERN_ERROR {
 static struct SNDIF_TO_KERN_ERROR sndif_kern_error_codes[] = {
 	{ .sndif = XENSND_RSP_OKAY,     .kern = 0 },
 	{ .sndif = XENSND_RSP_ERROR,    .kern = EIO },
+	{ .sndif = XENSND_RSP_NOTSUPP,  .kern = EOPNOTSUPP },
 };
 
 static int sndif_to_kern_error(int sndif_err)

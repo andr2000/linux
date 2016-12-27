@@ -400,6 +400,7 @@ int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	req->op.open.pcm_format = alsa_to_sndif_format(runtime->format);
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
+	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;
 	req->op.open.gref_directory_start =
 		xdrv_sh_buf_get_dir_start(&stream->sh_buf);
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);

@@ -392,7 +392,7 @@ int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	ret = alsa_to_sndif_format(runtime->format);
 	if (ret < 0) {
 		dev_err(&xdrv_info->xb_dev->dev,
-			"Unsupported sample format: %d", runtime->format);
+			"Unsupported sample format: %d\n", runtime->format);
 		return ret;
 	}
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
@@ -607,7 +607,7 @@ int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
 
 fail:
 	dev_err(&xdrv_info->xb_dev->dev,
-		"Failed to allocate buffers for stream idx %d",
+		"Failed to allocate buffers for stream idx %d\n",
 		stream->index);
 	sdrv_be_stream_free(stream);
 	return ret;
@@ -1003,7 +1003,7 @@ static int sdrv_init(struct xdrv_info *drv_info)
 	return 0;
 
 fail:
-	dev_err(&drv_info->xb_dev->dev, "Failed to register sound driver");
+	dev_err(&drv_info->xb_dev->dev, "Failed to register sound driver\n");
 	sdrv_cleanup(drv_info);
 	return -ENODEV;
 }
@@ -1043,7 +1043,7 @@ static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 			break;
 		default:
 			dev_err(&drv_info->xb_dev->dev,
-				"Operation %d is not supported",
+				"Operation %d is not supported\n",
 				resp->operation);
 			break;
 		}
@@ -1144,7 +1144,7 @@ static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info,
 	return 0;
 
 fail:
-	dev_err(&xb_dev->dev, "Failed to allocate ring with err %d", ret);
+	dev_err(&xb_dev->dev, "Failed to allocate ring: %d\n", ret);
 	return ret;
 }
 
@@ -1178,7 +1178,7 @@ static int xdrv_evtchnl_create(struct xdrv_info *drv_info,
 	return 0;
 
 fail:
-	dev_err(&drv_info->xb_dev->dev, "Error %s with err %d", message, ret);
+	dev_err(&drv_info->xb_dev->dev, "Error %s: %d\n", message, ret);
 	return ret;
 }
 
@@ -1585,7 +1585,7 @@ static int xdrv_cfg_device(struct xdrv_info *drv_info,
 	}
 	if (kstrtoint(device_node, 10, &pcm_instance->device_id)) {
 		dev_err(&drv_info->xb_dev->dev,
-			"Wrong device id at %s", device_path);
+			"Wrong device id at %s\n", device_path);
 		ret = -EINVAL;
 		goto fail;
 	}

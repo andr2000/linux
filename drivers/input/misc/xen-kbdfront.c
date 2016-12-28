@@ -17,6 +17,7 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/input.h>
+#include <linux/input/mt.h>
 #include <linux/slab.h>
 
 #include <asm/xen/hypervisor.h>
@@ -34,6 +35,7 @@
 struct xenkbd_info {
 	struct input_dev *kbd;
 	struct input_dev *ptr;
+	struct input_dev *touch;
 	struct xenkbd_page *page;
 	int gref;
 	int irq;
@@ -94,6 +96,28 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 				input_report_rel(dev, REL_WHEEL,
 						 -event->pos.rel_z);
 			break;
+		case XENKBD_TYPE_MTOUCH:
+			dev = NULL;
+			if (event->mtouch.slot >= XENKBD_MT_MAX_SLOT)
+				break;
+			dev = info->touch;
+			input_event(dev, EV_ABS, ABS_MT_SLOT,
+				    event->mtouch.slot);
+			if (event->mtouch.tracking_id ==
+					XENKBD_MT_TRACKING_ID_UNUSED) {
+				input_event(dev, EV_ABS, ABS_MT_TRACKING_ID,
+					    -1);
+			} else {
+				input_event(dev, EV_ABS, ABS_MT_TRACKING_ID,
+					    event->mtouch.tracking_id);
+				input_event(dev, EV_ABS, ABS_MT_TOOL_TYPE,
+					    MT_TOOL_FINGER);
+				input_event(dev, EV_ABS, ABS_MT_POSITION_X,
+					    event->mtouch.abs_x);
+				input_event(dev, EV_ABS, ABS_MT_POSITION_Y,
+					    event->mtouch.abs_y);
+			}
+			break;
 		}
 		if (dev)
 			input_sync(dev);
@@ -108,9 +132,9 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 static int xenkbd_probe(struct xenbus_device *dev,
 				  const struct xenbus_device_id *id)
 {
-	int ret, i, abs;
+	int ret, i, abs, mtouch;
 	struct xenkbd_info *info;
-	struct input_dev *kbd, *ptr;
+	struct input_dev *kbd, *ptr, *touch;
 
 	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info) {
@@ -135,6 +159,18 @@ static int xenkbd_probe(struct xenbus_device *dev,
 		if (ret) {
 			pr_warning("xenkbd: can't request abs-pointer");
 			abs = 0;
+		}
+	}
+
+	if (xenbus_scanf(XBT_NIL, dev->otherend, "feature-multi-touch",
+			"%d", &mtouch) < 0)
+		mtouch = 0;
+	if (mtouch) {
+		ret = xenbus_write(XBT_NIL, dev->nodename,
+				   "request-multi-touch", "1");
+		if (ret) {
+			pr_warn("xenkbd: can't request multi-touch");
+			mtouch = 0;
 		}
 	}
 
@@ -194,6 +230,43 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	}
 	info->ptr = ptr;
 
+	/* multi-touch device */
+	if (mtouch) {
+		touch = input_allocate_device();
+		if (!touch)
+			goto error_nomem;
+		touch->name = "Xen Virtual Multi-touch";
+		touch->phys = info->phys;
+		touch->id.bustype = BUS_PCI;
+		touch->id.vendor = 0x5853;
+		touch->id.product = 0xfffd;
+
+		__set_bit(EV_KEY, touch->evbit);
+		__set_bit(EV_ABS, touch->evbit);
+		__set_bit(BTN_TOUCH, touch->keybit);
+
+		input_set_abs_params(touch, ABS_X, 0, XENFB_WIDTH, 0, 0);
+		input_set_abs_params(touch, ABS_Y, 0, XENFB_HEIGHT, 0, 0);
+		input_set_abs_params(touch, ABS_PRESSURE, 0, 255, 0, 0);
+
+		input_mt_init_slots(touch, XENKBD_MT_MAX_SLOT, 0);
+		input_set_abs_params(touch, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+		input_set_abs_params(touch, ABS_MT_POSITION_X,
+				     0, XENFB_WIDTH, 0, 0);
+		input_set_abs_params(touch, ABS_MT_POSITION_Y,
+				     0, XENFB_HEIGHT, 0, 0);
+		input_set_abs_params(touch, ABS_MT_PRESSURE, 0, 255, 0, 0);
+
+		ret = input_register_device(touch);
+		if (ret) {
+			input_free_device(touch);
+			xenbus_dev_fatal(dev, ret,
+					 "input_register_device(touch)");
+			goto error;
+		}
+		info->touch = touch;
+	}
+
 	ret = xenkbd_connect_backend(dev, info);
 	if (ret < 0)
 		goto error;
@@ -226,6 +299,8 @@ static int xenkbd_remove(struct xenbus_device *dev)
 		input_unregister_device(info->kbd);
 	if (info->ptr)
 		input_unregister_device(info->ptr);
+	if (info->touch)
+		input_unregister_device(info->touch);
 	free_page((unsigned long)info->page);
 	kfree(info);
 	return 0;
@@ -333,6 +408,17 @@ InitWait:
 				pr_warning("xenkbd: can't request abs-pointer");
 		}
 
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   "feature-multi-touch", "%d", &val);
+		if (ret < 0)
+			val = 0;
+		if (val) {
+			ret = xenbus_write(XBT_NIL, dev->nodename,
+					   "request-multi-touch", "1");
+			if (ret)
+				pr_warn("xenkbd: can't request multi-touch");
+		}
+
 		xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 
@@ -353,6 +439,26 @@ InitWait:
 		if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
 				 "height", "%d", &val) > 0)
 			input_set_abs_params(info->ptr, ABS_Y, 0, val, 0, 0);
+
+		if (info->touch) {
+			if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+					 "mt-width", "%d", &val) > 0) {
+				input_set_abs_params(info->touch,
+						     ABS_X, 0, val, 0, 0);
+				input_set_abs_params(info->touch,
+						     ABS_MT_POSITION_X, 0, val,
+						     0, 0);
+			}
+
+			if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+					 "mt-height", "%d", &val) > 0) {
+				input_set_abs_params(info->touch,
+						     ABS_Y, 0, val, 0, 0);
+				input_set_abs_params(info->touch,
+						     ABS_MT_POSITION_Y, 0, val,
+						     0, 0);
+			}
+		}
 
 		break;
 

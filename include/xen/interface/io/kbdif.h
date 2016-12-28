@@ -45,6 +45,16 @@
  */
 #define XENKBD_TYPE_POS     4
 
+/*
+ * Multi-touch event
+ * Capable backend sets feature-multi-touch in xenstore.
+ * Frontend requests it instead of XENKBD_TYPE_MOTION/XENKBD_TYPE_POS by setting
+ * request-multi-touch in xenstore.
+ * Backend can also send XENKBD_TYPE_KEY events.
+ * Backend sets mt-width and mt-height in xenstore.
+ */
+#define XENKBD_TYPE_MTOUCH  5
+
 struct xenkbd_motion {
 	uint8_t type;		/* XENKBD_TYPE_MOTION */
 	int32_t rel_x;		/* relative X motion */
@@ -65,6 +75,31 @@ struct xenkbd_position {
 	int32_t rel_z;		/* relative Z motion (wheel) */
 };
 
+/* Multi-touch event handling:
+ *   o slots are dynamically assigned to different contacts being processed
+ *     at the moment, e.g. if two touches are active at the moment there will
+ *     be 2 slots in use. So, slot can be thought of as an event channel index
+ *   o tracking ID is a unique ID assigned to a contact when it is made
+ *     (pressed) and is set to XENKBD_MT_TRACKING_ID_UNUSED when the contact
+ *     is released. The tracking ID identifies an initiated contact
+ *     throughout its life cycle
+ *   o X and Y values  are undefined if tracking ID is
+ *     XENKBD_MT_TRACKING_ID_UNUSED
+ */
+
+/* 10 fingers at a time */
+#define XENKBD_MT_MAX_SLOT		10
+#define XENKBD_MT_TRACKING_ID_UNUSED	-1
+
+struct xenkbd_mtouch {
+	uint8_t type;		/* XENKBD_TYPE_MTOUCH */
+	uint8_t slot;		/* slot being processed */
+	uint16_t reserved;
+	int32_t tracking_id;	/* unique ID of the contact */
+	int32_t abs_x;		/* absolute X position (in pixels) */
+	int32_t abs_y;		/* absolute Y position (in pixels) */
+};
+
 #define XENKBD_IN_EVENT_SIZE 40
 
 union xenkbd_in_event {
@@ -72,6 +107,7 @@ union xenkbd_in_event {
 	struct xenkbd_motion motion;
 	struct xenkbd_key key;
 	struct xenkbd_position pos;
+	struct xenkbd_mtouch mtouch;
 	char pad[XENKBD_IN_EVENT_SIZE];
 };
 

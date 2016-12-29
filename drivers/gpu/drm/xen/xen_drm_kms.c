@@ -71,6 +71,7 @@ static const struct drm_mode_config_funcs xendrm_kms_config_funcs = {
 int xendrm_kms_init(struct xendrm_device *xendrm_dev)
 {
 	struct drm_device *drm_dev = xendrm_dev->drm;
+	struct xen_gem_fb *fbdev;
 	int i, ret;
 
 	drm_mode_config_init(drm_dev);
@@ -97,6 +98,18 @@ int xendrm_kms_init(struct xendrm_device *xendrm_dev)
 			goto fail;
 	}
 	drm_mode_config_reset(drm_dev);
+
+	if (drm_dev->mode_config.num_connector) {
+		/* prefer 32 bit framebuffer */
+		fbdev = xendrm_gem_fbdev_init(drm_dev, 32,
+			drm_dev->mode_config.num_crtc,
+			drm_dev->mode_config.num_connector);
+		if (IS_ERR(fbdev))
+			return PTR_ERR(fbdev);
+		xendrm_dev->fbdev = fbdev;
+	} else {
+		DRM_DEBUG("No connector found, disabling fbdev emulation\n");
+	}
 
 	return 0;
 fail:

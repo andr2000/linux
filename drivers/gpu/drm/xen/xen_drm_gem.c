@@ -33,7 +33,7 @@ struct xen_gem_object {
 	struct sg_table *sgt_imported;
 };
 
-struct xen_fb {
+struct xen_gem_fb {
 	struct drm_framebuffer fb;
 	struct xen_gem_object *xen_obj;
 };
@@ -44,9 +44,9 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
 
-static inline struct xen_fb *to_xen_fb(struct drm_framebuffer *fb)
+static inline struct xen_gem_fb *to_xen_fb(struct drm_framebuffer *fb)
 {
-	return container_of(fb, struct xen_fb, fb);
+	return container_of(fb, struct xen_gem_fb, fb);
 }
 
 static struct sg_table *xendrm_gem_alloc(size_t size)
@@ -264,12 +264,12 @@ struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
 	return &xen_obj->base;
 }
 
-static struct xen_fb *xendrm_gem_fb_alloc(struct drm_device *dev,
+static struct xen_gem_fb *xendrm_gem_fb_alloc(struct drm_device *dev,
 	const struct drm_mode_fb_cmd2 *mode_cmd,
 	struct xen_gem_object *xen_obj,
 	const struct drm_framebuffer_funcs *funcs)
 {
-	struct xen_fb *xen_fb;
+	struct xen_gem_fb *xen_fb;
 	int ret;
 
 	xen_fb = kzalloc(sizeof(*xen_fb), GFP_KERNEL);
@@ -291,7 +291,7 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
 	const struct drm_framebuffer_funcs *funcs)
 {
-	struct xen_fb *xen_fb;
+	struct xen_gem_fb *xen_fb;
 	struct xen_gem_object *xen_obj;
 	struct drm_gem_object *gem_obj;
 	unsigned int hsub;
@@ -338,7 +338,7 @@ fail:
 
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb)
 {
-	struct xen_fb *xen_fb = to_xen_fb(fb);
+	struct xen_gem_fb *xen_fb = to_xen_fb(fb);
 
 	if (xen_fb->xen_obj)
 		drm_gem_object_unreference_unlocked(&xen_fb->xen_obj->base);

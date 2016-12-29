@@ -36,6 +36,8 @@ struct xendrm_device {
 	struct xendrm_plat_data *platdata;
 	struct xendrm_crtc crtcs[XENDRM_MAX_CRTCS];
 
+	struct xen_gem_fb *fbdev;
+
 	/* dumb buffers - used to match gem to handle */
 	struct list_head dumb_buf_list;
 

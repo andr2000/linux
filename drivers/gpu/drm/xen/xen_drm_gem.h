@@ -25,6 +25,8 @@
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 
+#define xen_gem_fb                      drm_fbdev_cma
+
 #define xendrm_gem_get_sg_table         drm_gem_cma_prime_get_sg_table
 #define xendrm_gem_dumb_create          drm_gem_cma_dumb_create
 #define xendrm_gem_free_object          drm_gem_cma_free_object
@@ -34,9 +36,12 @@
 #define xendrm_gem_prime_vmap           drm_gem_cma_prime_vmap
 #define xendrm_gem_prime_vunmap         drm_gem_cma_prime_vunmap
 #define xendrm_gem_prime_mmap           drm_gem_cma_prime_mmap
+#define xendrm_gem_fbdev_init           drm_fbdev_cma_init
 #define xendrm_gem_fb_destroy           drm_fb_cma_destroy
 #define xendrm_gem_fb_create_with_funcs drm_fb_cma_create_with_funcs
 #else
+struct xen_gem_fb;
+
 int xendrm_gem_dumb_create(struct drm_file *file_priv, struct drm_device *dev,
 	struct drm_mode_create_dumb *args);
 void xendrm_gem_free_object(struct drm_gem_object *gem_obj);
@@ -52,6 +57,12 @@ void *xendrm_gem_prime_vmap(struct drm_gem_object *gem_obj);
 void xendrm_gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr);
 int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
 	struct vm_area_struct *vma);
+
+#define xendrm_gem_fbdev_init           drm_fbdev_cma_init
+
+struct xendrm_gem_fb *xendrm_fbdev_cma_init(struct drm_device *dev,
+	unsigned int preferred_bpp, unsigned int num_crtc,
+	unsigned int max_conn_count)
 
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,

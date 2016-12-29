@@ -311,6 +311,7 @@ static void xendrm_crtc_ntfy_page_flip_completed(
 	struct drm_device *dev = xen_crtc->crtc.dev;
 	unsigned long flags;
 
+	xendrm_vtimer_cancel_to(xen_crtc->xendrm_dev, xen_crtc->index);
 	if (unlikely(!xendrm_crtc_page_flip_pending(xen_crtc)))
 		return;
 	spin_lock_irqsave(&dev->event_lock, flags);

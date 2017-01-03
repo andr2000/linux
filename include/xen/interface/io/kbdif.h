@@ -47,11 +47,10 @@
 
 /*
  * Multi-touch event
- * Capable backend sets feature-multi-touch in xenstore.
- * Frontend requests it instead of XENKBD_TYPE_MOTION/XENKBD_TYPE_POS by setting
+ * Capable backend sets feature-multi-touch, mt-num-slots, mt-width
+ * and mt-height in xenstore.
+ * Frontend requests multi-touch support by setting
  * request-multi-touch in xenstore.
- * Backend can also send XENKBD_TYPE_KEY events.
- * Backend sets mt-width and mt-height in xenstore.
  */
 #define XENKBD_TYPE_MTOUCH  5
 
@@ -83,12 +82,8 @@ struct xenkbd_position {
  *     (pressed) and is set to XENKBD_MT_TRACKING_ID_UNUSED when the contact
  *     is released. The tracking ID identifies an initiated contact
  *     throughout its life cycle
- *   o X and Y values  are undefined if tracking ID is
- *     XENKBD_MT_TRACKING_ID_UNUSED
  */
 
-/* 10 fingers at a time */
-#define XENKBD_MT_MAX_SLOT		10
 #define XENKBD_MT_TRACKING_ID_UNUSED	-1
 
 struct xenkbd_mtouch {

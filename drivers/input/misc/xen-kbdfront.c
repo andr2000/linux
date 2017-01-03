@@ -97,9 +97,6 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 						 -event->pos.rel_z);
 			break;
 		case XENKBD_TYPE_MTOUCH:
-			dev = NULL;
-			if (event->mtouch.slot >= XENKBD_MT_MAX_SLOT)
-				break;
 			dev = info->touch;
 			input_event(dev, EV_ABS, ABS_MT_SLOT,
 				    event->mtouch.slot);
@@ -249,7 +246,6 @@ static int xenkbd_probe(struct xenbus_device *dev,
 		input_set_abs_params(touch, ABS_Y, 0, XENFB_HEIGHT, 0, 0);
 		input_set_abs_params(touch, ABS_PRESSURE, 0, 255, 0, 0);
 
-		input_mt_init_slots(touch, XENKBD_MT_MAX_SLOT, 0);
 		input_set_abs_params(touch, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
 		input_set_abs_params(touch, ABS_MT_POSITION_X,
 				     0, XENFB_WIDTH, 0, 0);
@@ -458,6 +454,10 @@ InitWait:
 						     ABS_MT_POSITION_Y, 0, val,
 						     0, 0);
 			}
+
+			if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+					 "mt-num-slots", "%d", &val) > 0)
+				input_mt_init_slots(info->touch, val, 0);
 		}
 
 		break;

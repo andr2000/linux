@@ -54,6 +54,100 @@ static void xenkbd_disconnect_backend(struct xenkbd_info *);
  * to do that.
  */
 
+static struct xenkbd_page *xenkbd_ring_alloc(struct xenkbd_ring_info *ring)
+{
+	ring->irq = -1;
+	ring->gref = -1;
+	ring->page = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+	return ring->page;
+}
+
+static int xenkbd_ring_setup(struct xenbus_device *dev, void *dev_id,
+			     irq_handler_t handler,
+			     struct xenkbd_ring_info *ring,
+			     const char *path)
+{
+	int ret, evtchn;
+	struct xenbus_transaction xbt;
+
+	ret = gnttab_grant_foreign_access(dev->otherend_id,
+	                                  virt_to_gfn(ring->page), 0);
+	if (ret < 0)
+		return ret;
+	ring->gref = ret;
+
+	ret = xenbus_alloc_evtchn(dev, &evtchn);
+	if (ret)
+		goto error_grant;
+	ret = bind_evtchn_to_irqhandler(evtchn, handler,
+					0, dev->devicetype, dev_id);
+	if (ret < 0) {
+		xenbus_dev_fatal(dev, ret, "bind_evtchn_to_irqhandler");
+		goto error_evtchan;
+	}
+	ring->irq = ret;
+
+ again:
+	ret = xenbus_transaction_start(&xbt);
+	if (ret) {
+		xenbus_dev_fatal(dev, ret, "starting transaction");
+		goto error_irqh;
+	}
+	ret = xenbus_printf(xbt, path, "page-ref", "%lu",
+			    virt_to_gfn(ring->page));
+	if (ret)
+		goto error_xenbus;
+	ret = xenbus_printf(xbt, path, "page-gref", "%u", ring->gref);
+	if (ret)
+		goto error_xenbus;
+	ret = xenbus_printf(xbt, path, "event-channel", "%u",
+			    evtchn);
+	if (ret)
+		goto error_xenbus;
+	ret = xenbus_transaction_end(xbt, 0);
+	if (ret) {
+		if (ret == -EAGAIN)
+			goto again;
+		xenbus_dev_fatal(dev, ret, "completing transaction");
+		goto error_irqh;
+	}
+
+	return 0;
+
+ error_xenbus:
+	xenbus_transaction_end(xbt, 1);
+	xenbus_dev_fatal(dev, ret, "writing xenstore");
+ error_irqh:
+	unbind_from_irqhandler(ring->irq, dev_id);
+	ring->irq = -1;
+ error_evtchan:
+	xenbus_free_evtchn(dev, evtchn);
+ error_grant:
+	gnttab_end_foreign_access(ring->gref, 0, 0UL);
+	ring->gref = -1;
+	return ret;
+}
+
+static inline void xenkbd_ring_reset(struct xenkbd_ring_info *ring)
+{
+	memset(ring->page, 0, PAGE_SIZE);
+}
+
+static inline void xenkbd_ring_free(struct xenkbd_ring_info *ring)
+{
+	free_page((unsigned long)ring->page);
+}
+
+static void xenkbd_ring_cleanup(void *dev_id, struct xenkbd_ring_info *ring)
+{
+	if (ring->irq >= 0)
+		unbind_from_irqhandler(ring->irq, dev_id);
+	ring->irq = -1;
+	if (ring->gref >= 0)
+		gnttab_end_foreign_access(ring->gref, 0, 0UL);
+	ring->gref = -1;
+}
+
 static irqreturn_t input_handler(int rq, void *dev_id)
 {
 	struct xenkbd_info *info = dev_id;
@@ -107,14 +201,6 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 	notify_remote_via_irq(info->ring.irq);
 
 	return IRQ_HANDLED;
-}
-
-static struct xenkbd_page *xenkbd_ring_alloc(struct xenkbd_ring_info *ring)
-{
-	ring->irq = -1;
-	ring->gref = -1;
-	ring->page = (void *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
-	return ring->page;
 }
 
 static int xenkbd_probe(struct xenbus_device *dev,
@@ -217,11 +303,6 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	return ret;
 }
 
-static inline void xenkbd_ring_reset(struct xenkbd_ring_info *ring)
-{
-	memset(ring->page, 0, PAGE_SIZE);
-}
-
 static int xenkbd_resume(struct xenbus_device *dev)
 {
 	struct xenkbd_info *info = dev_get_drvdata(&dev->dev);
@@ -229,11 +310,6 @@ static int xenkbd_resume(struct xenbus_device *dev)
 	xenkbd_disconnect_backend(info);
 	xenkbd_ring_reset(&info->ring);
 	return xenkbd_connect_backend(dev, info);
-}
-
-static inline void xenkbd_ring_free(struct xenkbd_ring_info *ring)
-{
-	free_page((unsigned long)ring->page);
 }
 
 static int xenkbd_remove(struct xenbus_device *dev)
@@ -250,72 +326,6 @@ static int xenkbd_remove(struct xenbus_device *dev)
 	return 0;
 }
 
-static int xenkbd_ring_setup(struct xenbus_device *dev, void *dev_id,
-			     irq_handler_t handler,
-			     struct xenkbd_ring_info *ring,
-			     const char *path)
-{
-	int ret, evtchn;
-	struct xenbus_transaction xbt;
-
-	ret = gnttab_grant_foreign_access(dev->otherend_id,
-	                                  virt_to_gfn(ring->page), 0);
-	if (ret < 0)
-		return ret;
-	ring->gref = ret;
-
-	ret = xenbus_alloc_evtchn(dev, &evtchn);
-	if (ret)
-		goto error_grant;
-	ret = bind_evtchn_to_irqhandler(evtchn, handler,
-					0, dev->devicetype, dev_id);
-	if (ret < 0) {
-		xenbus_dev_fatal(dev, ret, "bind_evtchn_to_irqhandler");
-		goto error_evtchan;
-	}
-	ring->irq = ret;
-
- again:
-	ret = xenbus_transaction_start(&xbt);
-	if (ret) {
-		xenbus_dev_fatal(dev, ret, "starting transaction");
-		goto error_irqh;
-	}
-	ret = xenbus_printf(xbt, path, "page-ref", "%lu",
-			    virt_to_gfn(ring->page));
-	if (ret)
-		goto error_xenbus;
-	ret = xenbus_printf(xbt, path, "page-gref", "%u", ring->gref);
-	if (ret)
-		goto error_xenbus;
-	ret = xenbus_printf(xbt, path, "event-channel", "%u",
-			    evtchn);
-	if (ret)
-		goto error_xenbus;
-	ret = xenbus_transaction_end(xbt, 0);
-	if (ret) {
-		if (ret == -EAGAIN)
-			goto again;
-		xenbus_dev_fatal(dev, ret, "completing transaction");
-		goto error_irqh;
-	}
-
-	return 0;
-
- error_xenbus:
-	xenbus_transaction_end(xbt, 1);
-	xenbus_dev_fatal(dev, ret, "writing xenstore");
- error_irqh:
-	unbind_from_irqhandler(ring->irq, dev_id);
-	ring->irq = -1;
- error_evtchan:
-	xenbus_free_evtchn(dev, evtchn);
- error_grant:
-	gnttab_end_foreign_access(ring->gref, 0, 0UL);
-	ring->gref = -1;
-	return ret;
-}
-
 static int xenkbd_connect_backend(struct xenbus_device *dev,
 				  struct xenkbd_info *info)
 {
@@ -328,16 +338,6 @@ static int xenkbd_connect_backend(struct xenbus_device *dev,
 
 	xenbus_switch_state(dev, XenbusStateInitialised);
 	return 0;
-}
-
-static void xenkbd_ring_cleanup(void *dev_id, struct xenkbd_ring_info *ring)
-{
-	if (ring->irq >= 0)
-		unbind_from_irqhandler(ring->irq, dev_id);
-	ring->irq = -1;
-	if (ring->gref >= 0)
-		gnttab_end_foreign_access(ring->gref, 0, 0UL);
-	ring->gref = -1;
 }
 
 static void xenkbd_disconnect_backend(struct xenkbd_info *info)

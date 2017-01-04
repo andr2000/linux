@@ -37,17 +37,31 @@ struct xenkbd_ring_info {
 	int irq;
 };
 
+struct xenkbd_mt_info {
+	int num_contacts;
+	int width;
+	int height;
+};
+
 struct xenkbd_info {
 	struct input_dev *kbd;
 	struct input_dev *ptr;
 	struct xenkbd_ring_info ring;
 	struct xenbus_device *xbdev;
 	char phys[32];
+	/* number of multi-touch devices configured:
+	 * -1 - if no multi-touch support advertised by the backend
+	 * >=0 - number of multi-touch devices configured
+	 */
+	int mt_num_devices;
+	/* array of multi-touch devices */
+	struct xenkbd_mt_info *mt_devs;
 };
 
 static int xenkbd_remove(struct xenbus_device *);
 static int xenkbd_connect_backend(struct xenbus_device *, struct xenkbd_info *);
 static void xenkbd_disconnect_backend(struct xenkbd_info *);
+static void xenkbd_mt_remove(struct xenkbd_info *info);
 
 /*
  * Note: if you need to send out events, see xenfb_do_update() for how
@@ -207,7 +221,7 @@ static int xenkbd_probe(struct xenbus_device *dev,
 				  const struct xenbus_device_id *id)
 {
 	int ret, i;
-	unsigned int abs;
+	unsigned int abs, mtouch;
 	struct xenkbd_info *info;
 	struct input_dev *kbd, *ptr;
 
@@ -218,6 +232,7 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	}
 	dev_set_drvdata(&dev->dev, info);
 	info->xbdev = dev;
+	info->mt_num_devices = -1;
 	snprintf(info->phys, sizeof(info->phys), "xenbus/%s", dev->nodename);
 
 	if (!xenkbd_ring_alloc(&info->ring))
@@ -231,6 +246,16 @@ static int xenkbd_probe(struct xenbus_device *dev,
 			pr_warning("xenkbd: can't request abs-pointer");
 			abs = 0;
 		}
+	}
+
+	mtouch = xenbus_read_unsigned(dev->otherend, "feature-multi-touch", 0);
+	if (mtouch) {
+		ret = xenbus_write(XBT_NIL, dev->nodename,
+				   "request-multi-touch", "1");
+		if (ret)
+			pr_warning("xenkbd: can't request multi-touch");
+		else
+			info->mt_num_devices = 0;
 	}
 
 	/* keyboard */
@@ -322,8 +347,97 @@ static int xenkbd_remove(struct xenbus_device *dev)
 	if (info->ptr)
 		input_unregister_device(info->ptr);
 	xenkbd_ring_free(&info->ring);
+	xenkbd_mt_remove(info);
 	kfree(info);
 	return 0;
+}
+
+static int xenkbd_mt_get_num_devices(struct xenkbd_info *info)
+{
+	uint8_t i;
+	char mt_dir[16];
+
+	i = 0;
+	do {
+		sprintf(mt_dir, "mt-%d", i);
+	} while (xenbus_exists(XBT_NIL, info->xbdev->otherend, mt_dir) && ++i);
+	return i;
+}
+
+static int xenkbd_mt_read_config(struct xenkbd_info *info, int num_devices)
+{
+	int i;
+	int ret, val;
+	char mt_dir[16];
+	char *node;
+
+	for (i = 0; i < num_devices; i++) {
+		sprintf(mt_dir, "mt-%d", i);
+
+		node = kasprintf(GFP_KERNEL, "%s/num-contacts", mt_dir);
+		if (!node)
+			return -ENOMEM;
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   node, "%d", &val);
+		kfree(node);
+		if (ret != 1)
+			return -EINVAL;
+		info->mt_devs[i].num_contacts = val;
+
+		node = kasprintf(GFP_KERNEL, "%s/width", mt_dir);
+		if (!node)
+			return -ENOMEM;
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   node, "%d", &val);
+		kfree(node);
+		if (ret != 1)
+			return -EINVAL;
+		info->mt_devs[i].width = val;
+
+		node = kasprintf(GFP_KERNEL, "%s/height", mt_dir);
+		if (!node)
+			return -ENOMEM;
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   node, "%d", &val);
+		kfree(node);
+		if (ret != 1)
+			return -EINVAL;
+		info->mt_devs[i].height = val;
+	}
+	return 0;
+}
+
+static void xenkbd_mt_remove(struct xenkbd_info *info)
+{
+	kfree(info->mt_devs);
+	info->mt_devs = NULL;
+	info->mt_num_devices = -1;
+}
+
+static int xenkbd_mt_probe(struct xenkbd_info *info)
+{
+	int ret, num_devices;
+
+	if (info->mt_devs)
+		xenkbd_mt_remove(info);
+	num_devices = xenkbd_mt_get_num_devices(info);
+	if (!num_devices)
+		return -EINVAL;
+	info->mt_devs = kcalloc(num_devices, sizeof(*info->mt_devs), GFP_KERNEL);
+	if (!info->mt_devs) {
+		xenbus_dev_fatal(info->xbdev, -ENOMEM,
+				 "allocating device memory");
+		return -ENOMEM;
+	}
+	ret = xenkbd_mt_read_config(info, num_devices);
+	if (ret < 0)
+		goto error;
+	info->mt_num_devices = num_devices;
+	return 0;
+error:
+	xenkbd_mt_remove(info);
+	xenbus_dev_fatal(info->xbdev, ret, "probing multi-touch device(s)");
+	return ret;
 }
 
 static int xenkbd_connect_backend(struct xenbus_device *dev,
@@ -369,6 +483,19 @@ InitWait:
 				pr_warning("xenkbd: can't request abs-pointer");
 		}
 
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+				   "feature-multi-touch", "%d", &val);
+		if (ret < 0)
+			val = 0;
+		if (val) {
+			ret = xenbus_write(XBT_NIL, dev->nodename,
+					   "request-multi-touch", "1");
+			if (ret)
+				pr_warning("xenkbd: can't request multi-touch");
+			else
+				info->mt_num_devices = 0;
+		}
+
 		xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 
@@ -390,6 +517,13 @@ InitWait:
 				 "height", "%d", &val) > 0)
 			input_set_abs_params(info->ptr, ABS_Y, 0, val, 0, 0);
 
+		/*
+		 * Multi-touch configuration must be completed at this stage:
+		 * if multi-touch support was advertised by the backend,
+		 * then probe
+		 */
+		if (info->mt_num_devices >= 0)
+			xenkbd_mt_probe(info);
 		break;
 
 	case XenbusStateClosed:

@@ -41,6 +41,7 @@ struct xenkbd_mt_info {
 	int num_contacts;
 	int width;
 	int height;
+	struct xenkbd_ring_info ring;
 };
 
 struct xenkbd_info {
@@ -62,6 +63,7 @@ static int xenkbd_remove(struct xenbus_device *);
 static int xenkbd_connect_backend(struct xenbus_device *, struct xenkbd_info *);
 static void xenkbd_disconnect_backend(struct xenkbd_info *);
 static void xenkbd_mt_remove(struct xenkbd_info *info);
+static int xenkbd_mt_resume(struct xenkbd_info *info);
 
 /*
  * Note: if you need to send out events, see xenfb_do_update() for how
@@ -217,6 +219,34 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t mt_input_handler(int rq, void *dev_id)
+{
+	struct xenkbd_mt_info *info = dev_id;
+	struct xenkbd_page *page = info->ring.page;
+	__u32 cons, prod;
+
+	prod = page->in_prod;
+	if (prod == page->in_cons)
+		return IRQ_HANDLED;
+	rmb();			/* ensure we see ring contents up to prod */
+	for (cons = page->in_cons; cons != prod; cons++) {
+		union xenkbd_in_event *event;
+		event = &XENKBD_IN_RING_REF(page, cons);
+
+		switch (event->type) {
+		case XENKBD_TYPE_MTOUCH:
+			break;
+		default:
+			break;
+		}
+	}
+	mb();			/* ensure we got ring contents */
+	page->in_cons = cons;
+	notify_remote_via_irq(info->ring.irq);
+
+	return IRQ_HANDLED;
+}
+
 static int xenkbd_probe(struct xenbus_device *dev,
 				  const struct xenbus_device_id *id)
 {
@@ -331,9 +361,13 @@ static int xenkbd_probe(struct xenbus_device *dev,
 static int xenkbd_resume(struct xenbus_device *dev)
 {
 	struct xenkbd_info *info = dev_get_drvdata(&dev->dev);
+	int ret;
 
 	xenkbd_disconnect_backend(info);
 	xenkbd_ring_reset(&info->ring);
+	ret = xenkbd_mt_resume(info);
+	if (ret < 0)
+		return ret;
 	return xenkbd_connect_backend(dev, info);
 }
 
@@ -407,8 +441,51 @@ static int xenkbd_mt_read_config(struct xenkbd_info *info, int num_devices)
 	return 0;
 }
 
+static void xenkbd_mt_rings_cleanup(struct xenkbd_info *info)
+{
+	int i;
+
+	for (i = 0; i < info->mt_num_devices; i++) {
+		xenkbd_ring_cleanup(&info->mt_devs[i],
+				    &info->mt_devs[i].ring);
+		xenkbd_ring_reset(&info->mt_devs[i].ring);
+	}
+}
+
+static int xenkbd_mt_rings_setup(struct xenkbd_info *info)
+{
+	char *node;
+	int i, ret;
+
+	for (i = 0; i < info->mt_num_devices; i++) {
+		node = kasprintf(GFP_KERNEL, "%s/mt-%d",
+				 info->xbdev->nodename, i);
+		if (!node)
+			return -ENOMEM;
+		ret = xenkbd_ring_setup(info->xbdev, &info->mt_devs[i],
+					mt_input_handler,
+					&info->mt_devs[i].ring,
+					node);
+		kfree(node);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+
+static int xenkbd_mt_resume(struct xenkbd_info *info)
+{
+	xenkbd_mt_rings_cleanup(info);
+	return xenkbd_mt_rings_setup(info);
+}
+
 static void xenkbd_mt_remove(struct xenkbd_info *info)
 {
+	int i;
+
+	xenkbd_mt_rings_cleanup(info);
+	for (i = 0; i < info->mt_num_devices; i++)
+		xenkbd_ring_free(&info->mt_devs[i].ring);
 	kfree(info->mt_devs);
 	info->mt_devs = NULL;
 	info->mt_num_devices = -1;
@@ -416,7 +493,7 @@ static void xenkbd_mt_remove(struct xenkbd_info *info)
 
 static int xenkbd_mt_probe(struct xenkbd_info *info)
 {
-	int ret, num_devices;
+	int ret, num_devices, i;
 
 	if (info->mt_devs)
 		xenkbd_mt_remove(info);
@@ -433,6 +510,14 @@ static int xenkbd_mt_probe(struct xenkbd_info *info)
 	if (ret < 0)
 		goto error;
 	info->mt_num_devices = num_devices;
+	for (i = 0; i < num_devices; i++)
+		if (!xenkbd_ring_alloc(&info->mt_devs[i].ring)) {
+			ret = -ENOMEM;
+			goto error;
+		}
+	ret = xenkbd_mt_rings_setup(info);
+	if (ret < 0)
+		goto error;
 	return 0;
 error:
 	xenkbd_mt_remove(info);

@@ -39,9 +39,6 @@ struct xenkbd_ring_info {
 };
 
 struct xenkbd_mt_info {
-	int num_contacts;
-	int width;
-	int height;
 	struct xenkbd_ring_info ring;
 	struct input_dev *dev;
 };
@@ -271,45 +268,54 @@ static int xenkbd_mt_get_num_devices(struct xenkbd_info *info)
 	return i;
 }
 
-static int xenkbd_mt_read_config(struct xenkbd_info *info, int num_devices)
+static int xenkbd_mt_update_config(struct xenkbd_info *info)
 {
-	int i;
-	int ret, val;
+	int num_contacts, width, height;
+	int ret, i;
 	char mt_dir[16];
 	char *node;
 
-	for (i = 0; i < num_devices; i++) {
+	for (i = 0; i < info->mt_num_devices; i++) {
+		struct input_dev *dev;
+
 		sprintf(mt_dir, "mt-%d", i);
 
 		node = kasprintf(GFP_KERNEL, "%s/num-contacts", mt_dir);
 		if (!node)
 			return -ENOMEM;
 		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				   node, "%d", &val);
+				   node, "%d", &num_contacts);
 		kfree(node);
 		if (ret != 1)
 			return -EINVAL;
-		info->mt_devs[i].num_contacts = val;
 
 		node = kasprintf(GFP_KERNEL, "%s/width", mt_dir);
 		if (!node)
 			return -ENOMEM;
 		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				   node, "%d", &val);
+				   node, "%d", &width);
 		kfree(node);
 		if (ret != 1)
 			return -EINVAL;
-		info->mt_devs[i].width = val;
 
 		node = kasprintf(GFP_KERNEL, "%s/height", mt_dir);
 		if (!node)
 			return -ENOMEM;
 		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				   node, "%d", &val);
+				   node, "%d", &height);
 		kfree(node);
 		if (ret != 1)
 			return -EINVAL;
-		info->mt_devs[i].height = val;
+
+		dev = info->mt_devs[i].dev;
+
+		input_set_abs_params(dev, ABS_X, 0, width, 0, 0);
+		input_set_abs_params(dev, ABS_MT_POSITION_X, 0, width, 0, 0);
+
+		input_set_abs_params(dev, ABS_Y, 0, height, 0, 0);
+		input_set_abs_params(dev, ABS_MT_POSITION_Y, 0, height, 0, 0);
+
+		input_mt_init_slots(dev, num_contacts, 0);
 	}
 	return 0;
 }
@@ -364,10 +370,12 @@ static struct input_dev *xenkbd_mt_input_dev_register(struct xenkbd_info *info,
 
 	__set_bit(EV_ABS, touch->evbit);
 
-	input_set_abs_params(touch, ABS_X,
-			     0, info->mt_devs[index].width, 0, 0);
-	input_set_abs_params(touch, ABS_Y,
-			     0, info->mt_devs[index].height, 0, 0);
+	/*
+	 * width, height and number of slots will be set on back's
+	 * XenbusStateConnected
+	 */
+	input_set_abs_params(touch, ABS_X, 0, XENFB_WIDTH, 0, 0);
+	input_set_abs_params(touch, ABS_Y, 0, XENFB_HEIGHT, 0, 0);
 	input_set_abs_params(touch, ABS_PRESSURE, 0, 255, 0, 0);
 
 	input_set_abs_params(touch, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
@@ -412,8 +420,6 @@ static int xenkbd_mt_probe(struct xenkbd_info *info)
 {
 	int ret, num_devices, i;
 
-	if (info->mt_devs)
-		xenkbd_mt_remove(info);
 	num_devices = xenkbd_mt_get_num_devices(info);
 	if (!num_devices)
 		return -EINVAL;
@@ -423,9 +429,6 @@ static int xenkbd_mt_probe(struct xenkbd_info *info)
 				 "allocating device memory");
 		return -ENOMEM;
 	}
-	ret = xenkbd_mt_read_config(info, num_devices);
-	if (ret < 0)
-		goto error;
 	info->mt_num_devices = num_devices;
 	for (i = 0; i < num_devices; i++)
 		if (!xenkbd_ring_alloc(&info->mt_devs[i].ring)) {
@@ -549,6 +552,10 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	}
 	info->ptr = ptr;
 
+	ret = xenkbd_mt_probe(info);
+	if (ret < 0)
+		goto error;
+
 	ret = xenkbd_connect_backend(dev, info);
 	if (ret < 0)
 		goto error;
@@ -643,8 +650,6 @@ InitWait:
 					   "request-multi-touch", "1");
 			if (ret)
 				pr_warning("xenkbd: can't request multi-touch");
-			else
-				info->mt_num_devices = 0;
 		}
 
 		xenbus_switch_state(dev, XenbusStateConnected);
@@ -668,13 +673,8 @@ InitWait:
 				 "height", "%d", &val) > 0)
 			input_set_abs_params(info->ptr, ABS_Y, 0, val, 0, 0);
 
-		/*
-		 * Multi-touch configuration must be completed at this stage:
-		 * if multi-touch support was advertised by the backend,
-		 * then probe
-		 */
-		if (info->mt_num_devices >= 0)
-			xenkbd_mt_probe(info);
+		xenkbd_mt_update_config(info);
+
 		break;
 
 	case XenbusStateClosed:

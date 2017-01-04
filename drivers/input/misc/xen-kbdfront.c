@@ -17,6 +17,7 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/input.h>
+#include <linux/input/mt.h>
 #include <linux/slab.h>
 
 #include <asm/xen/hypervisor.h>
@@ -42,6 +43,7 @@ struct xenkbd_mt_info {
 	int width;
 	int height;
 	struct xenkbd_ring_info ring;
+	struct input_dev *dev;
 };
 
 struct xenkbd_info {
@@ -233,8 +235,20 @@ static irqreturn_t mt_input_handler(int rq, void *dev_id)
 		union xenkbd_in_event *event;
 		event = &XENKBD_IN_RING_REF(page, cons);
 
-		switch (event->type) {
-		case XENKBD_TYPE_MTOUCH:
+		if (unlikely(event->type != XENKBD_TYPE_MTOUCH))
+			continue;
+		switch (event->mtouch.event_type) {
+		case XENKBD_MT_EV_DOWN:
+			break;
+		case XENKBD_MT_EV_UP:
+			break;
+		case XENKBD_MT_EV_MOTION:
+			break;
+		case XENKBD_MT_EV_SYN:
+			break;
+		case XENKBD_MT_EV_SHAPE:
+			break;
+		case XENKBD_MT_EV_ORIENT:
 			break;
 		default:
 			break;
@@ -473,6 +487,47 @@ static int xenkbd_mt_rings_setup(struct xenkbd_info *info)
 	return 0;
 }
 
+static struct input_dev *xenkbd_mt_input_dev_register(struct xenkbd_info *info,
+						   int index)
+{
+	struct input_dev *touch;
+	int ret;
+
+	touch = input_allocate_device();
+	if (!touch)
+		return NULL;
+	touch->name = devm_kasprintf(&touch->dev, GFP_KERNEL,
+				     "Xen Virtual Multi-touch %d", index);
+	touch->phys = info->phys;
+	touch->id.bustype = BUS_PCI;
+	touch->id.vendor = 0x5853;
+	touch->id.product = 0xfffd - index;
+
+	__set_bit(EV_ABS, touch->evbit);
+
+	input_set_abs_params(touch, ABS_X,
+			     0, info->mt_devs[index].width, 0, 0);
+	input_set_abs_params(touch, ABS_Y,
+			     0, info->mt_devs[index].height, 0, 0);
+	input_set_abs_params(touch, ABS_PRESSURE, 0, 255, 0, 0);
+
+	input_set_abs_params(touch, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+	input_set_abs_params(touch, ABS_MT_POSITION_X,
+			     0, XENFB_WIDTH, 0, 0);
+	input_set_abs_params(touch, ABS_MT_POSITION_Y,
+			     0, XENFB_HEIGHT, 0, 0);
+	input_set_abs_params(touch, ABS_MT_PRESSURE, 0, 255, 0, 0);
+
+	ret = input_register_device(touch);
+	if (ret < 0) {
+		input_free_device(touch);
+		xenbus_dev_fatal(info->xbdev, ret,
+				 "input_register_device(touch)");
+		return NULL;
+	}
+	return touch;
+}
+
 static int xenkbd_mt_resume(struct xenkbd_info *info)
 {
 	xenkbd_mt_rings_cleanup(info);
@@ -484,8 +539,11 @@ static void xenkbd_mt_remove(struct xenkbd_info *info)
 	int i;
 
 	xenkbd_mt_rings_cleanup(info);
-	for (i = 0; i < info->mt_num_devices; i++)
+	for (i = 0; i < info->mt_num_devices; i++) {
+		if (info->mt_devs[i].dev)
+			input_unregister_device(info->mt_devs[i].dev);
 		xenkbd_ring_free(&info->mt_devs[i].ring);
+	}
 	kfree(info->mt_devs);
 	info->mt_devs = NULL;
 	info->mt_num_devices = -1;
@@ -518,6 +576,16 @@ static int xenkbd_mt_probe(struct xenkbd_info *info)
 	ret = xenkbd_mt_rings_setup(info);
 	if (ret < 0)
 		goto error;
+	for (i = 0; i < num_devices; i++) {
+		struct input_dev *touch;
+
+		touch = xenkbd_mt_input_dev_register(info, i);
+		if (!touch) {
+			ret = -EFAULT;
+			goto error;
+		}
+		info->mt_devs[i].dev = touch;
+	}
 	return 0;
 error:
 	xenkbd_mt_remove(info);

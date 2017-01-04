@@ -97,11 +97,12 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 						 -event->pos.rel_z);
 			break;
 		case XENKBD_TYPE_MTOUCH:
+#if 0
 			dev = info->touch;
 			input_event(dev, EV_ABS, ABS_MT_SLOT,
-				    event->mtouch.slot);
-			if (event->mtouch.tracking_id ==
-					XENKBD_MT_TRACKING_ID_UNUSED) {
+				    event->mtouch.id);
+			if (event->mtouch.id ==
+					XENKBD_MT_ID_UNUSED) {
 				input_event(dev, EV_ABS, ABS_MT_TRACKING_ID,
 					    -1);
 			} else {
@@ -114,6 +115,7 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 				input_event(dev, EV_ABS, ABS_MT_POSITION_Y,
 					    event->mtouch.abs_y);
 			}
+#endif
 			break;
 		}
 		if (dev)

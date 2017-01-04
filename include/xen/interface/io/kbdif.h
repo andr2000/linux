@@ -1,5 +1,5 @@
 /*
- * kbdif.h -- Xen virtual keyboard/mouse
+ * kbdif.h -- Xen virtual keyboard/mouse/multi-touch
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -47,10 +47,19 @@
 
 /*
  * Multi-touch event
- * Capable backend sets feature-multi-touch, mt-num-slots, mt-width
- * and mt-height in xenstore.
- * Frontend requests multi-touch support by setting
- * request-multi-touch in xenstore.
+ * Capable backend sets feature-multi-touch in xenstore.
+ * Frontend requests feature by setting request-multi-touch in xenstore.
+ * Multi-touch input devices use dedicated event rings and are
+ * configured via xenstore properties under mt-%d folder(s), %d being
+ * a sequential number of the virtual input device:
+ * Backend configures:
+ *   o num-contacts - number of simultaneous touches supported
+ *   o width - width of the touch area in pixels, 32-bit signed integer
+ *   o height - height of the touch area in pixels, 32-bit signed integer
+ * Frontend publishes:
+ *   o page-ref - unique reference of this connection
+ *   o page-gref - granted reference of the event ring shared page
+ *   o event-channel - allocated event channel's port
  */
 #define XENKBD_TYPE_MTOUCH  5
 
@@ -74,25 +83,57 @@ struct xenkbd_position {
 	int32_t rel_z;		/* relative Z motion (wheel) */
 };
 
-/* Multi-touch event handling:
- *   o slots are dynamically assigned to different contacts being processed
- *     at the moment, e.g. if two touches are active at the moment there will
- *     be 2 slots in use. So, slot can be thought of as an event channel index
- *   o tracking ID is a unique ID assigned to a contact when it is made
- *     (pressed) and is set to XENKBD_MT_TRACKING_ID_UNUSED when the contact
- *     is released. The tracking ID identifies an initiated contact
- *     throughout its life cycle
+/* Sent when a new touch is made: touch is assigned a unique contact
+ * ID, sent with this and consequent events related to this touch.
  */
-
-#define XENKBD_MT_TRACKING_ID_UNUSED	-1
+#define XENKBD_MT_EV_DOWN	0
+/* Touch point has been released */
+#define XENKBD_MT_EV_UP		1
+/* Touch point has changed its coordinate(s) */
+#define XENKBD_MT_EV_MOTION	2
+/* Input synchronization event: shows end of a set of events
+ * which logically belong together.
+ */
+#define XENKBD_MT_EV_SYN	3
+/* Touch point has changed its shape. Shape is approximated by an ellipse
+ * through the major and minor axis lengths: major is the longer diameter
+ * of the ellipse and minor is the shorter one. Center of the ellipse is
+ * reported via XENKBD_MT_EV_DOWN/XENKBD_MT_EV_MOTION events.
+ */
+#define XENKBD_MT_EV_SHAPE	4
+/* Touch point's shape has changed its orientation: calculated as a clockwise
+ * angle between the major axis of the ellipse and positive Y axis in degrees,
+ * [-180; +180].
+ */
+#define XENKBD_MT_EV_ORIENT	5
 
 struct xenkbd_mtouch {
-	uint8_t type;		/* XENKBD_TYPE_MTOUCH */
-	uint8_t slot;		/* slot being processed */
-	uint16_t reserved;
-	int32_t tracking_id;	/* unique ID of the contact */
-	int32_t abs_x;		/* absolute X position (in pixels) */
-	int32_t abs_y;		/* absolute Y position (in pixels) */
+	uint8_t type;			/* XENKBD_TYPE_MTOUCH */
+	uint8_t event_type;		/* XENKBD_MT_EV_??? */
+	/* Touch interactions can consist of one or more contacts.
+	 * For each contact, a series of events is generated, starting
+	 * with a down event, followed by zero or more motion events,
+	 * and ending with an up event. Events relating to the same
+	 * contact point can be identified by the ID of the sequence: contact ID.
+	 * Contact ID may be reused after XENKBD_MT_EV_UP event and
+	 * is in the [0; num-contacts - 1] range.
+	 */
+	uint8_t contact_id;
+	uint8_t reserved[5];		/* reserved for the future use */
+	union {
+		/* XENKBD_MT_EV_DOWN/XENKBD_MT_EV_MOTION */
+		struct {
+			int32_t abs_x;	/* absolute X position, pixels */
+			int32_t abs_y;	/* absolute Y position, pixels */
+		} pos;
+		/* XENKBD_MT_EV_SHAPE */
+		struct {
+			uint32_t major;	/* length of the major axis, pixels */
+			uint32_t minor;	/* length of the minor axis, pixels */
+		} shape;
+		/* XENKBD_MT_EV_ORIENT */
+		uint16_t orientation;	/* clockwise angle of the major axis */
+	} u;
 };
 
 #define XENKBD_IN_EVENT_SIZE 40

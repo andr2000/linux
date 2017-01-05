@@ -223,23 +223,54 @@ static irqreturn_t mt_input_handler(int rq, void *dev_id)
 		return IRQ_HANDLED;
 	rmb();			/* ensure we see ring contents up to prod */
 	for (cons = page->in_cons; cons != prod; cons++) {
-		union xenkbd_in_event *event;
-		event = &XENKBD_IN_RING_REF(page, cons);
+		struct input_dev *input = info->dev;
+		struct xenkbd_mtouch *event =
+			(struct xenkbd_mtouch *)&XENKBD_IN_RING_REF(page, cons);
 
 		if (unlikely(event->type != XENKBD_TYPE_MTOUCH))
 			continue;
-		switch (event->mtouch.event_type) {
+		switch (event->event_type) {
 		case XENKBD_MT_EV_DOWN:
+			input_mt_slot(input, event->contact_id);
+			input_mt_report_slot_state(input, MT_TOOL_FINGER,
+						   true);
+			input_event(input, EV_ABS, ABS_MT_POSITION_X,
+				    event->u.pos.abs_x);
+			input_event(input, EV_ABS, ABS_MT_POSITION_Y,
+				    event->u.pos.abs_y);
+			input_event(input, EV_ABS, ABS_X,
+				    event->u.pos.abs_x);
+			input_event(input, EV_ABS, ABS_Y,
+				    event->u.pos.abs_y);
 			break;
 		case XENKBD_MT_EV_UP:
+			input_mt_slot(input, event->contact_id);
+			input_mt_report_slot_state(input, MT_TOOL_FINGER,
+						   false);
 			break;
 		case XENKBD_MT_EV_MOTION:
+			input_event(input, EV_ABS, ABS_MT_POSITION_X,
+				    event->u.pos.abs_x);
+			input_event(input, EV_ABS, ABS_MT_POSITION_Y,
+				    event->u.pos.abs_y);
+			input_event(input, EV_ABS, ABS_X,
+				    event->u.pos.abs_x);
+			input_event(input, EV_ABS, ABS_Y,
+				    event->u.pos.abs_y);
 			break;
 		case XENKBD_MT_EV_SYN:
+			input_mt_sync_frame(input);
+			input_sync(input);
 			break;
 		case XENKBD_MT_EV_SHAPE:
+			input_event(input, EV_ABS, ABS_MT_TOUCH_MAJOR,
+				    event->u.shape.major);
+			input_event(input, EV_ABS, ABS_MT_TOUCH_MINOR,
+				    event->u.shape.minor);
 			break;
 		case XENKBD_MT_EV_ORIENT:
+			input_event(input, EV_ABS, ABS_MT_ORIENTATION,
+				    event->u.orientation);
 			break;
 		default:
 			break;

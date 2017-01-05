@@ -49,10 +49,6 @@ struct xenkbd_info {
 	struct xenkbd_ring_info ring;
 	struct xenbus_device *xbdev;
 	char phys[32];
-	/* number of multi-touch devices configured:
-	 * -1 - if no multi-touch support advertised by the backend
-	 * >=0 - number of multi-touch devices configured
-	 */
 	int mt_num_devices;
 	/* array of multi-touch devices */
 	struct xenkbd_mt_info *mt_devs;
@@ -320,17 +316,6 @@ static int xenkbd_mt_update_config(struct xenkbd_info *info)
 	return 0;
 }
 
-static void xenkbd_mt_rings_cleanup(struct xenkbd_info *info)
-{
-	int i;
-
-	for (i = 0; i < info->mt_num_devices; i++) {
-		xenkbd_ring_cleanup(&info->mt_devs[i],
-				    &info->mt_devs[i].ring);
-		xenkbd_ring_reset(&info->mt_devs[i].ring);
-	}
-}
-
 static int xenkbd_mt_rings_setup(struct xenkbd_info *info)
 {
 	char *node;
@@ -395,35 +380,17 @@ static struct input_dev *xenkbd_mt_input_dev_register(struct xenkbd_info *info,
 	return touch;
 }
 
-static int xenkbd_mt_resume(struct xenkbd_info *info)
-{
-	xenkbd_mt_rings_cleanup(info);
-	return xenkbd_mt_rings_setup(info);
-}
-
-static void xenkbd_mt_remove(struct xenkbd_info *info)
-{
-	int i;
-
-	xenkbd_mt_rings_cleanup(info);
-	for (i = 0; i < info->mt_num_devices; i++) {
-		if (info->mt_devs[i].dev)
-			input_unregister_device(info->mt_devs[i].dev);
-		xenkbd_ring_free(&info->mt_devs[i].ring);
-	}
-	kfree(info->mt_devs);
-	info->mt_devs = NULL;
-	info->mt_num_devices = -1;
-}
-
 static int xenkbd_mt_probe(struct xenkbd_info *info)
 {
-	int ret, num_devices, i;
+	int num_devices, i;
 
 	num_devices = xenkbd_mt_get_num_devices(info);
-	if (!num_devices)
-		return -EINVAL;
-	info->mt_devs = kcalloc(num_devices, sizeof(*info->mt_devs), GFP_KERNEL);
+	if (!num_devices) {
+		pr_warning("xenkbd: no multi-touch devices configured\n");
+		return 0;
+	}
+	info->mt_devs = kcalloc(num_devices, sizeof(*info->mt_devs),
+				GFP_KERNEL);
 	if (!info->mt_devs) {
 		xenbus_dev_fatal(info->xbdev, -ENOMEM,
 				 "allocating device memory");
@@ -431,28 +398,17 @@ static int xenkbd_mt_probe(struct xenkbd_info *info)
 	}
 	info->mt_num_devices = num_devices;
 	for (i = 0; i < num_devices; i++)
-		if (!xenkbd_ring_alloc(&info->mt_devs[i].ring)) {
-			ret = -ENOMEM;
-			goto error;
-		}
-	ret = xenkbd_mt_rings_setup(info);
-	if (ret < 0)
-		goto error;
+		if (!xenkbd_ring_alloc(&info->mt_devs[i].ring))
+			return -ENOMEM;
 	for (i = 0; i < num_devices; i++) {
 		struct input_dev *touch;
 
 		touch = xenkbd_mt_input_dev_register(info, i);
-		if (!touch) {
-			ret = -EFAULT;
-			goto error;
-		}
+		if (!touch)
+			return -EFAULT;
 		info->mt_devs[i].dev = touch;
 	}
 	return 0;
-error:
-	xenkbd_mt_remove(info);
-	xenbus_dev_fatal(info->xbdev, ret, "probing multi-touch device(s)");
-	return ret;
 }
 
 static int xenkbd_probe(struct xenbus_device *dev,
@@ -470,7 +426,6 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	}
 	dev_set_drvdata(&dev->dev, info);
 	info->xbdev = dev;
-	info->mt_num_devices = -1;
 	snprintf(info->phys, sizeof(info->phys), "xenbus/%s", dev->nodename);
 
 	if (!xenkbd_ring_alloc(&info->ring))
@@ -492,8 +447,6 @@ static int xenkbd_probe(struct xenbus_device *dev,
 				   "request-multi-touch", "1");
 		if (ret)
 			pr_warning("xenkbd: can't request multi-touch");
-		else
-			info->mt_num_devices = 0;
 	}
 
 	/* keyboard */
@@ -573,19 +526,19 @@ static int xenkbd_probe(struct xenbus_device *dev,
 static int xenkbd_resume(struct xenbus_device *dev)
 {
 	struct xenkbd_info *info = dev_get_drvdata(&dev->dev);
-	int ret;
+	int i;
 
 	xenkbd_disconnect_backend(info);
 	xenkbd_ring_reset(&info->ring);
-	ret = xenkbd_mt_resume(info);
-	if (ret < 0)
-		return ret;
+	for (i = 0; i < info->mt_num_devices; i++)
+		xenkbd_ring_reset(&info->mt_devs[i].ring);
 	return xenkbd_connect_backend(dev, info);
 }
 
 static int xenkbd_remove(struct xenbus_device *dev)
 {
 	struct xenkbd_info *info = dev_get_drvdata(&dev->dev);
+	int i;
 
 	xenkbd_disconnect_backend(info);
 	if (info->kbd)
@@ -593,7 +546,12 @@ static int xenkbd_remove(struct xenbus_device *dev)
 	if (info->ptr)
 		input_unregister_device(info->ptr);
 	xenkbd_ring_free(&info->ring);
-	xenkbd_mt_remove(info);
+	for (i = 0; i < info->mt_num_devices; i++) {
+		if (info->mt_devs[i].dev)
+			input_unregister_device(info->mt_devs[i].dev);
+		xenkbd_ring_free(&info->mt_devs[i].ring);
+	}
+	kfree(info->mt_devs);
 	kfree(info);
 	return 0;
 }
@@ -608,13 +566,23 @@ static int xenkbd_connect_backend(struct xenbus_device *dev,
 	if (ret < 0)
 		return ret;
 
+	ret = xenkbd_mt_rings_setup(info);
+
+	if (ret < 0)
+		return ret;
+
 	xenbus_switch_state(dev, XenbusStateInitialised);
 	return 0;
 }
 
 static void xenkbd_disconnect_backend(struct xenkbd_info *info)
 {
+	int i;
+
 	xenkbd_ring_cleanup(info, &info->ring);
+	for (i = 0; i < info->mt_num_devices; i++)
+		xenkbd_ring_cleanup(&info->mt_devs[i],
+				    &info->mt_devs[i].ring);
 }
 
 static void xenkbd_backend_changed(struct xenbus_device *dev,

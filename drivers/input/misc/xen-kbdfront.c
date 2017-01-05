@@ -260,7 +260,7 @@ static int xenkbd_mt_get_num_devices(struct xenkbd_info *info)
 	i = 0;
 	do {
 		sprintf(mt_dir, "mt-%d", i);
-	} while (xenbus_exists(XBT_NIL, info->xbdev->otherend, mt_dir) && ++i);
+	} while (xenbus_exists(XBT_NIL, info->xbdev->nodename, mt_dir) && ++i);
 	return i;
 }
 
@@ -279,7 +279,7 @@ static int xenkbd_mt_update_config(struct xenkbd_info *info)
 		node = kasprintf(GFP_KERNEL, "%s/num-contacts", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
 				   node, "%d", &num_contacts);
 		kfree(node);
 		if (ret != 1)
@@ -288,7 +288,7 @@ static int xenkbd_mt_update_config(struct xenkbd_info *info)
 		node = kasprintf(GFP_KERNEL, "%s/width", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
 				   node, "%d", &width);
 		kfree(node);
 		if (ret != 1)
@@ -297,7 +297,7 @@ static int xenkbd_mt_update_config(struct xenkbd_info *info)
 		node = kasprintf(GFP_KERNEL, "%s/height", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
+		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
 				   node, "%d", &height);
 		kfree(node);
 		if (ret != 1)

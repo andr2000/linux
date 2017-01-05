@@ -298,7 +298,7 @@ static int xenkbd_mt_get_num_devices(struct xenkbd_info *info)
 static int xenkbd_mt_update_config(struct xenkbd_info *info)
 {
 	int num_contacts, width, height;
-	int ret, i;
+	int i;
 	char mt_dir[16];
 	char *node;
 
@@ -310,29 +310,23 @@ static int xenkbd_mt_update_config(struct xenkbd_info *info)
 		node = kasprintf(GFP_KERNEL, "%s/num-contacts", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
-				   node, "%d", &num_contacts);
+		num_contacts = xenbus_read_unsigned(info->xbdev->nodename,
+						    node, 1);
 		kfree(node);
-		if (ret != 1)
-			return -EINVAL;
 
 		node = kasprintf(GFP_KERNEL, "%s/width", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
-				   node, "%d", &width);
+		width = xenbus_read_unsigned(info->xbdev->nodename,
+					     node, XENFB_WIDTH);
 		kfree(node);
-		if (ret != 1)
-			return -EINVAL;
 
 		node = kasprintf(GFP_KERNEL, "%s/height", mt_dir);
 		if (!node)
 			return -ENOMEM;
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->nodename,
-				   node, "%d", &height);
+		height = xenbus_read_unsigned(info->xbdev->nodename,
+					      node, XENFB_HEIGHT);
 		kfree(node);
-		if (ret != 1)
-			return -EINVAL;
 
 		dev = info->mt_devs[i].dev;
 
@@ -640,11 +634,8 @@ InitWait:
 				pr_warning("xenkbd: can't request abs-pointer");
 		}
 
-		ret = xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				   "feature-multi-touch", "%d", &val);
-		if (ret < 0)
-			val = 0;
-		if (val) {
+		if (xenbus_read_unsigned(info->xbdev->otherend,
+					 "feature-multi-touch", 0)) {
 			ret = xenbus_write(XBT_NIL, dev->nodename,
 					   "request-multi-touch", "1");
 			if (ret)

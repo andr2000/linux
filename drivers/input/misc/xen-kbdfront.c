@@ -93,14 +93,15 @@ static int xenkbd_ring_setup(struct xenbus_device *dev, void *dev_id,
 		xenbus_dev_fatal(dev, ret, "starting transaction");
 		goto error_irqh;
 	}
-	ret = xenbus_printf(xbt, path, "page-ref", "%lu",
-			    virt_to_gfn(ring->page));
+	ret = xenbus_printf(xbt, path, XENKBD_FIELD_RING_REF,
+			    "%lu", virt_to_gfn(ring->page));
 	if (ret)
 		goto error_xenbus;
-	ret = xenbus_printf(xbt, path, "page-gref", "%u", ring->gref);
+	ret = xenbus_printf(xbt, path, XENKBD_FIELD_RING_GREF,
+			    "%u", ring->gref);
 	if (ret)
 		goto error_xenbus;
-	ret = xenbus_printf(xbt, path, "event-channel", "%u",
+	ret = xenbus_printf(xbt, path, XENKBD_FIELD_EVT_CHANNEL, "%u",
 			    evtchn);
 	if (ret)
 		goto error_xenbus;
@@ -223,10 +224,11 @@ static int xenkbd_probe(struct xenbus_device *dev,
 	if (!xenkbd_ring_alloc(&info->ring))
 		goto error_nomem;
 
-	abs = xenbus_read_unsigned(dev->otherend, "feature-abs-pointer", 0);
+	abs = xenbus_read_unsigned(dev->otherend,
+				   XENKBD_FIELD_FEAT_ABS_POINTER, 0);
 	if (abs) {
 		ret = xenbus_write(XBT_NIL, dev->nodename,
-				   "request-abs-pointer", "1");
+				   XENKBD_FIELD_REQ_ABS_POINTER, "1");
 		if (ret) {
 			pr_warning("xenkbd: can't request abs-pointer");
 			abs = 0;
@@ -362,9 +364,9 @@ static void xenkbd_backend_changed(struct xenbus_device *dev,
 	case XenbusStateInitWait:
 InitWait:
 		if (xenbus_read_unsigned(info->xbdev->otherend,
-					 "feature-abs-pointer", 0)) {
+					 XENKBD_FIELD_FEAT_ABS_POINTER, 0)) {
 			ret = xenbus_write(XBT_NIL, info->xbdev->nodename,
-					   "request-abs-pointer", "1");
+					   XENKBD_FIELD_REQ_ABS_POINTER, "1");
 			if (ret)
 				pr_warning("xenkbd: can't request abs-pointer");
 		}
@@ -383,11 +385,11 @@ InitWait:
 
 		/* Set input abs params to match backend screen res */
 		if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				 "width", "%d", &val) > 0)
+				 XENKBD_FIELD_WIDTH, "%d", &val) > 0)
 			input_set_abs_params(info->ptr, ABS_X, 0, val, 0, 0);
 
 		if (xenbus_scanf(XBT_NIL, info->xbdev->otherend,
-				 "height", "%d", &val) > 0)
+				 XENKBD_FIELD_HEIGHT, "%d", &val) > 0)
 			input_set_abs_params(info->ptr, ABS_Y, 0, val, 0, 0);
 
 		break;
@@ -403,7 +405,7 @@ InitWait:
 }
 
 static const struct xenbus_device_id xenkbd_ids[] = {
-	{ "vkbd" },
+	{ XENKBD_DRIVER_NAME },
 	{ "" }
 };
 

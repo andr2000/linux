@@ -134,7 +134,9 @@ static const struct mssr_mod_clk r8a7796_mod_clks[] __initconst = {
 	DEF_MOD("sys-dmac2",		 217,	R8A7796_CLK_S3D1),
 	DEF_MOD("sys-dmac1",		 218,	R8A7796_CLK_S3D1),
 	DEF_MOD("sys-dmac0",		 219,	R8A7796_CLK_S3D1),
+#if 0
 	DEF_MOD("scif2",		 310,	R8A7796_CLK_S3D4),
+#endif
 	DEF_MOD("sdif3",		 311,	R8A7796_CLK_SD3),
 	DEF_MOD("sdif2",		 312,	R8A7796_CLK_SD2),
 	DEF_MOD("sdif1",		 313,	R8A7796_CLK_SD1),

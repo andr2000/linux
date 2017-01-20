@@ -56,7 +56,6 @@ extern "C" {
 #define DRM_XEN_ZCOPY_DUMB_FROM_REFS	0x00
 
 struct drm_xen_zcopy_dumb_from_refs {
-	/* Xen */
 	uint32_t num_grefs;
 	/* FIXME: user-space uses uint32_t instead of grant_ref_t
 	 * for mapping
@@ -66,8 +65,40 @@ struct drm_xen_zcopy_dumb_from_refs {
 	struct drm_mode_create_dumb dumb;
 };
 
+/*
+ * This will grant references to a dumb buffer's memory provided by the
+ * backend:
+ *  o Frontend
+ *    o requests backend to allocate dumb and grant references
+ *      to its memory
+ *  o Backend
+ *    o requests real HW driver to create a dumb with DRM_IOCTL_MODE_CREATE_DUMB
+ *    o requests handle to fd conversion via DRM_IOCTL_PRIME_HANDLE_TO_FD
+ *    o requests zero-copy driver to import the prime buffer with
+ *      DRM_IOCTL_PRIME_FD_TO_HANDLE
+ *    o issues DRM_XEN_ZCOPY_DUMB_TO_REFS ioctl to
+ *      grant references to the buffer's memory.
+ *   o passes grefs to the frontend
+ *   o at the end:
+ *     o closes zero-copy driver's handle with DRM_IOCTL_GEM_CLOSE
+ *     o closes real HW driver's handle with DRM_IOCTL_GEM_CLOSE
+ */
+#define DRM_XEN_ZCOPY_DUMB_TO_REFS	0x01
+
+struct drm_xen_zcopy_dumb_to_refs {
+	uint32_t num_grefs;
+	/* FIXME: user-space uses uint32_t instead of grant_ref_t
+	 * for mapping
+	 */
+	uint32_t *grefs;
+	uint64_t otherend_id;
+	uint32_t handle;
+};
+
 #define DRM_IOCTL_XEN_ZCOPY_DUMB_FROM_REFS DRM_IOWR(DRM_COMMAND_BASE + \
 	DRM_XEN_ZCOPY_DUMB_FROM_REFS, struct drm_xen_zcopy_dumb_from_refs)
+#define DRM_IOCTL_XEN_ZCOPY_DUMB_TO_REFS DRM_IOWR(DRM_COMMAND_BASE + \
+	DRM_XEN_ZCOPY_DUMB_TO_REFS, struct drm_xen_zcopy_dumb_to_refs)
 
 #if defined(__cplusplus)
 }

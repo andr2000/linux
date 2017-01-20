@@ -27,6 +27,8 @@
 
 #include <drm/xen_zcopy_drm.h>
 
+#define GRANT_INVALID_REF	0
+
 struct xen_info {
 	struct drm_device *drm_dev;
 };
@@ -39,14 +41,18 @@ struct xen_gem_object {
 	int otherend_id;
 	uint32_t num_pages;
 	grant_ref_t *grefs;
-	/* these are pages from Xen balloon */
+	/* these are pages from Xen balloon for allocated Xen GEM object */
 	struct page **pages;
-	/* and their map grant handles and addresses */
+	/* this will be set if we have imported a GEM object */
+	struct sg_table *sgt;
+	/* map grant handles and addresses */
 	struct map_info {
 		grant_handle_t handle;
 		uint64_t dev_bus_addr;
 	} *map_info;
 };
+
+static void xen_release_refs(struct xen_gem_object *xen_obj);
 
 static inline struct xen_gem_object *
 to_xen_gem_obj(struct drm_gem_object *gem_obj)
@@ -171,6 +177,8 @@ static int xen_do_unmap(struct xen_gem_object *xen_obj)
 	kfree(xen_obj->map_info);
 	xen_obj->map_info = NULL;
 	kfree(unmap_ops);
+	kfree(xen_obj->grefs);
+	xen_obj->grefs = NULL;
 	return 0;
 }
 
@@ -179,6 +187,11 @@ static void xen_gem_close_object(struct drm_gem_object *gem_obj,
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
+	if (xen_obj->sgt) {
+		/* we hold an imported object */
+		xen_release_refs(xen_obj);
+		return;
+	}
 	/* from drm_prime.c:
 	 * On the export the dma_buf holds a reference to the exporting GEM
 	 * object. It takes this reference in handle_to_fd_ioctl, when it
@@ -194,11 +207,8 @@ static void xen_gem_close_object(struct drm_gem_object *gem_obj,
 	 */
 	mutex_lock(&gem_obj->dev->object_name_lock);
 	WARN_ON(gem_obj->handle_count != 1);
-	if (gem_obj->handle_count == 1) {
+	if (gem_obj->handle_count == 1)
 		xen_do_unmap(xen_obj);
-		kfree(xen_obj->grefs);
-		xen_obj->grefs = NULL;
-	}
 	mutex_unlock(&gem_obj->dev->object_name_lock);
 }
 
@@ -211,8 +221,10 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 	 */
 	if (unlikely(xen_obj->grefs)) {
 		/* leftovers due to backend crash? */
-		xen_do_unmap(xen_obj);
-		kfree(xen_obj->grefs);
+		if (xen_obj->sgt)
+			xen_release_refs(xen_obj);
+		else
+			xen_do_unmap(xen_obj);
 	}
 	drm_gem_object_release(gem_obj);
 	kfree(xen_obj);
@@ -304,7 +316,7 @@ fail:
 	return ret;
 }
 
-static int xen_do_dumb_create(struct drm_device *dev,
+static int xen_do_dumb_from_refs_create(struct drm_device *dev,
 	struct drm_xen_zcopy_dumb_from_refs *req,
 	struct drm_file *file_priv)
 {
@@ -344,7 +356,7 @@ fail:
 	return ret;
 }
 
-static int xen_create_dumb_ioctl(struct drm_device *dev,
+static int xen_dumb_from_refs_ioctl(struct drm_device *dev,
 	void *data, struct drm_file *file_priv)
 {
 	struct drm_xen_zcopy_dumb_from_refs *req =
@@ -352,7 +364,7 @@ static int xen_create_dumb_ioctl(struct drm_device *dev,
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
 
-	if (!req->num_grefs || !req->grefs || !req->otherend_id)
+	if (!req->num_grefs || !req->grefs)
 		return -EINVAL;
 	if (!args->width || !args->height || !args->bpp)
 		return -EINVAL;
@@ -380,12 +392,149 @@ static int xen_create_dumb_ioctl(struct drm_device *dev,
 			(int)DIV_ROUND_UP(args->size, PAGE_SIZE));
 		return -EINVAL;
 	}
-	return xen_do_dumb_create(dev, req, file_priv);
+	return xen_do_dumb_from_refs_create(dev, req, file_priv);
+}
+
+static void xen_release_refs(struct xen_gem_object *xen_obj)
+{
+	int i;
+
+	if (xen_obj->grefs)
+		for (i = 0; i < xen_obj->num_pages; i++)
+			if (xen_obj->grefs[i] != GRANT_INVALID_REF)
+				gnttab_end_foreign_access(xen_obj->grefs[i],
+					0, 0UL);
+	kfree(xen_obj->grefs);
+	xen_obj->grefs = NULL;
+	xen_obj->sgt = NULL;
+}
+
+static int xen_do_grant_refs(struct xen_gem_object *xen_obj)
+{
+	grant_ref_t priv_gref_head;
+	int ret, j, cur_ref, num_pages;
+	struct sg_page_iter sg_iter;
+
+	ret = gnttab_alloc_grant_references(xen_obj->num_pages,
+		&priv_gref_head);
+	if (ret < 0) {
+		DRM_ERROR("Cannot allocate grant references\n");
+		return ret;
+	}
+	j = 0;
+	num_pages = xen_obj->num_pages;
+	for_each_sg_page(xen_obj->sgt->sgl, &sg_iter, xen_obj->sgt->nents, 0) {
+		struct page *page;
+
+		page = sg_page_iter_page(&sg_iter);
+		cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
+		if (cur_ref < 0)
+			return cur_ref;
+		gnttab_grant_foreign_access_ref(cur_ref,
+			xen_obj->otherend_id, xen_page_to_gfn(page), 0);
+		xen_obj->grefs[j++] = cur_ref;
+		num_pages--;
+	}
+	WARN_ON(num_pages != 0);
+	gnttab_free_grant_references(priv_gref_head);
+	return 0;
+}
+
+static int xen_dumb_to_refs_ioctl(struct drm_device *dev,
+	void *data, struct drm_file *file_priv)
+{
+	struct xen_gem_object *xen_obj;
+	struct drm_gem_object *gem_obj;
+	struct drm_xen_zcopy_dumb_to_refs *req =
+		(struct drm_xen_zcopy_dumb_to_refs *)data;
+	int ret;
+
+	if (!req->num_grefs || !req->grefs)
+		return -EINVAL;
+
+	gem_obj = drm_gem_object_lookup(dev, file_priv, req->handle);
+	if (!gem_obj) {
+		DRM_ERROR("Lookup for handle %d failed\n", req->handle);
+		return -EINVAL;
+	}
+	drm_gem_object_unreference_unlocked(gem_obj);
+	xen_obj = to_xen_gem_obj(gem_obj);
+
+	if (xen_obj->num_pages != req->num_grefs) {
+		DRM_ERROR("Provided %d pages, need %d\n", req->num_grefs,
+			xen_obj->num_pages);
+		return -EINVAL;
+	}
+	xen_obj->otherend_id = req->otherend_id;
+	xen_obj->grefs = kcalloc(xen_obj->num_pages, sizeof(grant_ref_t),
+		GFP_KERNEL);
+	if (!xen_obj->grefs) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+	ret = xen_do_grant_refs(xen_obj);
+	if (ret < 0)
+		goto fail;
+	if (copy_to_user(req->grefs, xen_obj->grefs,
+			xen_obj->num_pages * sizeof(grant_ref_t))) {
+		ret = -EINVAL;
+		goto fail;
+	}
+	return 0;
+
+fail:
+	xen_release_refs(xen_obj);
+	return ret;
+}
+
+static int xen_zcopy_init_gem_obj(struct xen_gem_object *xen_obj,
+	struct drm_device *dev, int size)
+{
+	struct drm_gem_object *gem_obj = &xen_obj->base;
+	int ret;
+
+	ret = drm_gem_object_init(dev, gem_obj, size);
+	if (ret < 0)
+		return ret;
+
+	ret = drm_gem_create_mmap_offset(gem_obj);
+	if (ret < 0) {
+		drm_gem_object_release(gem_obj);
+		return ret;
+	}
+	return 0;
+}
+
+struct drm_gem_object *xen_prime_import_sg_table(struct drm_device *dev,
+	struct dma_buf_attachment *attach, struct sg_table *sgt)
+{
+	struct xen_gem_object *xen_obj;
+	int ret;
+
+	/* Create a Xen GEM buffer */
+	xen_obj = kzalloc(sizeof(*xen_obj), GFP_KERNEL);
+	if (!xen_obj)
+		return ERR_PTR(-ENOMEM);
+	ret = xen_zcopy_init_gem_obj(xen_obj, dev, attach->dmabuf->size);
+	if (ret < 0)
+		goto fail;
+	xen_obj->sgt = sgt;
+	xen_obj->num_pages = DIV_ROUND_UP(attach->dmabuf->size, PAGE_SIZE);
+	DRM_DEBUG("Imported buffer of size %zu with nents %u\n",
+		attach->dmabuf->size, sgt->nents);
+	return &xen_obj->base;
+
+fail:
+	kfree(xen_obj);
+	return ERR_PTR(ret);
 }
 
 static const struct drm_ioctl_desc xen_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_FROM_REFS,
-		xen_create_dumb_ioctl,
+		xen_dumb_from_refs_ioctl,
+		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_TO_REFS,
+		xen_dumb_to_refs_ioctl,
 		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 };
 
@@ -401,6 +550,9 @@ static struct drm_driver xen_driver = {
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
 	.gem_prime_export          = drm_gem_prime_export,
 	.gem_prime_get_sg_table    = xen_gem_prime_get_sg_table,
+	.prime_fd_to_handle        = drm_gem_prime_fd_to_handle,
+	.gem_prime_import          = drm_gem_prime_import,
+	.gem_prime_import_sg_table = xen_prime_import_sg_table,
 	.gem_close_object          = xen_gem_close_object,
 	.gem_free_object_unlocked  = xen_gem_free_object,
 	.fops                      = &xen_fops,

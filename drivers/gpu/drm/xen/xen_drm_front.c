@@ -38,7 +38,7 @@
 
 #define GRANT_INVALID_REF	0
 /* timeout in ms to wait for backend to respond */
-#define VDRM_WAIT_BACK_MS	5000
+#define VDRM_WAIT_BACK_MS	1000
 
 /* all operations which are not connector oriented use this ctrl event channel,
  * e.g. fb_attach/destroy which belong to a DRM device, not to a CRTC
@@ -182,7 +182,7 @@ static int ddrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 	xdrv_evtchnl_flush(evtchnl);
 	spin_unlock_irqrestore(&evtchnl->drv_info->io_lock, flags);
 	ret = 0;
-	if (wait_for_completion_interruptible_timeout(
+	if (wait_for_completion_timeout(
 			&evtchnl->u.ctrl.completion,
 			msecs_to_jiffies(VDRM_WAIT_BACK_MS)) <= 0)
 		ret = -ETIMEDOUT;

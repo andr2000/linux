@@ -28,15 +28,34 @@ extern "C" {
 #define XENDRM_ZCOPY_DRIVER_NAME	"xen_drm_zcopy"
 
 /*
- * Xen DRM map specific ioctls.
+ * Xen DRM zero copy specific ioctls.
  *
  * The device specific ioctl range is [DRM_COMMAND_BASE, DRM_COMMAND_END) i.e.
  * [0x40, 0xa0) (a0 is excluded). The numbers below are defined as offset
  * against DRM_COMMAND_BASE and should be between [0x0, 0x60).
  */
-#define DRM_XEN_ZCOPY_CREATE_DUMB	0x00
 
-struct drm_xen_zcopy_create_dumb {
+/*
+ * This will create a DRM dumb buffer from grant references provided
+ * by the frontend:
+ *  o Frontend
+ *    o creates a dumb buffer and allocates memory.
+ *    o grants foreign access to the buffer
+ *    o passes granted references to the backend
+ *  o Backend
+ *    o issues DRM_XEN_ZCOPY_DUMB_FROM_REFS ioctl to map
+ *      granted references and create a dumb buffer.
+ *    o requests handle to fd conversion via DRM_IOCTL_PRIME_HANDLE_TO_FD
+ *    o requests real HW driver to import the prime buffer with
+ *      DRM_IOCTL_PRIME_FD_TO_HANDLE
+ *    o uses handle returned by the real HW driver
+ *    o at the end:
+ *      o closes real HW driver's handle with DRM_IOCTL_GEM_CLOSE
+ *      o closes zero-copy driver's handle with DRM_IOCTL_GEM_CLOSE
+ */
+#define DRM_XEN_ZCOPY_DUMB_FROM_REFS	0x00
+
+struct drm_xen_zcopy_dumb_from_refs {
 	/* Xen */
 	uint32_t num_grefs;
 	/* FIXME: user-space uses uint32_t instead of grant_ref_t
@@ -47,8 +66,8 @@ struct drm_xen_zcopy_create_dumb {
 	struct drm_mode_create_dumb dumb;
 };
 
-#define DRM_IOCTL_XEN_ZCOPY_CREATE_DUMB DRM_IOWR(DRM_COMMAND_BASE + \
-	DRM_XEN_ZCOPY_CREATE_DUMB, struct drm_xen_zcopy_create_dumb)
+#define DRM_IOCTL_XEN_ZCOPY_DUMB_FROM_REFS DRM_IOWR(DRM_COMMAND_BASE + \
+	DRM_XEN_ZCOPY_DUMB_FROM_REFS, struct drm_xen_zcopy_dumb_from_refs)
 
 #if defined(__cplusplus)
 }

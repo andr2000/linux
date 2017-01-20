@@ -305,7 +305,7 @@ fail:
 }
 
 static int xen_do_dumb_create(struct drm_device *dev,
-	struct drm_xen_zcopy_create_dumb *req,
+	struct drm_xen_zcopy_dumb_from_refs *req,
 	struct drm_file *file_priv)
 {
 	struct xen_gem_object *xen_obj;
@@ -347,8 +347,8 @@ fail:
 static int xen_create_dumb_ioctl(struct drm_device *dev,
 	void *data, struct drm_file *file_priv)
 {
-	struct drm_xen_zcopy_create_dumb *req =
-		(struct drm_xen_zcopy_create_dumb *)data;
+	struct drm_xen_zcopy_dumb_from_refs *req =
+		(struct drm_xen_zcopy_dumb_from_refs *)data;
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
 
@@ -384,7 +384,8 @@ static int xen_create_dumb_ioctl(struct drm_device *dev,
 }
 
 static const struct drm_ioctl_desc xen_ioctls[] = {
-	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_CREATE_DUMB, xen_create_dumb_ioctl,
+	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_FROM_REFS,
+		xen_create_dumb_ioctl,
 		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 };
 

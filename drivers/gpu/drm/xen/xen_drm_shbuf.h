@@ -39,12 +39,11 @@ struct xdrv_shared_buffer_info {
 	/* external buffer handling */
 	struct xenbus_device *xb_dev;
 	bool ext_buffer;
-	uint32_t num_pages;
+	/* ballooned pages */
+	int num_pages;
 	struct page **pages;
-	/* map grant handles and addresses */
-	struct map_info {
-		grant_handle_t handle;
-	} *map_info;
+	/* Xen map handle */
+	grant_handle_t *map_handle;
 };
 
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf);

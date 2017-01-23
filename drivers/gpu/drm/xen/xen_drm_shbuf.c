@@ -88,8 +88,8 @@ static void xdrv_shbuf_free(struct xdrv_shared_buffer_info *buf)
 		free_xenballooned_pages(buf->num_pages, buf->pages);
 		kfree(buf->pages);
 		buf->pages = NULL;
-		kfree(buf->map_info);
-		buf->map_info = NULL;
+		kfree(buf->map_handle);
+		buf->map_handle = NULL;
 	}
 	sg_free_table(buf->sgt);
 	kfree(buf);
@@ -167,7 +167,6 @@ static int xdrv_shbuf_grant_refs(struct xdrv_shared_buffer_info *buf,
 		DRM_ERROR("Cannot allocate grant references\n");
 		return ret;
 	}
-	buf->num_grefs = num_grefs;
 	otherend_id = buf->xb_dev->otherend_id;
 	j = 0;
 	for (i = 0; i < num_pages_dir; i++) {
@@ -213,11 +212,12 @@ static int xdrv_shbuf_alloc_storage(struct xdrv_shared_buffer_info *buf,
 			GFP_KERNEL);
 		if (!buf->pages)
 			return -ENOMEM;
-		buf->map_info = kcalloc(buf->num_pages,
-			sizeof(*buf->map_info), GFP_KERNEL);
-		if (!buf->map_info)
+		buf->map_handle = kcalloc(buf->num_pages,
+			sizeof(*buf->map_handle), GFP_KERNEL);
+		if (!buf->map_handle)
 			return -ENOMEM;
-		ret = alloc_xenballooned_pages(buf->num_pages, buf->pages);
+		ret = alloc_xenballooned_pages(buf->num_pages,
+			buf->pages);
 		if (ret < 0) {
 			DRM_ERROR("Cannot allocate %d ballooned pages: %d\n",
 				buf->num_pages, ret);
@@ -249,6 +249,7 @@ struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
 	num_pages_dir = DIV_ROUND_UP(num_pages_vbuffer,
 		XENDRM_NUM_GREFS_PER_PAGE);
 	num_grefs = num_pages_vbuffer + num_pages_dir;
+	buf->num_grefs = num_grefs;
 
 	if (xdrv_shbuf_alloc_storage(buf, num_pages_dir, num_grefs) < 0)
 		goto fail;
@@ -279,15 +280,15 @@ struct sg_table *xdrv_shbuf_map(struct xdrv_shared_buffer_info *buf)
 	for (i = 0; i < buf->num_pages; i++) {
 		phys_addr_t addr;
 
-		/* Map the grant entry for access by host CPUs. */
 		addr = xen_page_to_vaddr(buf->pages[i]);
 		gnttab_set_map_op(&map_ops[i], addr, GNTMAP_host_map,
 			buf->grefs[i], buf->xb_dev->otherend_id);
 	}
-	ret = gnttab_map_refs(map_ops, NULL, buf->pages, buf->num_pages);
+	ret = gnttab_map_refs(map_ops, NULL, buf->pages,
+		buf->num_pages);
 	BUG_ON(ret);
 	for (i = 0; i < buf->num_pages; i++) {
-		buf->map_info[i].handle = map_ops[i].handle;
+		buf->map_handle[i] = map_ops[i].handle;
 		if (unlikely(map_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d with ref %d: %d\n",
 				i, buf->grefs[i], map_ops[i].status);
@@ -302,26 +303,22 @@ static int xdrv_shbuf_unmap(struct xdrv_shared_buffer_info *buf)
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
 
-	if (!buf->pages || !buf->map_info)
+	if (!buf->pages || !buf->map_handle)
 		return 0;
 
-	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops), GFP_KERNEL);
+	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops),
+		GFP_KERNEL);
 	if (!unmap_ops)
 		return -ENOMEM;
 	for (i = 0; i < buf->num_pages; i++) {
 		phys_addr_t addr;
 
-		/* Map the grant entry for access by I/O devices.
-		 * Map the grant entry for access by host CPUs.
-		 * If <host_addr> or <dev_bus_addr> is zero, that
-		 * field is ignored. If non-zero, they must refer to
-		 * a device/host mapping that is tracked by <handle>
-		 */
 		addr = xen_page_to_vaddr(buf->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr, GNTMAP_host_map,
-			buf->map_info[i].handle);
+			buf->map_handle[i]);
 	}
-	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, buf->pages, buf->num_pages));
+	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, buf->pages,
+		buf->num_pages));
 	for (i = 0; i < buf->num_pages; i++) {
 		if (unlikely(unmap_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to unmap page %d with ref %d: %d\n",

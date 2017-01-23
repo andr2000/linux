@@ -21,21 +21,17 @@
 
 #include <drm/drmP.h>
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#ifdef CONFIG_DRM_XENFRONT_CMA
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 
-#define xendrm_gem_get_sg_table         drm_gem_cma_prime_get_sg_table
-#define xendrm_gem_dumb_create          drm_gem_cma_dumb_create
-#define xendrm_gem_free_object          drm_gem_cma_free_object
-#define xendrm_gem_dumb_map_offset      drm_gem_cma_dumb_map_offset
-#define xendrm_gem_mmap                 drm_gem_cma_mmap
-#define xendrm_gem_import_sg_table      drm_gem_cma_prime_import_sg_table
-#define xendrm_gem_prime_vmap           drm_gem_cma_prime_vmap
-#define xendrm_gem_prime_vunmap         drm_gem_cma_prime_vunmap
-#define xendrm_gem_prime_mmap           drm_gem_cma_prime_mmap
-#define xendrm_gem_fb_destroy           drm_fb_cma_destroy
-#define xendrm_gem_fb_create_with_funcs drm_fb_cma_create_with_funcs
+#define xendrm_gem_dumb_create            drm_gem_cma_dumb_create
+#define xendrm_gem_free_object            drm_gem_cma_free_object
+#define xendrm_gem_dumb_map_offset        drm_gem_cma_dumb_map_offset
+#define xendrm_gem_mmap                   drm_gem_cma_mmap
+#define xendrm_gem_fb_destroy             drm_fb_cma_destroy
+#define xendrm_gem_fb_create_with_funcs   drm_fb_cma_create_with_funcs
+#define xendrm_gem_set_ext_sg_table(a, b) {}
 #else
 int xendrm_gem_dumb_create(struct drm_file *file_priv, struct drm_device *dev,
 	struct drm_mode_create_dumb *args);
@@ -46,17 +42,13 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 
 struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj);
-struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt);
-void *xendrm_gem_prime_vmap(struct drm_gem_object *gem_obj);
-void xendrm_gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr);
-int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
-	struct vm_area_struct *vma);
 
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
 	const struct drm_framebuffer_funcs *funcs);
-#endif /* CONFIG_DRM_GEM_CMA_HELPER */
+void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
+	struct sg_table *sgt);
+#endif /* CONFIG_DRM_XENFRONT_CMA */
 
 #endif /* __XEN_DRM_GEM_H */

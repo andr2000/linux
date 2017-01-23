@@ -35,8 +35,7 @@
 
 #include "xen_drm.h"
 #include "xen_drm_front.h"
-
-#define GRANT_INVALID_REF	0
+#include "xen_drm_shbuf.h"
 
 /* all operations which are not connector oriented use this ctrl event channel,
  * e.g. fb_attach/destroy which belong to a DRM device, not to a CRTC
@@ -77,17 +76,6 @@ struct xdrv_evtchnl_info {
 			struct xendispl_event_page *page;
 		} evt;
 	} u;
-};
-
-struct xdrv_shared_buffer_info {
-	struct list_head list;
-	uint64_t dumb_cookie;
-	uint64_t fb_cookie;
-	int num_grefs;
-	grant_ref_t *grefs;
-	unsigned char *vdirectory;
-	struct sg_table *sgt;
-	size_t vbuffer_sz;
 };
 
 struct xdrv_evtchnl_pair_info {
@@ -138,17 +126,6 @@ static int drmif_to_kern_error(int drmif_err)
 
 static inline void xdrv_evtchnl_flush(
 		struct xdrv_evtchnl_info *channel);
-static struct xdrv_shared_buffer_info *xdrv_sh_buf_alloc(
-	struct xdrv_info *drv_info, uint64_t dumb_cookie,
-	struct sg_table *sgt, unsigned int buffer_size);
-static grant_ref_t xdrv_sh_buf_get_dir_start(
-	struct xdrv_shared_buffer_info *buf);
-static void xdrv_sh_buf_free_by_dumb_cookie(struct xdrv_info *drv_info,
-	uint64_t dumb_cookie);
-static struct xdrv_shared_buffer_info *xdrv_sh_buf_get_by_dumb_cookie(
-	struct xdrv_info *drv_info, uint64_t dumb_cookie);
-static void xdrv_sh_buf_flush_fb(struct xdrv_info *drv_info,
-	uint64_t fb_cookie);
 static void xdrv_drm_unload(struct xdrv_info *drv_info);
 
 static inline struct xendispl_req *ddrv_be_prepare_req(
@@ -216,32 +193,46 @@ int xendispl_front_mode_set(struct xendrm_crtc *xen_crtc, uint32_t x,
 
 int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
 	uint32_t width, uint32_t height, uint32_t bpp, uint64_t size,
-	struct sg_table *sgt)
+	struct sg_table **sgt)
 {
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xdrv_shared_buffer_info *buf;
 	struct xendispl_req *req;
 	unsigned long flags;
+	bool ext_buffer;
 	int ret;
 
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
 	if (unlikely(!evtchnl))
 		return -EIO;
-	buf = xdrv_sh_buf_alloc(drv_info, dumb_cookie, sgt, size);
+	ext_buffer = drv_info->cfg_plat_data.ext_buffers;
+	buf = xdrv_shbuf_alloc(drv_info->xb_dev, &drv_info->dumb_buf_list,
+		dumb_cookie, *sgt, size, ext_buffer);
 	if (!buf)
 		return -ENOMEM;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory_start =
-		xdrv_sh_buf_get_dir_start(buf);
+		xdrv_shbuf_get_dir_start(buf);
 	req->op.dbuf_create.buffer_sz = size;
 	req->op.dbuf_create.dbuf_cookie = dumb_cookie;
 	req->op.dbuf_create.width = width;
 	req->op.dbuf_create.height = height;
 	req->op.dbuf_create.bpp = bpp;
+	if (ext_buffer)
+		req->op.dbuf_create.flags |= XENDISPL_DBUF_FLG_REQ_ALLOC;
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
 	if (ret < 0)
-		xdrv_sh_buf_free_by_dumb_cookie(drv_info, dumb_cookie);
+		goto fail;
+	if (ext_buffer) {
+		ret = xdrv_shbuf_ext_map(buf);
+		if (ret < 0)
+			goto fail;
+		*sgt = xdrv_shbuf_get_sg_table(buf);
+	}
+	return 0;
+fail:
+	xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list, dumb_cookie);
 	return ret;
 }
 
@@ -251,6 +242,7 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xendispl_req *req;
 	unsigned long flags;
+	bool ext_buffer;
 	int ret;
 
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
@@ -259,8 +251,14 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_DESTROY);
 	req->op.dbuf_destroy.dbuf_cookie = dumb_cookie;
+	ext_buffer = drv_info->cfg_plat_data.ext_buffers;
+	if (ext_buffer)
+		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
+			dumb_cookie);
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
-	xdrv_sh_buf_free_by_dumb_cookie(drv_info, dumb_cookie);
+	if (!ext_buffer)
+		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
+			dumb_cookie);
 	return ret;
 }
 
@@ -276,7 +274,8 @@ int xendispl_front_fb_attach(struct xdrv_info *drv_info,
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
 	if (unlikely(!evtchnl))
 		return -EIO;
-	buf = xdrv_sh_buf_get_by_dumb_cookie(drv_info, dumb_cookie);
+	buf = xdrv_shbuf_get_by_dumb_cookie(&drv_info->dumb_buf_list,
+		dumb_cookie);
 	if (!buf)
 		return -EINVAL;
 	buf->fb_cookie = fb_cookie;
@@ -314,7 +313,7 @@ int xendispl_front_page_flip(struct xdrv_info *drv_info, int conn_idx,
 
 	if (unlikely(conn_idx >= drv_info->num_evt_pairs))
 		return -EINVAL;
-	xdrv_sh_buf_flush_fb(drv_info, fb_cookie);
+	xdrv_shbuf_flush_fb(&drv_info->dumb_buf_list, fb_cookie);
 	evtchnl = &drv_info->evt_pairs[conn_idx].ctrl;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_PG_FLIP);
@@ -332,7 +331,6 @@ static struct xendispl_front_ops xendispl_front_funcs = {
 	.drm_last_close = xdrv_drm_unload,
 };
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
 /* Unprivileged guests (i.e. ones without hardware) are not permitted to
  * make mappings with anything other than a writeback memory type
  * So, we need to override mmap used by the kernel and make changes
@@ -371,15 +369,12 @@ static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
 	}
 	dev->archdata.dma_ops = &xdrv_info->dma_map_ops;
 }
-#endif
 
 static int ddrv_probe(struct platform_device *pdev)
 {
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
 	struct xendrm_plat_data *platdata = dev_get_platdata(&pdev->dev);
 
 	xdrv_setup_dma_map_ops(platdata->xdrv_info, &pdev->dev);
-#endif
 	return xendrm_probe(pdev, &xendispl_front_funcs);
 }
 
@@ -822,6 +817,15 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 
 	path = xb_dev->nodename;
 	plat_data->num_connectors = 0;
+	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
+			XENDISPL_FEATURE_BE_ALLOC, 0)) {
+		DRM_INFO("Backend can provide dumb buffers\n");
+#ifdef CONFIG_DRM_XENFRONT_CMA
+		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
+#else
+		plat_data->ext_buffers = true;
+#endif
+	}
 	connector_nodes = xdrv_cfg_get_num_nodes(path, XENDISPL_PATH_CONNECTOR,
 		&num_conn);
 	kfree(connector_nodes);
@@ -845,244 +849,11 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	return 0;
 }
 
-static grant_ref_t xdrv_sh_buf_get_dir_start(
-	struct xdrv_shared_buffer_info *buf)
-{
-	if (!buf->grefs)
-		return GRANT_INVALID_REF;
-	return buf->grefs[0];
-}
-
-static struct xdrv_shared_buffer_info *xdrv_sh_buf_get_by_dumb_cookie(
-	struct xdrv_info *drv_info, uint64_t dumb_cookie)
-{
-	struct xdrv_shared_buffer_info *buf, *q;
-
-	list_for_each_entry_safe(buf, q, &drv_info->dumb_buf_list, list) {
-		if (buf->dumb_cookie == dumb_cookie)
-			return buf;
-	}
-	return NULL;
-}
-
-static void xdrv_sh_buf_flush_fb(struct xdrv_info *drv_info, uint64_t fb_cookie)
-{
-#ifdef CONFIG_X86
-	struct xdrv_shared_buffer_info *buf, *q;
-
-	list_for_each_entry_safe(buf, q, &drv_info->dumb_buf_list, list) {
-		if (buf->fb_cookie == fb_cookie) {
-			struct scatterlist *sg;
-			unsigned int count;
-
-			for_each_sg(buf->sgt->sgl, sg, buf->sgt->nents, count)
-				clflush_cache_range(sg_virt(sg), sg->length);
-			break;
-		}
-	}
-#endif
-}
-
-static void xdrv_sh_buf_free(struct xdrv_shared_buffer_info *buf)
-{
-	int i;
-
-	if (buf->grefs) {
-		/* [0] entry is used for page directory, so skip it and use
-		 * the one which is used for the buffer which is expected
-		 * to be released at this time
-		 */
-		if (unlikely(gnttab_query_foreign_access(buf->grefs[1]) &&
-				buf->num_grefs)) {
-			int try = 5;
-
-			/* reference is not yet updated by the Xen, we can
-			 * end access but it will make the removal deferred,
-			 * so give it a chance
-			 */
-			do {
-				DRM_WARN("Grant refs are not released yet\n");
-				msleep(20);
-				if (!gnttab_query_foreign_access(buf->grefs[1]))
-					break;
-			} while (--try);
-		}
-		for (i = 0; i < buf->num_grefs; i++)
-			if (buf->grefs[i] != GRANT_INVALID_REF)
-				gnttab_end_foreign_access(buf->grefs[i],
-					0, 0UL);
-		kfree(buf->grefs);
-	}
-	kfree(buf->vdirectory);
-	sg_free_table(buf->sgt);
-	kfree(buf);
-}
-
-static void xdrv_sh_buf_free_by_dumb_cookie(struct xdrv_info *drv_info,
-	uint64_t dumb_cookie)
-{
-	struct xdrv_shared_buffer_info *buf, *q;
-
-	list_for_each_entry_safe(buf, q, &drv_info->dumb_buf_list, list) {
-		if (buf->dumb_cookie == dumb_cookie) {
-			list_del(&buf->list);
-			xdrv_sh_buf_free(buf);
-			break;
-		}
-	}
-}
-
-static void xdrv_sh_buf_free_all(struct xdrv_info *drv_info)
-{
-	struct xdrv_shared_buffer_info *buf, *q;
-
-	list_for_each_entry_safe(buf, q, &drv_info->dumb_buf_list, list) {
-		list_del(&buf->list);
-		xdrv_sh_buf_free(buf);
-	}
-}
-
-/* number of grefs a page can hold with respect to the
- * xendispl_page_directory header
- */
-#define XENDRM_NUM_GREFS_PER_PAGE ((XEN_PAGE_SIZE - \
-	offsetof(struct xendispl_page_directory, gref)) / \
-	sizeof(grant_ref_t))
-
-void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
-		int num_pages_dir)
-{
-	struct xendispl_page_directory *page_dir;
-	unsigned char *ptr;
-	int i, cur_gref, grefs_left, to_copy;
-
-	ptr = buf->vdirectory;
-	grefs_left = buf->num_grefs - num_pages_dir;
-	/* skip grefs at start, they are for pages granted for the directory */
-	cur_gref = num_pages_dir;
-	for (i = 0; i < num_pages_dir; i++) {
-		page_dir = (struct xendispl_page_directory *)ptr;
-		if (grefs_left <= XENDRM_NUM_GREFS_PER_PAGE) {
-			to_copy = grefs_left;
-			page_dir->gref_dir_next_page = GRANT_INVALID_REF;
-		} else {
-			to_copy = XENDRM_NUM_GREFS_PER_PAGE;
-			page_dir->gref_dir_next_page = buf->grefs[i + 1];
-		}
-		memcpy(&page_dir->gref, &buf->grefs[cur_gref],
-			to_copy * sizeof(grant_ref_t));
-		ptr += XEN_PAGE_SIZE;
-		grefs_left -= to_copy;
-		cur_gref += to_copy;
-	}
-}
-
-int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
-	struct xdrv_shared_buffer_info *buf,
-	int num_pages_dir, int num_pages_vbuffer, int num_grefs)
-{
-	grant_ref_t priv_gref_head;
-	int ret, i, j, cur_ref;
-	int otherend_id;
-	int count;
-	struct scatterlist *sg;
-
-	ret = gnttab_alloc_grant_references(num_grefs, &priv_gref_head);
-	if (ret < 0) {
-		DRM_ERROR("Cannot allocate grant references\n");
-		return ret;
-	}
-	buf->num_grefs = num_grefs;
-	otherend_id = xb_dev->otherend_id;
-	j = 0;
-	for (i = 0; i < num_pages_dir; i++) {
-		cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
-		if (cur_ref < 0)
-			return cur_ref;
-		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
-			xen_page_to_gfn(virt_to_page(buf->vdirectory +
-				XEN_PAGE_SIZE * i)), 0);
-		buf->grefs[j++] = cur_ref;
-	}
-	for_each_sg(buf->sgt->sgl, sg, buf->sgt->nents, count) {
-		struct page *page;
-		int len;
-
-		len = sg->length;
-		page = sg_page(sg);
-		while (len > 0) {
-			cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
-			if (cur_ref < 0)
-				return cur_ref;
-			gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
-				xen_page_to_gfn(page), 0);
-			buf->grefs[j++] = cur_ref;
-			len -= PAGE_SIZE;
-			page++;
-			num_pages_vbuffer--;
-		}
-	}
-	WARN_ON(num_pages_vbuffer != 0);
-	gnttab_free_grant_references(priv_gref_head);
-	return 0;
-}
-
-int xdrv_sh_buf_alloc_buffers(struct xdrv_shared_buffer_info *buf,
-		int num_pages_dir, int num_pages_vbuffer,
-		int num_grefs)
-{
-	buf->grefs = kcalloc(num_grefs, sizeof(*buf->grefs), GFP_KERNEL);
-	if (!buf->grefs)
-		return -ENOMEM;
-	buf->vdirectory = kcalloc(num_pages_dir, XEN_PAGE_SIZE, GFP_KERNEL);
-	if (!buf->vdirectory) {
-		kfree(buf->grefs);
-		buf->grefs = NULL;
-		return -ENOMEM;
-	}
-	buf->vbuffer_sz = num_pages_vbuffer * XEN_PAGE_SIZE;
-	return 0;
-}
-
-static struct xdrv_shared_buffer_info *
-xdrv_sh_buf_alloc(struct xdrv_info *drv_info, uint64_t dumb_cookie,
-	struct sg_table *sgt, unsigned int buffer_size)
-{
-	struct xdrv_shared_buffer_info *buf;
-	int num_pages_vbuffer, num_pages_dir, num_grefs;
-
-	if (!sgt)
-		return NULL;
-	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
-	if (!buf)
-		return NULL;
-	buf->sgt = sgt;
-	buf->dumb_cookie = dumb_cookie;
-	num_pages_vbuffer = DIV_ROUND_UP(buffer_size, XEN_PAGE_SIZE);
-	/* number of pages the directory itself consumes */
-	num_pages_dir = DIV_ROUND_UP(num_pages_vbuffer,
-		XENDRM_NUM_GREFS_PER_PAGE);
-	num_grefs = num_pages_vbuffer + num_pages_dir;
-
-	if (xdrv_sh_buf_alloc_buffers(buf, num_pages_dir,
-			num_pages_vbuffer, num_grefs) < 0)
-		goto fail;
-	if (xdrv_sh_buf_grant_refs(drv_info->xb_dev, buf,
-			num_pages_dir, num_pages_vbuffer, num_grefs) < 0)
-		goto fail;
-	xdrv_sh_buf_fill_page_dir(buf, num_pages_dir);
-	list_add(&buf->list, &drv_info->dumb_buf_list);
-	return buf;
-fail:
-	xdrv_sh_buf_free(buf);
-	return NULL;
-}
-
 static void xdrv_remove_internal(struct xdrv_info *drv_info)
 {
 	ddrv_cleanup(drv_info);
 	xdrv_evtchnl_free_all(drv_info);
-	xdrv_sh_buf_free_all(drv_info);
+	xdrv_shbuf_free_all(&drv_info->dumb_buf_list);
 }
 
 static int xdrv_probe(struct xenbus_device *xb_dev,

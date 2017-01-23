@@ -24,13 +24,16 @@
 #include <linux/dma-buf.h>
 #include <linux/scatterlist.h>
 
+#include "xen_drm.h"
 #include "xen_drm_gem.h"
 
 struct xen_gem_object {
 	struct drm_gem_object base;
 	size_t size;
+	/* this is set if we have allocated buffer on our own */
 	struct sg_table *sgt;
-	struct sg_table *sgt_imported;
+	/* this is for external buffer allocated by back */
+	struct sg_table *sgt_ext;
 };
 
 struct xen_fb {
@@ -115,16 +118,22 @@ fail_nomem:
 	return NULL;
 }
 
-static void xendrm_gem_free(struct sg_table *sgt)
+static void xendrm_gem_free(struct xen_gem_object *xen_obj)
 {
-	struct scatterlist *sg;
-	int i;
+	if (xen_obj->sgt) {
+		struct scatterlist *sg;
+		int i;
 
-	for_each_sg(sgt->sgl, sg, sgt->nents, i)
-		free_pages((unsigned long)sg_virt(sg),
-			get_order(sg->length));
-	sg_free_table(sgt);
-	kfree(sgt);
+		for_each_sg(xen_obj->sgt->sgl, sg, xen_obj->sgt->nents, i)
+			free_pages((unsigned long)sg_virt(sg),
+				get_order(sg->length));
+		sg_free_table(xen_obj->sgt);
+		kfree(xen_obj->sgt);
+	}
+	if (xen_obj->sgt_ext) {
+		sg_free_table(xen_obj->sgt_ext);
+		kfree(xen_obj->sgt_ext);
+	}
 }
 
 static struct xen_gem_object *xendrm_gem_create_obj(struct drm_device *dev,
@@ -156,6 +165,7 @@ error:
 static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	size_t size)
 {
+	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct xen_gem_object *xen_obj;
 	int ret;
 
@@ -164,6 +174,8 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	if (IS_ERR(xen_obj))
 		return xen_obj;
 	xen_obj->size = size;
+	if (xendrm_dev->platdata->ext_buffers)
+		return xen_obj;
 	xen_obj->sgt = xendrm_gem_alloc(size);
 	if (!xen_obj->sgt) {
 		ret = -ENOMEM;
@@ -213,10 +225,7 @@ void xendrm_gem_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
-	if (xen_obj->sgt)
-		xendrm_gem_free(xen_obj->sgt);
-	else if (gem_obj->import_attach)
-		drm_prime_gem_destroy(gem_obj, xen_obj->sgt_imported);
+	xendrm_gem_free(xen_obj);
 	drm_gem_object_release(gem_obj);
 	kfree(xen_obj);
 }
@@ -251,16 +260,12 @@ fail:
 	return NULL;
 }
 
-struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt)
+void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
+	struct sg_table *sgt)
 {
-	struct xen_gem_object *xen_obj;
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
-	xen_obj = xendrm_gem_create_obj(dev, attach->dmabuf->size);
-	if (IS_ERR(xen_obj))
-		return ERR_CAST(xen_obj);
-	xen_obj->sgt_imported = sgt;
-	return &xen_obj->base;
+	xen_obj->sgt_ext = sgt;
 }
 
 static struct xen_fb *xendrm_gem_fb_alloc(struct drm_device *dev,
@@ -360,14 +365,14 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 	return 0;
 }
 
-static int xendrm_mmap_sgt(struct sg_table *table, struct vm_area_struct *vma)
+static int xendrm_mmap_sgt(struct sg_table *sgt, struct vm_area_struct *vma)
 {
 	unsigned long addr = vma->vm_start;
 	unsigned long offset = vma->vm_pgoff * PAGE_SIZE;
 	struct scatterlist *sg;
 	int ret, i;
 
-	for_each_sg(table->sgl, sg, table->nents, i) {
+	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
 		struct page *page = sg_page(sg);
 		unsigned long remainder = vma->vm_end - addr;
 		unsigned long len = sg->length;
@@ -395,6 +400,7 @@ static int xendrm_mmap_sgt(struct sg_table *table, struct vm_area_struct *vma)
 static int xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 	struct vm_area_struct *vma)
 {
+	struct sg_table *sgt;
 	int ret;
 
 	/*
@@ -407,7 +413,11 @@ static int xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 	/* this is the only way to mmap for unprivileged domain */
 	vma->vm_page_prot = PAGE_SHARED;
 
-	ret = xendrm_mmap_sgt(xen_obj->sgt, vma);
+	if (xen_obj->sgt)
+		sgt = xen_obj->sgt;
+	else
+		sgt = xen_obj->sgt_ext;
+	ret = xendrm_mmap_sgt(sgt, vma);
 	if (ret < 0) {
 		DRM_ERROR("Failed to remap: %d\n", ret);
 		drm_gem_vm_close(vma);
@@ -425,49 +435,6 @@ int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	if (ret)
 		return ret;
 	gem_obj = vma->vm_private_data;
-	xen_obj = to_xen_gem_obj(gem_obj);
-	return xendrm_gem_mmap_obj(xen_obj, vma);
-}
-
-void *xendrm_gem_prime_vmap(struct drm_gem_object *gem_obj)
-{
-	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
-	struct page **pages;
-	size_t num_pages;
-	void *vaddr;
-	int ret;
-
-	num_pages = DIV_ROUND_UP(xen_obj->size, PAGE_SIZE);
-	pages = drm_malloc_ab(num_pages, sizeof(*pages));
-	if (!pages)
-		return NULL;
-
-	vaddr = NULL;
-	ret = drm_prime_sg_to_page_addr_arrays(xen_obj->sgt, pages, NULL,
-		num_pages);
-	if (ret < 0)
-		goto fail;
-
-	vaddr = vmap(pages, num_pages, GFP_KERNEL, PAGE_SHARED);
-fail:
-	drm_free_large(pages);
-	return vaddr;
-}
-
-void xendrm_gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr)
-{
-	vunmap(vaddr);
-}
-
-int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
-	struct vm_area_struct *vma)
-{
-	struct xen_gem_object *xen_obj;
-	int ret;
-
-	ret = drm_gem_mmap_obj(gem_obj, gem_obj->size, vma);
-	if (ret < 0)
-		return ret;
 	xen_obj = to_xen_gem_obj(gem_obj);
 	return xendrm_gem_mmap_obj(xen_obj, vma);
 }

@@ -58,6 +58,8 @@ struct xendrm_plat_data {
 	int num_connectors;
 	/* connector configurations */
 	struct xendrm_cfg_connector connectors[XENDRM_MAX_CRTCS];
+	/* can dumb buffers be allocated externally on backend side? */
+	bool ext_buffers;
 };
 
 static inline uint64_t xendrm_fb_to_cookie(struct drm_framebuffer *fb)

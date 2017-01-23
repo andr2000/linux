@@ -24,7 +24,7 @@
 #include "xen_drm_gem.h"
 #include "xen_drm_kms.h"
 
-struct xendrm_devmb_info {
+struct xendrm_dumb_info {
 	struct list_head list;
 	uint32_t handle;
 	struct drm_gem_object *gem_obj;
@@ -58,7 +58,9 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct drm_gem_object *gem_obj;
-	struct xendrm_devmb_info *dumb_info;
+	struct xendrm_dumb_info *dumb_info;
+	struct sg_table *sgt;
+	bool ext_buffer;
 	int ret;
 
 	dumb_info = kzalloc(sizeof(*dumb_info), GFP_KERNEL);
@@ -73,12 +75,27 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 		goto fail_destroy;
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
+
+	ext_buffer = xendrm_dev->platdata->ext_buffers;
+	/*
+	 * FIXME: if CONFIG_DRM_XENFRONT_CMA is configured
+	 * then drm_gem_cma_object is in use which doesn't
+	 * have an SG table for the buffer it has allocated,
+	 * so we use drm_gem_cma_prime_get_sg_table to get one:
+	 * it allocates a new table and passes to us.
+	 * For our GEM we do a copy of the SG table we have
+	 * to be consistent with DRM CMA behavior.
+	 * If buffers are allocated on backend's side, then
+	 * pass NULL and have backend to provide SG table
+	 */
+	sgt = ext_buffer ? NULL : xendrm_gem_get_sg_table(gem_obj);
 	ret = xendrm_dev->front_ops->dbuf_create(
 			xendrm_dev->xdrv_info, args->handle, args->width,
-			args->height, args->bpp, args->size,
-			xendrm_gem_get_sg_table(gem_obj));
+			args->height, args->bpp, args->size, &sgt);
 	if (ret < 0)
 		goto fail_destroy;
+	if (ext_buffer)
+		xendrm_gem_set_ext_sg_table(gem_obj, sgt);
 	dumb_info->gem_obj = gem_obj;
 	dumb_info->handle = args->handle;
 	list_add(&dumb_info->list, &xendrm_dev->dumb_buf_list);
@@ -95,7 +112,7 @@ fail:
 static void xendrm_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xendrm_device *xendrm_dev = gem_obj->dev->dev_private;
-	struct xendrm_devmb_info *dumb_info, *q;
+	struct xendrm_dumb_info *dumb_info, *q;
 
 	DRM_DEBUG("Looking for gem_obj %p\n", gem_obj);
 	list_for_each_entry_safe(dumb_info, q,
@@ -183,7 +200,7 @@ const struct vm_operations_struct xendrm_vm_ops = {
 
 static struct drm_driver xendrm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
-				     DRIVER_PRIME | DRIVER_ATOMIC,
+				     DRIVER_ATOMIC,
 	.lastclose                 = xendrm_lastclose,
 	.get_vblank_counter        = drm_vblank_no_hw_counter,
 	.enable_vblank             = xendrm_enable_vblank,
@@ -191,15 +208,6 @@ static struct drm_driver xendrm_driver = {
 	.get_vblank_counter        = drm_vblank_no_hw_counter,
 	.gem_free_object_unlocked  = xendrm_free_object,
 	.gem_vm_ops                = &xendrm_vm_ops,
-	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
-	.prime_fd_to_handle        = drm_gem_prime_fd_to_handle,
-	.gem_prime_import          = drm_gem_prime_import,
-	.gem_prime_export          = drm_gem_prime_export,
-	.gem_prime_get_sg_table    = xendrm_gem_get_sg_table,
-	.gem_prime_import_sg_table = xendrm_gem_import_sg_table,
-	.gem_prime_vmap            = xendrm_gem_prime_vmap,
-	.gem_prime_vunmap          = xendrm_gem_prime_vunmap,
-	.gem_prime_mmap            = xendrm_gem_prime_mmap,
 	.dumb_create               = xendrm_dumb_create,
 	.dumb_map_offset           = xendrm_gem_dumb_map_offset,
 	.dumb_destroy              = drm_gem_dumb_destroy,

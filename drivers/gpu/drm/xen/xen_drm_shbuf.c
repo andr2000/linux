@@ -73,25 +73,6 @@ static void xdrv_shbuf_free(struct xdrv_shared_buffer_info *buf)
 	int i;
 
 	if (buf->grefs) {
-		/* [0] entry is used for page directory, so skip it and use
-		 * the one which is used for the buffer which is expected
-		 * to be released at this time
-		 */
-		if (unlikely(gnttab_query_foreign_access(buf->grefs[1]) &&
-				buf->num_grefs)) {
-			int try = 5;
-
-			/* reference is not yet updated by the Xen, we can
-			 * end access but it will make the removal deferred,
-			 * so give it a chance
-			 */
-			do {
-				DRM_WARN("Grant refs are not released yet\n");
-				msleep(20);
-				if (!gnttab_query_foreign_access(buf->grefs[1]))
-					break;
-			} while (--try);
-		}
 		if (buf->ext_buffer)
 			xdrv_shbuf_unmap(buf);
 		else

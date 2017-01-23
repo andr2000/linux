@@ -98,9 +98,7 @@ struct xdrv_info {
 	/* dumb buffers */
 	struct list_head dumb_buf_list;
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
 	struct dma_map_ops dma_map_ops;
-#endif
 };
 
 struct DRMIF_TO_KERN_ERROR {
@@ -325,7 +323,6 @@ static struct xendispl_front_ops xendispl_front_funcs = {
 	.drm_last_close = xdrv_drm_unload,
 };
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
 /* Unprivileged guests (i.e. ones without hardware) are not permitted to
  * make mappings with anything other than a writeback memory type
  * So, we need to override mmap used by the kernel and make changes
@@ -364,15 +361,12 @@ static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
 	}
 	dev->archdata.dma_ops = &xdrv_info->dma_map_ops;
 }
-#endif
 
 static int ddrv_probe(struct platform_device *pdev)
 {
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
 	struct xendrm_plat_data *platdata = dev_get_platdata(&pdev->dev);
 
 	xdrv_setup_dma_map_ops(platdata->xdrv_info, &pdev->dev);
-#endif
 	return xendrm_probe(pdev, &xendispl_front_funcs);
 }
 

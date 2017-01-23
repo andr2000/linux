@@ -98,7 +98,9 @@ struct xdrv_info {
 	/* dumb buffers */
 	struct list_head dumb_buf_list;
 
+#ifdef CONFIG_DRM_GEM_CMA_HELPER
 	struct dma_map_ops dma_map_ops;
+#endif
 };
 
 struct DRMIF_TO_KERN_ERROR {

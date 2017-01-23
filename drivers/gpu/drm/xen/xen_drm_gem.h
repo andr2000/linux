@@ -59,4 +59,7 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	const struct drm_framebuffer_funcs *funcs);
 #endif /* CONFIG_DRM_GEM_CMA_HELPER */
 
+void xendrm_gem_set_sg_table(struct drm_gem_object *gem_obj,
+	struct sg_table *sgt);
+
 #endif /* __XEN_DRM_GEM_H */

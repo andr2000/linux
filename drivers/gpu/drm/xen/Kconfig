@@ -16,10 +16,9 @@ config DRM_XENFRONT
 	  front-end DRM driver for Xen guest OSes.
 
 config DRM_XENFRONT_CMA
-	bool "Use DRM CMA"
+	bool "Use DRM CMA to allocate dumb buffers"
 	depends on DRM_XENFRONT
 	select DRM_KMS_CMA_HELPER
 	select DRM_GEM_CMA_HELPER
 	help
-	  Use DRM CMA for buffer allocation.
-
+	  Use DRM CMA to allocate dumb buffers.

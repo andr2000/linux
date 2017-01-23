@@ -195,19 +195,21 @@ int xendispl_front_mode_set(struct xendrm_crtc *xen_crtc, uint32_t x,
 
 int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
 	uint32_t width, uint32_t height, uint32_t bpp, uint64_t size,
-	struct sg_table *sgt)
+	struct sg_table **sgt)
 {
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xdrv_shared_buffer_info *buf;
 	struct xendispl_req *req;
 	unsigned long flags;
+	bool ext_buffer;
 	int ret;
 
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
 	if (unlikely(!evtchnl))
 		return -EIO;
+	ext_buffer = drv_info->cfg_plat_data.ext_buffers;
 	buf = xdrv_shbuf_alloc(drv_info->xb_dev, &drv_info->dumb_buf_list,
-		dumb_cookie, sgt, size);
+		dumb_cookie, *sgt, size, ext_buffer);
 	if (!buf)
 		return -ENOMEM;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -219,10 +221,19 @@ int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
 	req->op.dbuf_create.width = width;
 	req->op.dbuf_create.height = height;
 	req->op.dbuf_create.bpp = bpp;
+	if (ext_buffer)
+		req->op.dbuf_create.flags |= XENDISPL_DBUF_FLG_REQ_ALLOC;
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
 	if (ret < 0)
-		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
-			dumb_cookie);
+		goto fail;
+	if (ext_buffer) {
+		*sgt = xdrv_shbuf_map(buf);
+		if (!*sgt)
+			goto fail;
+	}
+	return 0;
+fail:
+	xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list, dumb_cookie);
 	return ret;
 }
 
@@ -804,6 +815,11 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 
 	path = xb_dev->nodename;
 	plat_data->num_connectors = 0;
+	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
+			XENDISPL_FEATURE_BE_ALLOC, 0)) {
+		DRM_INFO("Backend can provide dumb buffers\n");
+		plat_data->ext_buffers = true;
+	}
 	connector_nodes = xdrv_cfg_get_num_nodes(path, XENDISPL_PATH_CONNECTOR,
 		&num_conn);
 	kfree(connector_nodes);

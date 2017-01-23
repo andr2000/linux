@@ -24,7 +24,7 @@
 #include "xen_drm_gem.h"
 #include "xen_drm_kms.h"
 
-struct xendrm_devmb_info {
+struct xendrm_dumb_info {
 	struct list_head list;
 	uint32_t handle;
 	struct drm_gem_object *gem_obj;
@@ -58,7 +58,8 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct drm_gem_object *gem_obj;
-	struct xendrm_devmb_info *dumb_info;
+	struct xendrm_dumb_info *dumb_info;
+	struct sg_table *sgt;
 	int ret;
 
 	dumb_info = kzalloc(sizeof(*dumb_info), GFP_KERNEL);
@@ -73,12 +74,18 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 		goto fail_destroy;
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
-	ret = xendrm_dev->front_ops->dbuf_create(
-			xendrm_dev->xdrv_info, args->handle, args->width,
-			args->height, args->bpp, args->size,
-			xendrm_gem_get_sg_table(gem_obj));
+	sgt = xendrm_gem_get_sg_table(gem_obj);
+	if (!sgt && !xendrm_dev->platdata->ext_buffers) {
+		ret = -ENOMEM;
+		goto fail_destroy;
+	}
+	ret = xendrm_dev->front_ops->dbuf_create(xendrm_dev->xdrv_info,
+		args->handle, args->width, args->height, args->bpp, args->size,
+		&sgt);
 	if (ret < 0)
 		goto fail_destroy;
+	if (xendrm_dev->platdata->ext_buffers)
+		xendrm_gem_set_sg_table(gem_obj, sgt);
 	dumb_info->gem_obj = gem_obj;
 	dumb_info->handle = args->handle;
 	list_add(&dumb_info->list, &xendrm_dev->dumb_buf_list);
@@ -95,7 +102,7 @@ fail:
 static void xendrm_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xendrm_device *xendrm_dev = gem_obj->dev->dev_private;
-	struct xendrm_devmb_info *dumb_info, *q;
+	struct xendrm_dumb_info *dumb_info, *q;
 
 	DRM_DEBUG("Looking for gem_obj %p\n", gem_obj);
 	list_for_each_entry_safe(dumb_info, q,

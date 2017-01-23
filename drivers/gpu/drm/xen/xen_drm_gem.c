@@ -24,6 +24,7 @@
 #include <linux/dma-buf.h>
 #include <linux/scatterlist.h>
 
+#include "xen_drm.h"
 #include "xen_drm_gem.h"
 
 struct xen_gem_object {
@@ -156,6 +157,7 @@ error:
 static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	size_t size)
 {
+	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct xen_gem_object *xen_obj;
 	int ret;
 
@@ -164,6 +166,8 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	if (IS_ERR(xen_obj))
 		return xen_obj;
 	xen_obj->size = size;
+	if (xendrm_dev->platdata->ext_buffers)
+		return xen_obj;
 	xen_obj->sgt = xendrm_gem_alloc(size);
 	if (!xen_obj->sgt) {
 		ret = -ENOMEM;
@@ -249,6 +253,14 @@ fail:
 	sg_free_table(sgt);
 	kfree(sgt);
 	return NULL;
+}
+
+void xendrm_gem_set_sg_table(struct drm_gem_object *gem_obj,
+	struct sg_table *sgt)
+{
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+
+	xen_obj->sgt = sgt;
 }
 
 struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,

@@ -35,12 +35,23 @@ struct xdrv_shared_buffer_info {
 	unsigned char *vdirectory;
 	struct sg_table *sgt;
 	size_t vbuffer_sz;
+
+	/* external buffer handling */
+	struct xenbus_device *xb_dev;
+	bool ext_buffer;
+	uint32_t num_pages;
+	struct page **pages;
+	/* map grant handles and addresses */
+	struct map_info {
+		grant_handle_t handle;
+	} *map_info;
 };
 
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf);
 struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
 	struct list_head *dumb_buf_list, uint64_t dumb_cookie,
-	struct sg_table *sgt, unsigned int buffer_size);
+	struct sg_table *sgt, unsigned int buffer_size, bool ext_buffer);
+struct sg_table *xdrv_shbuf_map(struct xdrv_shared_buffer_info *buf);
 struct xdrv_shared_buffer_info *xdrv_shbuf_get_by_dumb_cookie(
 	struct list_head *dumb_buf_list, uint64_t dumb_cookie);
 void xdrv_shbuf_flush_fb(struct list_head *dumb_buf_list, uint64_t fb_cookie);

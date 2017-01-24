@@ -74,10 +74,14 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 		goto fail_destroy;
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
-	sgt = xendrm_gem_get_sg_table(gem_obj);
-	if (!sgt && !xendrm_dev->platdata->ext_buffers) {
-		ret = -ENOMEM;
-		goto fail_destroy;
+	if (xendrm_dev->platdata->ext_buffers) {
+		sgt = NULL;
+	} else {
+		sgt = xendrm_gem_get_sg_table(gem_obj);
+		if (!sgt) {
+			ret = -ENOMEM;
+			goto fail_destroy;
+		}
 	}
 	ret = xendrm_dev->front_ops->dbuf_create(xendrm_dev->xdrv_info,
 		args->handle, args->width, args->height, args->bpp, args->size,

@@ -232,8 +232,6 @@ struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj)
 	struct scatterlist *src, *dst;
 	int ret, i;
 
-	if (!xen_obj->sgt)
-		return NULL;
 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt)
 		return NULL;
@@ -254,7 +252,6 @@ fail:
 	kfree(sgt);
 	return NULL;
 }
-
 void xendrm_gem_set_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt)
 {

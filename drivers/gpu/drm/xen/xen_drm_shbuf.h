@@ -30,20 +30,20 @@ struct xdrv_shared_buffer_info {
 	struct list_head list;
 	uint64_t dumb_cookie;
 	uint64_t fb_cookie;
+	/* number of references granted for the backend use */
 	int num_grefs;
 	grant_ref_t *grefs;
 	unsigned char *vdirectory;
 	struct sg_table *sgt;
-	size_t vbuffer_sz;
 
 	/* external buffer handling */
 	struct xenbus_device *xb_dev;
 	bool ext_buffer;
 	/* ballooned pages */
-	int num_pages;
-	struct page **pages;
+	int ext_num_pages;
+	struct page **ext_pages;
 	/* Xen map handle */
-	grant_handle_t *map_handle;
+	grant_handle_t *ext_map_handle;
 };
 
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf);

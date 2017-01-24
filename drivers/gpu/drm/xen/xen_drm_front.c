@@ -809,10 +809,15 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 
 	path = xb_dev->nodename;
 	plat_data->num_connectors = 0;
+
 	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
 			XENDISPL_FEATURE_BE_ALLOC, 0)) {
 		DRM_INFO("Backend can provide dumb buffers\n");
+#ifdef CONFIG_DRM_XENFRONT_CMA
+		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
+#else
 		plat_data->ext_buffers = true;
+#endif
 	}
 	connector_nodes = xdrv_cfg_get_num_nodes(path, XENDISPL_PATH_CONNECTOR,
 		&num_conn);

@@ -1,0 +1,15 @@
+/dts-v1/;
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include "r8a779x-coproc.dtsi"
+
+/ {
+	soc {
+		#address-cells = <2>;
+		#size-cells = <2>;
+	};
+
+	/* make XEN happy */
+	passthrough {
+	};
+};

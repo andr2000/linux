@@ -1,0 +1,37 @@
+/ {
+	aliases {
+		coproc1 = &gpu1;
+		coproc2 = &dsp1;
+		coproc3 = &dsp2;
+	};
+
+	soc {
+		gpu1: gpu1@0xdf000000 {
+			compatible = "vendor_xxx,coproc_xxx";
+			reg = <0x0 0xdf000000 0x0 0x1000>;
+			interrupts = <GIC_SPI 31 IRQ_TYPE_LEVEL_HIGH>;
+			status = "okay";
+			xen,coproc;
+		};
+
+		dsp1: dsp1@0xdf001000 {
+			compatible = "vendor_xxx,coproc_xxx";
+			reg = <0x0 0xdf001000 0x0 0x1000>,
+			      <0x0 0xdf003000 0x0 0x1000>,
+			      <0x0 0xdf005000 0x0 0x1000>;
+			interrupts = <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+			status = "okay";
+			xen,coproc;
+		};
+
+		dsp2: dsp2@0xdf002000 {
+			compatible = "vendor_xxx,coproc_xxx";
+			reg = <0x0 0xdf002000 0x0 0x1000>;
+			interrupts = <GIC_SPI 64 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH>;
+			status = "okay";
+			xen,coproc;
+		};
+	};
+};

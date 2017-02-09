@@ -34,6 +34,7 @@
 /dts-v1/;
 #include "r8a7795.dtsi"
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
 
 / {
 	model = "Renesas Salvator-X board based on r8a7795";
@@ -366,6 +367,30 @@
 			label = "SW-TACT-21";
 			gpios = <&gpio6 12 GPIO_ACTIVE_LOW>;
 			linux,code = <114>;
+		};
+
+		soft_sw0 {
+			label = "SW-4-1";
+			gpios = <&gpio5 17 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_CAMERA>;
+		};
+
+		soft_sw1 {
+			label = "SW-4-2";
+			gpios = <&gpio5 20 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_SOUND>;
+		};
+
+		soft_sw2 {
+			label = "SW-4-3";
+			gpios = <&gpio5 22 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_MEDIA>;
+		};
+
+		soft_sw3 {
+			label = "SW-4-4";
+			gpios = <&gpio5 23 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_CANCEL>;
 		};
 	};
 };

@@ -151,6 +151,7 @@ config PHY_RCAR_GEN3_USB2
 	depends on ARCH_RENESAS
 	depends on EXTCON
 	select GENERIC_PHY
+	select USB_PHY
 	help
 	  Support for USB 2.0 PHY found on Renesas R-Car generation 3 SoCs.
 

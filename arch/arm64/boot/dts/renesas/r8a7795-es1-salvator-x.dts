@@ -118,6 +118,13 @@
 		compatible = "renesas,mmngrbuf";
 	};
 
+	ion {
+		compatible = "renesas,ion-rcar";
+		heap_rcar_custom@0 {
+			heap-name = "rcar custom";
+		};
+	};
+
 	avb-mch {
 		compatible = "renesas,avb-mch-gen3";
 		reg =	<0 0xec5a0100 0 0x100>;  /* ADG_AVB */

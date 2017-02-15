@@ -1,0 +1,10 @@
+config COPROC_EMULATORS
+	bool "Enable remote processors emulators"
+
+config COPROC_EMULATOR
+	tristate "Remote processors emulator"
+	depends on COPROC_EMULATORS
+
+config COPROC_EMULATOR_GX6XXX
+	tristate "Remote processors emulator for GX6XXX GPUs"
+	depends on COPROC_EMULATORS

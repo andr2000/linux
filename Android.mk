@@ -35,8 +35,8 @@ KERNEL_CONFIG := $(KERNEL_OUT)/.config
 TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz
 TARGET_PREBUILT_INT_KERNEL_TYPE := Image.gz
 
-KERNEL_MODULES_INSTALL := system
-KERNEL_MODULES_OUT := $(TARGET_OUT)/lib64/modules
+KERNEL_MODULES_INSTALL := vendor
+KERNEL_MODULES_OUT := $(TARGET_OUT_VENDOR)/lib64/modules
 
 define mv-modules
     mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.order`;\

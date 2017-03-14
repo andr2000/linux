@@ -32,6 +32,7 @@
 #define xendrm_gem_fb_destroy             drm_fb_cma_destroy
 #define xendrm_gem_fb_create_with_funcs   drm_fb_cma_create_with_funcs
 #define xendrm_gem_get_sg_table           drm_gem_cma_prime_get_sg_table
+#define xendrm_gem_import_sg_table        drm_gem_cma_prime_import_sg_table
 #define xendrm_gem_set_ext_sg_table(a, b) {}
 #else
 int xendrm_gem_dumb_create(struct drm_file *file_priv, struct drm_device *dev,
@@ -43,6 +44,8 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 
 struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj);
+struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
+	struct dma_buf_attachment *attach, struct sg_table *sgt);
 
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,

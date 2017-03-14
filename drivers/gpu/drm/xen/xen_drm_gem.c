@@ -34,6 +34,8 @@ struct xen_gem_object {
 	struct sg_table *sgt;
 	/* this is for external buffer allocated by back */
 	struct sg_table *sgt_ext;
+	/* this is for imported buffer */
+	struct sg_table *sgt_imported;
 };
 
 struct xen_fb {
@@ -120,6 +122,8 @@ fail_nomem:
 
 static void xendrm_gem_free(struct xen_gem_object *xen_obj)
 {
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
 	if (xen_obj->sgt) {
 		struct scatterlist *sg;
 		int i;
@@ -129,8 +133,9 @@ static void xendrm_gem_free(struct xen_gem_object *xen_obj)
 				get_order(sg->length));
 		sg_free_table(xen_obj->sgt);
 		kfree(xen_obj->sgt);
-	}
-	if (xen_obj->sgt_ext) {
+	} else if (xen_obj->base.import_attach) {
+		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
+	} else if (xen_obj->sgt_ext) {
 		sg_free_table(xen_obj->sgt_ext);
 		kfree(xen_obj->sgt_ext);
 	}
@@ -260,12 +265,28 @@ fail:
 	return NULL;
 }
 
+struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
+	struct dma_buf_attachment *attach, struct sg_table *sgt)
+{
+	struct xen_gem_object *xen_obj;
+
+	xen_obj = xendrm_gem_create_obj(dev, attach->dmabuf->size);
+	if (IS_ERR(xen_obj))
+		return ERR_CAST(xen_obj);
+	xen_obj->sgt_imported = sgt;
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
+	return &xen_obj->base;
+}
+
 void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	xen_obj->sgt_ext = sgt;
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
 }
 
 static struct xen_fb *xendrm_gem_fb_alloc(struct drm_device *dev,
@@ -403,6 +424,8 @@ static int xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 	struct sg_table *sgt;
 	int ret;
 
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
 	/*
 	 * Clear the VM_PFNMAP flag that was set by drm_gem_mmap(), and set the
 	 * vm_pgoff (used as a fake buffer offset by DRM) to 0 as we want to map
@@ -415,6 +438,8 @@ static int xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 
 	if (xen_obj->sgt)
 		sgt = xen_obj->sgt;
+	else if (xen_obj->sgt_imported)
+		sgt = xen_obj->sgt_imported;
 	else
 		sgt = xen_obj->sgt_ext;
 	ret = xendrm_mmap_sgt(sgt, vma);

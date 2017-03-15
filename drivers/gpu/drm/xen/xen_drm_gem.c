@@ -349,7 +349,8 @@ static struct xen_fb *xendrm_gem_fb_alloc(struct drm_device *dev,
 
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
-	const struct drm_framebuffer_funcs *funcs)
+	const struct drm_framebuffer_funcs *funcs,
+	struct drm_gem_object **obj)
 {
 	struct xen_fb *xen_fb;
 	struct xen_gem_object *xen_obj;
@@ -359,6 +360,7 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	unsigned int min_size;
 	int ret;
 
+	*obj = NULL;
 	/* we do not support formats that require more than 1 plane */
 	if (drm_format_num_planes(mode_cmd->pixel_format) != 1) {
 		DRM_ERROR("Unsupported pixel format 0x%04x\n",
@@ -389,6 +391,7 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 		ret = PTR_ERR(xen_fb);
 		goto fail;
 	}
+	*obj = gem_obj;
 	return &xen_fb->fb;
 
 fail:

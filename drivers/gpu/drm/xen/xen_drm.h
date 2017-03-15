@@ -27,6 +27,7 @@
 struct xendispl_front_ops;
 struct platform_device;
 struct drm_framebuffer;
+struct drm_gem_object;
 
 struct xendrm_device {
 	struct xdrv_info *xdrv_info;
@@ -35,9 +36,6 @@ struct xendrm_device {
 	int num_crtcs;
 	struct xendrm_plat_data *platdata;
 	struct xendrm_crtc crtcs[XENDRM_MAX_CRTCS];
-
-	/* dumb buffers - used to match gem to handle */
-	struct list_head dumb_buf_list;
 
 	/* vblank and page flip handling */
 	struct xendrm_timer vblank_timer;
@@ -65,6 +63,11 @@ struct xendrm_plat_data {
 static inline uint64_t xendrm_fb_to_cookie(struct drm_framebuffer *fb)
 {
 	return (uint64_t)fb;
+}
+
+static inline uint64_t xendrm_dumb_to_cookie(struct drm_gem_object *gem_obj)
+{
+	return (uint64_t)gem_obj;
 }
 
 int xendrm_probe(struct platform_device *pdev,

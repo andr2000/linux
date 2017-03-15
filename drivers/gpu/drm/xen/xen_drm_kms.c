@@ -45,17 +45,17 @@ xendrm_kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	static struct drm_framebuffer *fb;
+	struct drm_gem_object *gem_obj;
 
 	fb = xendrm_gem_fb_create_with_funcs(dev, file_priv,
-		mode_cmd, &xendr_du_fb_funcs);
+		mode_cmd, &xendr_du_fb_funcs, &gem_obj);
 	if (!IS_ERR_OR_NULL(fb)) {
 		int ret;
 
 		ret = xendrm_dev->front_ops->fb_attach(
-			xendrm_dev->xdrv_info, mode_cmd->handles[0],
+			xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
 			xendrm_fb_to_cookie(fb), fb->width, fb->height,
 			fb->pixel_format);
-		/* FIXME: we take the first handle */
 		if (ret < 0) {
 			DRM_ERROR("Back failed to attach FB %p\n", fb);
 			xendrm_gem_fb_destroy(fb);

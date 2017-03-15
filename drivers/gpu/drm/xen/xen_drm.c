@@ -24,12 +24,6 @@
 #include "xen_drm_gem.h"
 #include "xen_drm_kms.h"
 
-struct xendrm_dumb_info {
-	struct list_head list;
-	uint32_t handle;
-	struct drm_gem_object *gem_obj;
-};
-
 int xendrm_enable_vblank(struct drm_device *dev, unsigned int pipe)
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
@@ -58,14 +52,10 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct drm_gem_object *gem_obj;
-	struct xendrm_dumb_info *dumb_info;
 	struct sg_table *sgt;
 	bool ext_buffer;
 	int ret;
 
-	dumb_info = kzalloc(sizeof(*dumb_info), GFP_KERNEL);
-	if (!dumb_info)
-		return -ENOMEM;
 	ret = xendrm_gem_dumb_create(file_priv, dev, args);
 	if (ret < 0)
 		goto fail;
@@ -90,21 +80,17 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 	 */
 	sgt = ext_buffer ? NULL : xendrm_gem_get_sg_table(gem_obj);
 	ret = xendrm_dev->front_ops->dbuf_create(
-			xendrm_dev->xdrv_info, args->handle, args->width,
-			args->height, args->bpp, args->size, &sgt);
+			xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
+			args->width, args->height, args->bpp, args->size, &sgt);
 	if (ret < 0)
 		goto fail_destroy;
 	if (ext_buffer)
 		xendrm_gem_set_ext_sg_table(gem_obj, sgt);
-	dumb_info->gem_obj = gem_obj;
-	dumb_info->handle = args->handle;
-	list_add(&dumb_info->list, &xendrm_dev->dumb_buf_list);
 	return 0;
 
 fail_destroy:
 	drm_gem_dumb_destroy(file_priv, dev, args->handle);
 fail:
-	kfree(dumb_info);
 	DRM_ERROR("Failed to create dumb buffer: %d\n", ret);
 	return ret;
 }
@@ -112,20 +98,10 @@ fail:
 static void xendrm_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xendrm_device *xendrm_dev = gem_obj->dev->dev_private;
-	struct xendrm_dumb_info *dumb_info, *q;
 
-	DRM_DEBUG("Looking for gem_obj %p\n", gem_obj);
-	list_for_each_entry_safe(dumb_info, q,
-			&xendrm_dev->dumb_buf_list, list) {
-		if (dumb_info->gem_obj == gem_obj) {
-			list_del(&dumb_info->list);
-			DRM_DEBUG("Freeing handle %d\n", dumb_info->handle);
-			xendrm_dev->front_ops->dbuf_destroy(
-				xendrm_dev->xdrv_info, dumb_info->handle);
-			kfree(dumb_info);
-			break;
-		}
-	}
+	DRM_DEBUG("Freeing gem_obj %p\n", gem_obj);
+	xendrm_dev->front_ops->dbuf_destroy(xendrm_dev->xdrv_info,
+		xendrm_dumb_to_cookie(gem_obj));
 	xendrm_gem_free_object(gem_obj);
 }
 
@@ -247,7 +223,6 @@ int xendrm_probe(struct platform_device *pdev,
 	if (!xendrm_dev)
 		return -ENOMEM;
 
-	INIT_LIST_HEAD(&xendrm_dev->dumb_buf_list);
 	xendrm_dev->front_ops = xendrm_front_funcs;
 	xendrm_dev->front_ops->on_page_flip = xendrm_on_page_flip;
 	xendrm_dev->xdrv_info = platdata->xdrv_info;

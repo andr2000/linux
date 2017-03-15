@@ -54,6 +54,25 @@ static inline struct xen_fb *to_xen_fb(struct drm_framebuffer *fb)
 	return container_of(fb, struct xen_fb, fb);
 }
 
+static void xendrm_gem_dump(const char *fn, struct xen_gem_object *xen_obj)
+{
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			fn, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
+	DRM_ERROR("%s xen_obj->base.import_attach %p\n", fn, xen_obj->base.import_attach);
+}
+
+static void xendrm_gem_dump_sgt(const char *fn, const char *sgt_name,
+	struct sg_table *sgt)
+{
+	struct scatterlist *sg;
+	int i;
+
+	DRM_ERROR("%s sgt is %s\n", fn, sgt_name);
+	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
+		DRM_ERROR("vaddr %p length %u\n", sg_page(sg), sg->length);
+	}
+}
+
 static struct sg_table *xendrm_gem_alloc(size_t size)
 {
 	struct sg_table *sgt;
@@ -94,6 +113,7 @@ static struct sg_table *xendrm_gem_alloc(size_t size)
 			chunks[num_chunks++].size = chunk_sz;
 			need_sz -= chunk_sz;
 			chunk_sz = need_sz;
+			DRM_ERROR("%s alloc_pages %p\n", __FUNCTION__, page_to_virt(page));
 			continue;
 		}
 		if (unlikely(chunk_sz == PAGE_SIZE))
@@ -122,20 +142,26 @@ fail_nomem:
 
 static void xendrm_gem_free(struct xen_gem_object *xen_obj)
 {
-	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
-			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
+	xendrm_gem_dump(__FUNCTION__, xen_obj);
+	if (xen_obj->base.import_attach) {
+		DRM_ERROR("%s drm_prime_gem_destroy\n", __FUNCTION__);
+		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
+	}
 	if (xen_obj->sgt) {
 		struct scatterlist *sg;
 		int i;
 
+		xendrm_gem_dump_sgt(__FUNCTION__, "xen_obj->sgt", xen_obj->sgt);
 		for_each_sg(xen_obj->sgt->sgl, sg, xen_obj->sgt->nents, i)
+		{
 			free_pages((unsigned long)sg_virt(sg),
 				get_order(sg->length));
+		}
 		sg_free_table(xen_obj->sgt);
 		kfree(xen_obj->sgt);
-	} else if (xen_obj->base.import_attach) {
-		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
-	} else if (xen_obj->sgt_ext) {
+	}
+	if (xen_obj->sgt_ext) {
+		xendrm_gem_dump_sgt(__FUNCTION__, "xen_obj->sgt_ext", xen_obj->sgt_ext);
 		sg_free_table(xen_obj->sgt_ext);
 		kfree(xen_obj->sgt_ext);
 	}
@@ -174,6 +200,7 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	struct xen_gem_object *xen_obj;
 	int ret;
 
+	DRM_ERROR("%s size %zu\n", __FUNCTION__, size);
 	size = round_up(size, PAGE_SIZE);
 	xen_obj = xendrm_gem_create_obj(dev, size);
 	if (IS_ERR(xen_obj))
@@ -182,6 +209,7 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	if (xendrm_dev->platdata->ext_buffers)
 		return xen_obj;
 	xen_obj->sgt = xendrm_gem_alloc(size);
+	xendrm_gem_dump_sgt(__FUNCTION__, "xen_obj->sgt", xen_obj->sgt);
 	if (!xen_obj->sgt) {
 		ret = -ENOMEM;
 		goto fail;
@@ -202,6 +230,7 @@ static struct xen_gem_object *xendrm_gem_create_with_handle(
 	struct drm_gem_object *gem_obj;
 	int ret;
 
+	DRM_ERROR("%s size %zu\n", __FUNCTION__, size);
 	xen_obj = xendrm_gem_create(dev, size);
 	if (IS_ERR(xen_obj))
 		return xen_obj;
@@ -223,6 +252,7 @@ int xendrm_gem_dumb_create(struct drm_file *file_priv,
 
 	xen_obj = xendrm_gem_create_with_handle(file_priv, dev, args->size,
 		&args->handle);
+	DRM_ERROR("%s handle %d\n", __FUNCTION__, args->handle);
 	return PTR_ERR_OR_ZERO(xen_obj);
 }
 
@@ -230,6 +260,7 @@ void xendrm_gem_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
+	DRM_ERROR("%s gem_obj %p\n", __FUNCTION__, gem_obj);
 	xendrm_gem_free(xen_obj);
 	drm_gem_object_release(gem_obj);
 	kfree(xen_obj);
@@ -242,6 +273,9 @@ struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj)
 	struct scatterlist *src, *dst;
 	int ret, i;
 
+	DRM_ERROR("%s gem_obj %p\n", __FUNCTION__, gem_obj);
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
 	if (!xen_obj->sgt)
 		return NULL;
 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
@@ -270,6 +304,7 @@ struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
 {
 	struct xen_gem_object *xen_obj;
 
+	DRM_ERROR("%s attach->dmabuf->size %zu\n", __FUNCTION__, attach->dmabuf->size);
 	xen_obj = xendrm_gem_create_obj(dev, attach->dmabuf->size);
 	if (IS_ERR(xen_obj))
 		return ERR_CAST(xen_obj);
@@ -377,6 +412,7 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 	struct drm_gem_object *gem_obj;
 
 	gem_obj = drm_gem_object_lookup(file_priv, handle);
+	DRM_ERROR("%s gem_obj %p handle %d\n", __FUNCTION__, gem_obj, handle);
 	if (!gem_obj) {
 		DRM_ERROR("Failed to lookup GEM object\n");
 		return -EINVAL;
@@ -393,6 +429,7 @@ static int xendrm_mmap_sgt(struct sg_table *sgt, struct vm_area_struct *vma)
 	struct scatterlist *sg;
 	int ret, i;
 
+	DRM_ERROR("%s\n", __FUNCTION__);
 	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
 		struct page *page = sg_page(sg);
 		unsigned long remainder = vma->vm_end - addr;
@@ -461,5 +498,51 @@ int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 		return ret;
 	gem_obj = vma->vm_private_data;
 	xen_obj = to_xen_gem_obj(gem_obj);
+	return xendrm_gem_mmap_obj(xen_obj, vma);
+}
+
+void *xendrm_gem_prime_vmap(struct drm_gem_object *gem_obj)
+{
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+	struct page **pages;
+	size_t num_pages;
+	void *vaddr;
+	int ret;
+
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
+	num_pages = DIV_ROUND_UP(xen_obj->size, PAGE_SIZE);
+	pages = drm_malloc_ab(num_pages, sizeof(*pages));
+	if (!pages)
+		return NULL;
+	vaddr = NULL;
+	ret = drm_prime_sg_to_page_addr_arrays(xen_obj->sgt, pages, NULL,
+		num_pages);
+	if (ret < 0)
+		goto fail;
+
+	vaddr = vmap(pages, num_pages, GFP_KERNEL, PAGE_SHARED);
+fail:
+	drm_free_large(pages);
+	return vaddr;
+}
+
+void xendrm_gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr)
+{
+	vunmap(vaddr);
+}
+
+int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
+	struct vm_area_struct *vma)
+{
+	struct xen_gem_object *xen_obj;
+	int ret;
+
+	ret = drm_gem_mmap_obj(gem_obj, gem_obj->size, vma);
+	if (ret < 0)
+		return ret;
+	xen_obj = to_xen_gem_obj(gem_obj);
+	DRM_ERROR("%s xen_obj->sgt %p xen_obj->sgt_imported %p xen_obj->sgt_ext %p\n",
+			__FUNCTION__, xen_obj->sgt, xen_obj->sgt_imported, xen_obj->sgt_ext);
 	return xendrm_gem_mmap_obj(xen_obj, vma);
 }

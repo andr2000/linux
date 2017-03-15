@@ -340,11 +340,13 @@ static int xdrv_mmap(struct device *dev, struct vm_area_struct *vma,
 static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
 	struct device *dev)
 {
+#if 0
 	if (xdrv_info->dma_map_ops.mmap != xdrv_mmap) {
 		xdrv_info->dma_map_ops = *(get_dma_ops(dev));
 		xdrv_info->dma_map_ops.mmap = xdrv_mmap;
 	}
 	dev->archdata.dma_ops = &xdrv_info->dma_map_ops;
+#endif
 }
 
 static int ddrv_probe(struct platform_device *pdev)

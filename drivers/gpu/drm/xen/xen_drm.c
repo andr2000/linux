@@ -47,13 +47,30 @@ void xendrm_disable_vblank(struct drm_device *dev, unsigned int pipe)
 	atomic_set(&xendrm_dev->vblank_enabled[pipe], 0);
 }
 
+static bool xendrm_dumb_is_for_scanout(struct xendrm_device *xendrm_dev,
+	uint32_t width, uint32_t height)
+{
+	struct xendrm_cfg_connector *conn_cfg;
+	int i;
+
+	/*
+	 * FIXME: guess if the buffer will be used for scanout: assume it is
+	 * if it matches one of the connector's resolutions
+	 */
+	conn_cfg = xendrm_dev->platdata->connectors;
+	for (i = 0; i < xendrm_dev->num_crtcs; i++) {
+		if ((width == conn_cfg[i].width) &&
+			(height == conn_cfg[i].height))
+			return true;
+	}
+	return false;
+}
+
 static int xendrm_dumb_create(struct drm_file *file_priv,
 	struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct drm_gem_object *gem_obj;
-	struct sg_table *sgt;
-	bool ext_buffer;
 	int ret;
 
 	ret = xendrm_gem_dumb_create(file_priv, dev, args);
@@ -66,26 +83,35 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
 
-	ext_buffer = xendrm_dev->platdata->ext_buffers;
-	/*
-	 * FIXME: if CONFIG_DRM_XEN_FRONTEND_CMA is configured
-	 * then drm_gem_cma_object is in use which doesn't
-	 * have an SG table for the buffer it has allocated,
-	 * so we use drm_gem_cma_prime_get_sg_table to get one:
-	 * it allocates a new table and passes to us.
-	 * For our GEM we do a copy of the SG table we have
-	 * to be consistent with DRM CMA behavior.
-	 * If buffers are allocated on backend's side, then
-	 * pass NULL and have backend to provide SG table
-	 */
-	sgt = ext_buffer ? NULL : xendrm_gem_get_sg_table(gem_obj);
-	ret = xendrm_dev->front_ops->dbuf_create(
-			xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
-			args->width, args->height, args->bpp, args->size, &sgt);
-	if (ret < 0)
-		goto fail_destroy;
-	if (ext_buffer)
-		xendrm_gem_set_ext_sg_table(gem_obj, sgt);
+	if (xendrm_dumb_is_for_scanout(xendrm_dev, args->width, args->height)) {
+		struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+		struct sg_table *sgt;
+		bool ext_buffer;
+
+		DRM_DEBUG("Creating dumb for scanout\n");
+		xen_obj->is_scanout = true;
+		ext_buffer = xendrm_dev->platdata->ext_buffers;
+		/*
+		 * FIXME: if CONFIG_DRM_XEN_FRONTEND_CMA is configured
+		 * then drm_gem_cma_object is in use which doesn't
+		 * have an SG table for the buffer it has allocated,
+		 * so we use drm_gem_cma_prime_get_sg_table to get one:
+		 * it allocates a new table and passes to us.
+		 * For our GEM we do a copy of the SG table we have
+		 * to be consistent with DRM CMA behavior.
+		 * If buffers are allocated on backend's side, then
+		 * pass NULL and have backend to provide SG table
+		 */
+		sgt = ext_buffer ? NULL : xendrm_gem_get_sg_table(gem_obj);
+		ret = xendrm_dev->front_ops->dbuf_create(
+				xendrm_dev->xdrv_info,
+				xendrm_dumb_to_cookie(gem_obj), args->width,
+				args->height, args->bpp, args->size, &sgt);
+		if (ret < 0)
+			goto fail_destroy;
+		if (ext_buffer)
+			xendrm_gem_set_ext_sg_table(gem_obj, sgt);
+	}
 	return 0;
 
 fail_destroy:
@@ -98,10 +124,12 @@ fail:
 static void xendrm_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xendrm_device *xendrm_dev = gem_obj->dev->dev_private;
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	DRM_DEBUG("Freeing gem_obj %p\n", gem_obj);
-	xendrm_dev->front_ops->dbuf_destroy(xendrm_dev->xdrv_info,
-		xendrm_dumb_to_cookie(gem_obj));
+	if (xen_obj->is_scanout)
+		xendrm_dev->front_ops->dbuf_destroy(xendrm_dev->xdrv_info,
+				xendrm_dumb_to_cookie(gem_obj));
 	xendrm_gem_free_object(gem_obj);
 }
 

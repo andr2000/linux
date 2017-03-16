@@ -20,7 +20,6 @@
 #define __XEN_DRM_GEM_H
 
 #include <drm/drmP.h>
-#include <drm/drm_gem.h>
 
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 #include <drm/drm_fb_cma_helper.h>
@@ -63,26 +62,5 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */
-
-struct xen_gem_object {
-	struct drm_gem_object base;
-	size_t size;
-	/* this is set if we have allocated buffer on our own */
-	struct sg_table *sgt;
-	/* this is for external buffer allocated by back */
-	struct sg_table *sgt_ext;
-	/* this is for imported buffer */
-	struct sg_table *sgt_imported;
-	/* set is this object is used for scanout, e.g. request to
-	 * backend was sent
-	 */
-	bool is_scanout;
-};
-
-static inline struct xen_gem_object *to_xen_gem_obj(
-	struct drm_gem_object *gem_obj)
-{
-	return container_of(gem_obj, struct xen_gem_object, base);
-}
 
 #endif /* __XEN_DRM_GEM_H */

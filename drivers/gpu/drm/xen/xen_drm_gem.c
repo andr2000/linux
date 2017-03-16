@@ -19,6 +19,7 @@
 #include <drm/drmP.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_fb_helper.h>
+#include <drm/drm_gem.h>
 
 #include <linux/dma-buf.h>
 #include <linux/scatterlist.h>
@@ -26,10 +27,27 @@
 #include "xen_drm.h"
 #include "xen_drm_gem.h"
 
+struct xen_gem_object {
+	struct drm_gem_object base;
+	size_t size;
+	/* this is set if we have allocated buffer on our own */
+	struct sg_table *sgt;
+	/* this is for external buffer allocated by back */
+	struct sg_table *sgt_ext;
+	/* this is for imported buffer */
+	struct sg_table *sgt_imported;
+};
+
 struct xen_fb {
 	struct drm_framebuffer fb;
 	struct xen_gem_object *xen_obj;
 };
+
+static inline struct xen_gem_object *to_xen_gem_obj(
+	struct drm_gem_object *gem_obj)
+{
+	return container_of(gem_obj, struct xen_gem_object, base);
+}
 
 static inline struct xen_fb *to_xen_fb(struct drm_framebuffer *fb)
 {
@@ -536,7 +554,6 @@ fail:
 
 void xendrm_gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr)
 {
-	DRM_ERROR("%s gem_obj %p vaddr %p\n", __FUNCTION__, gem_obj, vaddr);
 	vunmap(vaddr);
 }
 

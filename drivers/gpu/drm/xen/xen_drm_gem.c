@@ -92,10 +92,10 @@ static struct sg_table *xendrm_gem_alloc(size_t size)
 		page = alloc_pages(GFP_KERNEL | __GFP_ZERO, chunk_order);
 		if (page) {
 			chunks[num_chunks].vaddr = page_to_virt(page);
+			DRM_ERROR("%s alloc_pages %p\n", __FUNCTION__, chunks[num_chunks].vaddr);
 			chunks[num_chunks++].size = chunk_sz;
 			need_sz -= chunk_sz;
 			chunk_sz = need_sz;
-			DRM_ERROR("%s alloc_pages %p\n", __FUNCTION__, page_to_virt(page));
 			continue;
 		}
 		if (unlikely(chunk_sz == PAGE_SIZE))
@@ -134,8 +134,9 @@ static void xendrm_gem_free(struct xen_gem_object *xen_obj)
 		int i;
 
 		xendrm_gem_dump_sgt(__FUNCTION__, "xen_obj->sgt", xen_obj->sgt);
-		for_each_sg(xen_obj->sgt->sgl, sg, xen_obj->sgt->nents, i)
-		{
+		for_each_sg(xen_obj->sgt->sgl, sg, xen_obj->sgt->nents, i) {
+			DRM_ERROR("%s free at %p size %u\n",
+				__FUNCTION__, sg_virt(sg), sg->length);
 			free_pages((unsigned long)sg_virt(sg),
 				get_order(sg->length));
 		}
@@ -395,6 +396,8 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 	struct drm_device *dev, uint32_t handle, uint64_t *offset)
 {
 	struct drm_gem_object *gem_obj;
+	struct xen_gem_object *xen_obj;
+
 
 	gem_obj = drm_gem_object_lookup(file_priv, handle);
 	DRM_ERROR("%s gem_obj %p handle %d\n", __FUNCTION__, gem_obj, handle);
@@ -402,15 +405,22 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 		DRM_ERROR("Failed to lookup GEM object\n");
 		return -EINVAL;
 	}
+	xen_obj = to_xen_gem_obj(gem_obj);
+	/* do not allow mapping of the imported buffers */
+	if (xen_obj->base.import_attach) {
+		drm_gem_object_unreference_unlocked(gem_obj);
+		return -EINVAL;
+	}
 	*offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
 	drm_gem_object_unreference_unlocked(gem_obj);
 	return 0;
 }
 
-static int xendrm_mmap_sgt(struct sg_table *sgt, struct vm_area_struct *vma)
+static int xendrm_mmap_sgt(struct device *dev, struct sg_table *sgt,
+	struct vm_area_struct *vma)
 {
 	unsigned long addr = vma->vm_start;
-	unsigned long offset = vma->vm_pgoff * PAGE_SIZE;
+	unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
 	struct scatterlist *sg;
 	int ret, i;
 
@@ -436,6 +446,18 @@ static int xendrm_mmap_sgt(struct sg_table *sgt, struct vm_area_struct *vma)
 		addr += len;
 		if (addr >= vma->vm_end)
 			return 0;
+	}
+	{
+		unsigned long addr = vma->vm_start;
+		struct sg_page_iter sg_iter;
+
+		for_each_sg_page(sgt->sgl, &sg_iter, sgt->nents, 0) {
+			struct page *page = sg_page_iter_page(&sg_iter);
+
+			ret = vm_insert_page(vma, addr, page);
+			addr += PAGE_SIZE;
+		}
+
 	}
 	return 0;
 }
@@ -464,7 +486,7 @@ static int xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 		sgt = xen_obj->sgt_imported;
 	else
 		sgt = xen_obj->sgt_ext;
-	ret = xendrm_mmap_sgt(sgt, vma);
+	ret = xendrm_mmap_sgt(xen_obj->base.dev->dev, sgt, vma);
 	if (ret < 0) {
 		DRM_ERROR("Failed to remap: %d\n", ret);
 		drm_gem_vm_close(vma);

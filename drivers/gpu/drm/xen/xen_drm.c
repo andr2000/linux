@@ -197,12 +197,12 @@ static const struct file_operations xendrm_fops = {
 	.mmap           = xendrm_gem_mmap,
 };
 
-const struct vm_operations_struct xendrm_vm_ops = {
+static const struct vm_operations_struct xendrm_vm_ops = {
 	.open = drm_gem_vm_open,
 	.close = drm_gem_vm_close,
 };
 
-static struct drm_driver xendrm_driver = {
+struct drm_driver xendrm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
 	.lastclose                 = xendrm_lastclose,

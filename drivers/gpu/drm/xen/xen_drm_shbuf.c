@@ -50,6 +50,7 @@ struct xdrv_shared_buffer_info *xdrv_shbuf_get_by_dumb_cookie(
 
 void xdrv_shbuf_flush_fb(struct list_head *dumb_buf_list, uint64_t fb_cookie)
 {
+	/* TODO: drm_clflush_sg??? */
 #ifdef CONFIG_X86
 	struct xdrv_shared_buffer_info *buf, *q;
 

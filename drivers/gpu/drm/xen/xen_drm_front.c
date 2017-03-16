@@ -347,6 +347,10 @@ static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
 	}
 	dev->archdata.dma_ops = &xdrv_info->dma_map_ops;
 #endif
+#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
+	/* make sure we have DMA ops set up, so no dummy ops are in use */
+	arch_setup_dma_ops(dev, 0, *dev->dma_mask, NULL, false);
+#endif
 }
 
 static int ddrv_probe(struct platform_device *pdev)

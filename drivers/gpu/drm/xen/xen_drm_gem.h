@@ -57,8 +57,7 @@ int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
-	const struct drm_framebuffer_funcs *funcs,
-	struct drm_gem_object **gem_obj);
+	const struct drm_framebuffer_funcs *funcs)
 void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */

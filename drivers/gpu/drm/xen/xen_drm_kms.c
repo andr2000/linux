@@ -46,23 +46,33 @@ xendrm_kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	static struct drm_framebuffer *fb;
 	struct drm_gem_object *gem_obj;
+	int ret;
 
 	fb = xendrm_gem_fb_create_with_funcs(dev, file_priv,
-		mode_cmd, &xendr_du_fb_funcs, &gem_obj);
-	if (!IS_ERR_OR_NULL(fb)) {
-		int ret;
+		mode_cmd, &xendr_du_fb_funcs);
+	if (IS_ERR(fb))
+		return fb;
+	gem_obj = drm_gem_object_lookup(file_priv,
+		mode_cmd->handles[0]);
+	if (!gem_obj) {
+		DRM_ERROR("Failed to lookup GEM object\n");
+		ret = -ENXIO;
+		goto fail;
+	}
+	drm_gem_object_unreference_unlocked(gem_obj);
 
-		ret = xendrm_dev->front_ops->fb_attach(
-			xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
-			xendrm_fb_to_cookie(fb), fb->width, fb->height,
-			fb->pixel_format);
-		if (ret < 0) {
-			DRM_ERROR("Back failed to attach FB %p\n", fb);
-			xendrm_gem_fb_destroy(fb);
-			fb = ERR_PTR(ret);
-		}
+	ret = xendrm_dev->front_ops->fb_attach(
+		xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
+		xendrm_fb_to_cookie(fb), fb->width, fb->height,
+		fb->pixel_format);
+	if (ret < 0) {
+		DRM_ERROR("Back failed to attach FB %p\n", fb);
+		goto fail;
 	}
 	return fb;
+fail:
+	xendrm_gem_fb_destroy(fb);
+	return ERR_PTR(ret);
 }
 
 static const struct drm_mode_config_funcs xendrm_kms_config_funcs = {

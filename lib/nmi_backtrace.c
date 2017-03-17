@@ -93,10 +93,14 @@ bool nmi_cpu_backtrace(struct pt_regs *regs)
 				cpu, instruction_pointer(regs));
 		} else {
 			pr_warn("NMI backtrace for cpu %d\n", cpu);
-			if (regs)
+			if (regs) {
 				show_regs(regs);
-			else
+#ifdef CONFIG_ARM64
+				show_stack(NULL, NULL);
+#endif
+			} else {
 				dump_stack();
+			}
 		}
 		cpumask_clear_cpu(cpu, to_cpumask(backtrace_mask));
 		return true;

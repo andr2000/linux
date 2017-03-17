@@ -56,5 +56,11 @@ static inline bool on_irq_stack(unsigned long sp, int cpu)
 	return (low <= sp && sp <= high);
 }
 
+#ifdef CONFIG_SMP
+extern void arch_trigger_cpumask_backtrace(const cpumask_t *mask,
+					   bool exclude_self);
+#define arch_trigger_cpumask_backtrace arch_trigger_cpumask_backtrace
+#endif
+
 #endif /* !__ASSEMBLER__ */
 #endif

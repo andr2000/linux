@@ -183,7 +183,7 @@ int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
 	if (unlikely(!evtchnl))
 		return -EIO;
-	ext_buffer = drv_info->cfg_plat_data.ext_buffers;
+	ext_buffer = drv_info->cfg_plat_data.be_alloc;
 	buf = xdrv_shbuf_alloc(drv_info->xb_dev, &drv_info->dumb_buf_list,
 		dumb_cookie, *sgt, size, ext_buffer);
 	if (!buf)
@@ -228,7 +228,7 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_DESTROY);
 	req->op.dbuf_destroy.dbuf_cookie = dumb_cookie;
-	ext_buffer = drv_info->cfg_plat_data.ext_buffers;
+	ext_buffer = drv_info->cfg_plat_data.be_alloc;
 	if (ext_buffer)
 		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
 			dumb_cookie);
@@ -802,7 +802,9 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
 #else
-		plat_data->ext_buffers = true;
+#if 0
+		plat_data->be_alloc = true;
+#endif
 #endif
 	}
 	plat_data->num_connectors = 0;

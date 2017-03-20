@@ -20,6 +20,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_gem.h>
 
 #include "xen_drm.h"
 #include "xen_drm_front.h"

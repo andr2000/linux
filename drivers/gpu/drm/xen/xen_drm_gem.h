@@ -57,9 +57,24 @@ int xendrm_gem_prime_mmap(struct drm_gem_object *gem_obj,
 void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
-	const struct drm_framebuffer_funcs *funcs)
-void xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
+	const struct drm_framebuffer_funcs *funcs);
+int xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt);
+int xendrm_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf);
+bool xendrm_gem_is_still_used(struct drm_gem_object *gem_obj);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */
+
+static inline bool xendrm_check_if_bad_page(struct page *page)
+{
+	if (unlikely(atomic_read(&page->_mapcount) != -1))
+		return true;
+	if (unlikely(page->mapping != NULL))
+		return true;
+	if (unlikely(page_ref_count(page) != 0))
+		return true;
+	if (unlikely(page->flags & PAGE_FLAGS_CHECK_AT_FREE))
+		return true;
+	return false;
+}
 
 #endif /* __XEN_DRM_GEM_H */

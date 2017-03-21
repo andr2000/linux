@@ -44,7 +44,7 @@ struct xdrv_shared_buffer_info {
 	/* external buffer handling */
 	struct xenbus_device *xb_dev;
 	/* set if this buffer was allocated by the backend */
-	bool ext_buffer;
+	bool be_alloc;
 	/* ballooned pages */
 	int ext_num_pages;
 	struct page **ext_pages;

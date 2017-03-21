@@ -96,48 +96,6 @@ static void xendrm_free_object(struct drm_gem_object *gem_obj)
 
 	xendrm_dev->front_ops->dbuf_destroy(xendrm_dev->xdrv_info,
 		xendrm_dumb_to_cookie(gem_obj));
-	/*
-	 * WORKAROUND: there are GPU drivers which import buffers from us and
-	 * have deferred free, thus making it not possible to cleanly free here
-	 * despite the fact that reference counter for this GEM object
-	 * was dropped. Workaround that by waiting for the clumsy driver
-	 * to finish its cleanup
-	 */
-	{
-#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
-		struct drm_gem_cma_object *cma_obj;
-		phys_addr_t paddr;
-		int i, nr;
-#endif
-		int retry;
-		bool still_used;
-
-#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
-		cma_obj = to_drm_gem_cma_obj(gem_obj);
-		nr = DIV_ROUND_UP(cma_obj->base.size, PAGE_SIZE);
-#endif
-		retry = 100;
-		do {
-			still_used = false;
-#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
-			paddr = dma_to_phys(gem_obj->dev->dev,
-				cma_obj->paddr);
-			for (i = 0; i < nr; i++, paddr += PAGE_SIZE)
-				if (xendrm_check_if_bad_page(
-						phys_to_page(paddr))) {
-					still_used = true;
-					break;
-				}
-#else
-			still_used = xendrm_gem_is_still_used(gem_obj);
-#endif
-			if (unlikely(still_used)) {
-//				trigger_all_cpu_backtrace();
-				DRM_ERROR("Cannot free now, pages are still in use\n");
-				msleep(1);
-			}
-		} while (still_used && retry--);
-	}
 	xendrm_gem_free_object(gem_obj);
 }
 
@@ -206,9 +164,6 @@ static const struct file_operations xendrm_fops = {
 };
 
 static const struct vm_operations_struct xendrm_vm_ops = {
-#ifndef CONFIG_DRM_XEN_FRONTEND_CMA
-	.fault          = xendrm_gem_fault,
-#endif
 	.open           = drm_gem_vm_open,
 	.close          = drm_gem_vm_close,
 };

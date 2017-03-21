@@ -60,8 +60,6 @@ struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	const struct drm_framebuffer_funcs *funcs);
 int xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt);
-int xendrm_gem_fault(struct vm_area_struct *vma, struct vm_fault *vmf);
-bool xendrm_gem_is_still_used(struct drm_gem_object *gem_obj);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */
 
 static inline bool xendrm_check_if_bad_page(struct page *page)

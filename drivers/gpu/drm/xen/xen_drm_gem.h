@@ -31,9 +31,10 @@
 #define xendrm_gem_mmap                   drm_gem_cma_mmap
 #define xendrm_gem_fb_destroy             drm_fb_cma_destroy
 #define xendrm_gem_fb_create_with_funcs   drm_fb_cma_create_with_funcs
-#define xendrm_gem_get_sg_table           drm_gem_cma_prime_get_sg_table
 #define xendrm_gem_import_sg_table        drm_gem_cma_prime_import_sg_table
-#define xendrm_gem_set_ext_sg_table(a, b) {}
+#define xendrm_gem_get_sg_table           drm_gem_cma_prime_get_sg_table
+#define xendrm_gem_set_pages(a, b)        {}
+#define xendrm_gem_get_pages(a)           NULL
 #define xendrm_gem_prime_vmap             drm_gem_cma_prime_vmap
 #define xendrm_gem_prime_vunmap           drm_gem_cma_prime_vunmap
 #define xendrm_gem_prime_mmap             drm_gem_cma_prime_mmap
@@ -46,6 +47,7 @@ int xendrm_gem_dumb_map_offset(struct drm_file *file_priv,
 
 int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma);
 
+struct page **xendrm_gem_get_pages(struct drm_gem_object *gem_obj);
 struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj);
 struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
 	struct dma_buf_attachment *attach, struct sg_table *sgt);
@@ -58,8 +60,8 @@ void xendrm_gem_fb_destroy(struct drm_framebuffer *fb);
 struct drm_framebuffer *xendrm_gem_fb_create_with_funcs(struct drm_device *dev,
 	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd,
 	const struct drm_framebuffer_funcs *funcs);
-int xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
-	struct sg_table *sgt);
+void xendrm_gem_set_pages(struct drm_gem_object *gem_obj,
+	struct page **pages);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */
 
 #endif /* __XEN_DRM_GEM_H */

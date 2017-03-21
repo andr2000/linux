@@ -88,7 +88,7 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 
 	size = round_up(size, PAGE_SIZE);
 	xen_obj = xendrm_gem_create_obj(dev, size);
-	if (IS_ERR(xen_obj))
+	if (IS_ERR_OR_NULL(xen_obj))
 		return xen_obj;
 	xen_obj->num_pages = DIV_ROUND_UP(size, PAGE_SIZE);
 	if (xendrm_dev->platdata->be_alloc) {
@@ -104,7 +104,7 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	 * with the backend
 	 */
 	xen_obj->pages = drm_gem_get_pages(&xen_obj->base);
-	if (IS_ERR(xen_obj->pages))
+	if (IS_ERR_OR_NULL(xen_obj->pages))
 		goto fail;
 	return xen_obj;
 
@@ -152,9 +152,7 @@ void xendrm_gem_free_object(struct drm_gem_object *gem_obj)
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	if (xen_obj->pages) {
-		if (xen_obj->be_alloc)
-			drm_free_large(xen_obj->pages);
-		else
+		if (!xen_obj->be_alloc)
 			drm_gem_put_pages(&xen_obj->base, xen_obj->pages,
 				true, false);
 	}
@@ -162,6 +160,13 @@ void xendrm_gem_free_object(struct drm_gem_object *gem_obj)
 		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
 	drm_gem_object_release(gem_obj);
 	kfree(xen_obj);
+}
+
+struct page **xendrm_gem_get_pages(struct drm_gem_object *gem_obj)
+{
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+
+	return xen_obj->pages;
 }
 
 struct sg_table *xendrm_gem_get_sg_table(struct drm_gem_object *gem_obj)
@@ -182,27 +187,20 @@ struct drm_gem_object *xendrm_gem_import_sg_table(struct drm_device *dev,
 	if (IS_ERR(xen_obj))
 		return ERR_CAST(xen_obj);
 	xen_obj->sgt_imported = sgt;
+	/***********************************************************************
+	 * TODO: talk to backend and create dumb,
+	 * convert sgt to pages, so we can return those on xendrm_gem_get_pages
+	 **********************************************************************/
+	BUG();
 	return &xen_obj->base;
 }
 
-int xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
-	struct sg_table *sgt)
+void xendrm_gem_set_pages(struct drm_gem_object *gem_obj,
+	struct page **pages)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
-	int ret;
 
-	xen_obj->pages = drm_malloc_ab(xen_obj->num_pages,
-		sizeof(struct page *));
-	if (!xen_obj->pages)
-		return -ENOMEM;
-	ret = drm_prime_sg_to_page_addr_arrays(sgt, xen_obj->pages, NULL,
-		xen_obj->num_pages);
-	if (ret < 0) {
-		drm_free_large(xen_obj->pages);
-		xen_obj->pages = NULL;
-		return ret;
-	}
-	return 0;
+	xen_obj->pages = pages;
 }
 
 static struct xen_fb *xendrm_gem_fb_alloc(struct drm_device *dev,

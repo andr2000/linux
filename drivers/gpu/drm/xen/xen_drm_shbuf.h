@@ -26,38 +26,47 @@
 
 #define GRANT_INVALID_REF	0
 
+/*
+ * shared buffer can be created in number of ways:
+ * 1. from the pages provided - this happens when we use our own GEM allocator
+ * 2. from scatter-gather table provided - in case of DRM CMA
+ * 3. allocated by the backend - grant references provided by the bakend
+ */
 struct xdrv_shared_buffer_info {
 	struct list_head list;
 	uint64_t dumb_cookie;
 	uint64_t fb_cookie;
 	/* number of references granted for the backend use:
-	 * for internal buffers this holds grefs for the
+	 * for GEM/imported DMABUFS buffers this holds grefs for the
 	 * page directory and pages of the buffer
-	 * for external buffer this only has grefs for the page
-	 * directory as buffer grefs will be provided by the backend
+	 * for backend's buffer this only has grefs for the page
+	 * directory b/c buffer grefs will be provided by the backend
 	 */
 	int num_grefs;
 	grant_ref_t *grefs;
 	unsigned char *vdirectory;
+
+	int num_pages;
+	struct page **pages;
+	/* set if this buffer was created from sgt */
 	struct sg_table *sgt;
 
 	/* external buffer handling */
 	struct xenbus_device *xb_dev;
+
 	/* set if this buffer was allocated by the backend */
 	bool be_alloc;
-	/* ballooned pages */
-	int ext_num_pages;
-	struct page **ext_pages;
-	/* Xen map handle */
-	grant_handle_t *ext_map_handle;
+	/* Xen map handles for the buffer allocated by the backend */
+	grant_handle_t *be_alloc_map_handles;
 };
 
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf);
 struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
 	struct list_head *dumb_buf_list, uint64_t dumb_cookie,
-	struct sg_table *sgt, unsigned int buffer_size, bool ext_buffer);
-int xdrv_shbuf_ext_map(struct xdrv_shared_buffer_info *buf);
-struct sg_table *xdrv_shbuf_get_sg_table(struct xdrv_shared_buffer_info *buf);
+	struct page **pages, int num_pages, struct sg_table *sgt,
+	bool be_alloc);
+int xdrv_shbuf_be_alloc_map(struct xdrv_shared_buffer_info *buf);
+struct page **xdrv_shbuf_get_pages(struct xdrv_shared_buffer_info *buf);
 struct xdrv_shared_buffer_info *xdrv_shbuf_get_by_dumb_cookie(
 	struct list_head *dumb_buf_list, uint64_t dumb_cookie);
 void xdrv_shbuf_flush_fb(struct list_head *dumb_buf_list, uint64_t fb_cookie);

@@ -54,8 +54,9 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 {
 	struct xendrm_device *xendrm_dev = dev->dev_private;
 	struct drm_gem_object *gem_obj;
-	struct sg_table *sgt;
-	bool ext_buffer;
+	struct page **pages = NULL;
+	struct sg_table *sgt = NULL;
+	bool be_alloc;
 	int ret;
 
 	ret = xendrm_gem_dumb_create(file_priv, dev, args);
@@ -68,19 +69,26 @@ static int xendrm_dumb_create(struct drm_file *file_priv,
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
 
-	ext_buffer = xendrm_dev->platdata->be_alloc;
+	be_alloc = xendrm_dev->platdata->be_alloc;
 	/*
-	 * If buffers are allocated on backend's side, then
-	 * pass NULL and have backend to provide SG table
+	 * if buffers are allocated on backend's side, then
+	 * pass NULL for pages and have backend to provide them
 	 */
-	sgt = ext_buffer ? NULL : xendrm_gem_get_sg_table(gem_obj);
-	ret = xendrm_dev->front_ops->dbuf_create(
+	if (!be_alloc) {
+		pages = xendrm_gem_get_pages(gem_obj);
+		if (!pages)
+			sgt = xendrm_gem_get_sg_table(gem_obj);
+	}
+	pages = xendrm_dev->front_ops->dbuf_create(
 			xendrm_dev->xdrv_info, xendrm_dumb_to_cookie(gem_obj),
-			args->width, args->height, args->bpp, args->size, &sgt);
-	if (ret < 0)
+			args->width, args->height, args->bpp, args->size,
+			pages, sgt);
+	if (IS_ERR_OR_NULL(pages)) {
+		ret = PTR_ERR(pages);
 		goto fail_destroy;
-	if (ext_buffer)
-		xendrm_gem_set_ext_sg_table(gem_obj, sgt);
+	}
+	if (be_alloc)
+		xendrm_gem_set_pages(gem_obj, pages);
 	return 0;
 
 fail_destroy:

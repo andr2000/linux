@@ -169,25 +169,26 @@ int xendispl_front_mode_set(struct xendrm_crtc *xen_crtc, uint32_t x,
 	return ddrv_be_stream_do_io(evtchnl, req, flags);
 }
 
-int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
-	uint32_t width, uint32_t height, uint32_t bpp, uint64_t size,
-	struct sg_table **sgt)
+struct page **xendispl_front_dbuf_create(struct xdrv_info *drv_info,
+	uint64_t dumb_cookie, uint32_t width, uint32_t height,
+	uint32_t bpp, uint64_t size, struct page **pages, struct sg_table *sgt)
 {
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xdrv_shared_buffer_info *buf;
 	struct xendispl_req *req;
 	unsigned long flags;
-	bool ext_buffer;
+	bool be_alloc;
 	int ret;
 
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
 	if (unlikely(!evtchnl))
-		return -EIO;
-	ext_buffer = drv_info->cfg_plat_data.be_alloc;
+		return ERR_PTR(-EIO);
+	be_alloc = drv_info->cfg_plat_data.be_alloc;
 	buf = xdrv_shbuf_alloc(drv_info->xb_dev, &drv_info->dumb_buf_list,
-		dumb_cookie, *sgt, size, ext_buffer);
+		dumb_cookie, pages, DIV_ROUND_UP(size, XEN_PAGE_SIZE),
+		sgt, be_alloc);
 	if (!buf)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory = xdrv_shbuf_get_dir_start(buf);
@@ -196,21 +197,20 @@ int xendispl_front_dbuf_create(struct xdrv_info *drv_info, uint64_t dumb_cookie,
 	req->op.dbuf_create.width = width;
 	req->op.dbuf_create.height = height;
 	req->op.dbuf_create.bpp = bpp;
-	if (ext_buffer)
+	if (be_alloc)
 		req->op.dbuf_create.flags |= XENDISPL_DBUF_FLG_REQ_ALLOC;
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
 	if (ret < 0)
 		goto fail;
-	if (ext_buffer) {
-		ret = xdrv_shbuf_ext_map(buf);
+	if (be_alloc) {
+		ret = xdrv_shbuf_be_alloc_map(buf);
 		if (ret < 0)
 			goto fail;
-		*sgt = xdrv_shbuf_get_sg_table(buf);
 	}
-	return 0;
+	return xdrv_shbuf_get_pages(buf);
 fail:
 	xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list, dumb_cookie);
-	return ret;
+	return ERR_PTR(ret);
 }
 
 int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,

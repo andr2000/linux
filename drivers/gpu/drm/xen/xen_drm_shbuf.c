@@ -175,7 +175,7 @@ static void xdrv_shbuf_free(struct xdrv_shared_buffer_info *buf)
 	int i;
 
 	if (buf->grefs) {
-		if (buf->ext_buffer)
+		if (buf->be_alloc)
 			xdrv_shbuf_ext_unmap(buf);
 		for (i = 0; i < buf->num_grefs; i++)
 			if (buf->grefs[i] != GRANT_INVALID_REF)
@@ -185,7 +185,7 @@ static void xdrv_shbuf_free(struct xdrv_shared_buffer_info *buf)
 	kfree(buf->grefs);
 	buf->grefs = NULL;
 	kfree(buf->vdirectory);
-	if (buf->ext_buffer) {
+	if (buf->be_alloc) {
 		free_xenballooned_pages(buf->ext_num_pages, buf->ext_pages);
 		kfree(buf->ext_pages);
 		buf->ext_pages = NULL;
@@ -226,7 +226,7 @@ static void xdrv_shbuf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
 	int i, cur_gref, grefs_left, to_copy;
 
 	ptr = buf->vdirectory;
-	grefs_left = buf->ext_buffer ? buf->ext_num_pages :
+	grefs_left = buf->be_alloc ? buf->ext_num_pages :
 		buf->num_grefs - num_pages_dir;
 	/* while copying, skip grefs at start, they are for pages
 	 * granted for the page directory itself
@@ -243,7 +243,7 @@ static void xdrv_shbuf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
 			to_copy = XENDRM_NUM_GREFS_PER_PAGE;
 			page_dir->gref_dir_next_page = buf->grefs[i + 1];
 		}
-		if (!buf->ext_buffer)
+		if (!buf->be_alloc)
 			memcpy(&page_dir->gref, &buf->grefs[cur_gref],
 				to_copy * sizeof(grant_ref_t));
 		ptr += XEN_PAGE_SIZE;
@@ -276,7 +276,7 @@ static int xdrv_shbuf_grant_refs(struct xdrv_shared_buffer_info *buf,
 				XEN_PAGE_SIZE * i)), 0);
 		buf->grefs[j++] = cur_ref;
 	}
-	if (!buf->ext_buffer)
+	if (!buf->be_alloc)
 		for_each_sg_page(buf->sgt->sgl, &sg_iter, buf->sgt->nents, 0) {
 			struct page *page;
 
@@ -303,7 +303,7 @@ static int xdrv_shbuf_alloc_storage(struct xdrv_shared_buffer_info *buf,
 	buf->vdirectory = kcalloc(num_pages_dir, XEN_PAGE_SIZE, GFP_KERNEL);
 	if (!buf->vdirectory)
 		return -ENOMEM;
-	if (buf->ext_buffer) {
+	if (buf->be_alloc) {
 		buf->ext_pages = kcalloc(buf->ext_num_pages,
 			sizeof(*buf->ext_pages), GFP_KERNEL);
 		if (!buf->ext_pages)
@@ -338,7 +338,7 @@ struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
 	buf->xb_dev = xb_dev;
 	buf->sgt = sgt;
 	buf->dumb_cookie = dumb_cookie;
-	buf->ext_buffer = ext_buffer;
+	buf->be_alloc = ext_buffer;
 	if (ext_buffer) {
 		buf->ext_num_pages = num_pages_vbuffer;
 		buf->num_grefs = num_pages_dir;

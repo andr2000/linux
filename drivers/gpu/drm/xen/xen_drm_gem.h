@@ -62,17 +62,4 @@ int xendrm_gem_set_ext_sg_table(struct drm_gem_object *gem_obj,
 	struct sg_table *sgt);
 #endif /* CONFIG_XEN_DRM_FRONTEND_CMA */
 
-static inline bool xendrm_check_if_bad_page(struct page *page)
-{
-	if (unlikely(atomic_read(&page->_mapcount) != -1))
-		return true;
-	if (unlikely(page->mapping != NULL))
-		return true;
-	if (unlikely(page_ref_count(page) != 0))
-		return true;
-	if (unlikely(page->flags & PAGE_FLAGS_CHECK_AT_FREE))
-		return true;
-	return false;
-}
-
 #endif /* __XEN_DRM_GEM_H */

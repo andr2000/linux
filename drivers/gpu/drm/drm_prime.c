@@ -262,6 +262,7 @@ static struct sg_table *drm_gem_map_dma_buf(struct dma_buf_attachment *attach,
 	if (WARN_ON(dir == DMA_NONE || !prime_attach))
 		return ERR_PTR(-EINVAL);
 
+DRM_ERROR("%s prime_attach->sgt %p\n", __FUNCTION__, prime_attach->sgt);
 	/* return the cached mapping when possible */
 	if (prime_attach->dir == dir)
 		return prime_attach->sgt;
@@ -321,6 +322,7 @@ struct dma_buf *drm_gem_dmabuf_export(struct drm_device *dev,
 	struct dma_buf *dma_buf;
 
 	dma_buf = dma_buf_export(exp_info);
+DRM_ERROR("%s dma_buf %p\n", __FUNCTION__, dma_buf);
 	if (!IS_ERR(dma_buf))
 		drm_dev_ref(dev);
 
@@ -475,10 +477,12 @@ static struct dma_buf *export_and_register_object(struct drm_device *dev,
 	/* prevent races with concurrent gem_close. */
 	if (obj->handle_count == 0) {
 		dmabuf = ERR_PTR(-ENOENT);
+		DRM_ERROR("%s obj->handle_count == 0\n", __FUNCTION__);
 		return dmabuf;
 	}
 
 	dmabuf = dev->driver->gem_prime_export(dev, obj, flags);
+	DRM_ERROR("%s ->gem_prime_export dmabuf %p\n", __FUNCTION__, dmabuf);
 	if (IS_ERR(dmabuf)) {
 		/* normally the created dma-buf takes ownership of the ref,
 		 * but if that fails then drop the ref
@@ -523,18 +527,21 @@ int drm_gem_prime_handle_to_fd(struct drm_device *dev,
 
 	mutex_lock(&file_priv->prime.lock);
 	obj = drm_gem_object_lookup(file_priv, handle);
+DRM_ERROR("%s gem_obj %p\n", __FUNCTION__, obj);
 	if (!obj)  {
 		ret = -ENOENT;
 		goto out_unlock;
 	}
 
 	dmabuf = drm_prime_lookup_buf_by_handle(&file_priv->prime, handle);
+DRM_ERROR("%s dma_buf %p\n", __FUNCTION__, dmabuf);
 	if (dmabuf) {
 		get_dma_buf(dmabuf);
 		goto out_have_handle;
 	}
 
 	mutex_lock(&dev->object_name_lock);
+DRM_ERROR("%s obj->import_attach %p\n", __FUNCTION__, obj->import_attach);
 	/* re-export the original imported object */
 	if (obj->import_attach) {
 		dmabuf = obj->import_attach->dmabuf;
@@ -542,6 +549,7 @@ int drm_gem_prime_handle_to_fd(struct drm_device *dev,
 		goto out_have_obj;
 	}
 
+DRM_ERROR("%s obj->dma_buf %p\n", __FUNCTION__, obj->dma_buf);
 	if (obj->dma_buf) {
 		get_dma_buf(obj->dma_buf);
 		dmabuf = obj->dma_buf;
@@ -549,6 +557,7 @@ int drm_gem_prime_handle_to_fd(struct drm_device *dev,
 	}
 
 	dmabuf = export_and_register_object(dev, obj, flags);
+DRM_ERROR("%s export and register %p\n", __FUNCTION__, dmabuf);
 	if (IS_ERR(dmabuf)) {
 		/* normally the created dma-buf takes ownership of the ref,
 		 * but if that fails then drop the ref
@@ -583,6 +592,7 @@ out_have_handle:
 		goto fail_put_dmabuf;
 	} else {
 		*prime_fd = ret;
+DRM_ERROR("%s prime_fd %d\n", __FUNCTION__, ret);
 		ret = 0;
 	}
 
@@ -595,6 +605,7 @@ out:
 out_unlock:
 	mutex_unlock(&file_priv->prime.lock);
 
+DRM_ERROR("%s ret %d\n", __FUNCTION__, ret);
 	return ret;
 }
 EXPORT_SYMBOL(drm_gem_prime_handle_to_fd);
@@ -615,9 +626,12 @@ struct drm_gem_object *drm_gem_prime_import(struct drm_device *dev,
 	struct drm_gem_object *obj;
 	int ret;
 
+DRM_ERROR("%s\n", __FUNCTION__);
+
 	if (dma_buf->ops == &drm_gem_prime_dmabuf_ops) {
 		obj = dma_buf->priv;
 		if (obj->dev == dev) {
+DRM_ERROR("%s Importing dmabuf exported from out own gem\n", __FUNCTION__);
 			/*
 			 * Importing dmabuf exported from out own gem increases
 			 * refcount on gem itself instead of f_count of dmabuf.
@@ -682,6 +696,7 @@ int drm_gem_prime_fd_to_handle(struct drm_device *dev,
 	struct drm_gem_object *obj;
 	int ret;
 
+DRM_ERROR("%s\n", __FUNCTION__);
 	dma_buf = dma_buf_get(prime_fd);
 	if (IS_ERR(dma_buf))
 		return PTR_ERR(dma_buf);
@@ -690,6 +705,7 @@ int drm_gem_prime_fd_to_handle(struct drm_device *dev,
 
 	ret = drm_prime_lookup_buf_handle(&file_priv->prime,
 			dma_buf, handle);
+DRM_ERROR("%s handle %d ret %d\n", __FUNCTION__, *handle, ret);
 	if (ret == 0)
 		goto out_put;
 

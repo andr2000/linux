@@ -870,6 +870,8 @@ void drm_gem_vm_open(struct vm_area_struct *vma)
 	struct drm_gem_object *obj = vma->vm_private_data;
 
 	drm_gem_object_reference(obj);
+	printk("+++++++++++++++++++++++++++++++++++ %s\n", __FUNCTION__);
+	dump_stack();
 }
 EXPORT_SYMBOL(drm_gem_vm_open);
 
@@ -884,6 +886,9 @@ void drm_gem_vm_close(struct vm_area_struct *vma)
 {
 	struct drm_gem_object *obj = vma->vm_private_data;
 
+	printk("+++++++++++++++++++++++++++++++++++ %s size %lu\n", __FUNCTION__,
+			vma->vm_end - vma->vm_start);
+	dump_stack();
 	drm_gem_object_unreference_unlocked(obj);
 }
 EXPORT_SYMBOL(drm_gem_vm_close);

@@ -22,7 +22,7 @@
 
 #include <video/videomode.h>
 
-#include "xen_drm.h"
+#include "xen_drm_drv.h"
 #include "xen_drm_front.h"
 
 /* page flip complete event can be sent by either on back's

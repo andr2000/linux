@@ -22,7 +22,7 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem.h>
 
-#include "xen_drm.h"
+#include "xen_drm_drv.h"
 #include "xen_drm_front.h"
 #include "xen_drm_gem.h"
 #include "xen_drm_kms.h"

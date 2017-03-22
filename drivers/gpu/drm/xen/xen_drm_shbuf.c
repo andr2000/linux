@@ -26,7 +26,7 @@
 #include <xen/interface/io/ring.h>
 #include <xen/interface/io/displif.h>
 
-#include "xen_drm.h"
+#include "xen_drm_drv.h"
 #include "xen_drm_shbuf.h"
 
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf)

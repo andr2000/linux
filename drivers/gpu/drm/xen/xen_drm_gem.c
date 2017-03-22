@@ -25,7 +25,7 @@
 #include <linux/scatterlist.h>
 #include <linux/shmem_fs.h>
 
-#include "xen_drm.h"
+#include "xen_drm_drv.h"
 #include "xen_drm_gem.h"
 
 struct xen_gem_object {

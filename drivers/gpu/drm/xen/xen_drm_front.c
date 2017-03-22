@@ -34,7 +34,7 @@
 #include <xen/interface/io/ring.h>
 #include <xen/interface/io/displif.h>
 
-#include "xen_drm.h"
+#include "xen_drm_drv.h"
 #include "xen_drm_front.h"
 #include "xen_drm_shbuf.h"
 

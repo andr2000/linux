@@ -176,6 +176,7 @@ struct page **xendispl_front_dbuf_create(struct xdrv_info *drv_info,
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xdrv_shared_buffer_info *buf;
 	struct xendispl_req *req;
+	struct xdrv_shared_buffer_alloc_info alloc_info;
 	unsigned long flags;
 	bool be_alloc;
 	int ret;
@@ -184,11 +185,19 @@ struct page **xendispl_front_dbuf_create(struct xdrv_info *drv_info,
 	if (unlikely(!evtchnl))
 		return ERR_PTR(-EIO);
 	be_alloc = drv_info->cfg_plat_data.be_alloc;
-	buf = xdrv_shbuf_alloc(drv_info->xb_dev, &drv_info->dumb_buf_list,
-		dumb_cookie, pages, DIV_ROUND_UP(size, XEN_PAGE_SIZE),
-		sgt, be_alloc);
+
+	memset(&alloc_info, 0, sizeof(alloc_info));
+	alloc_info.xb_dev = drv_info->xb_dev;
+	alloc_info.dumb_buf_list = &drv_info->dumb_buf_list;
+	alloc_info.dumb_cookie = dumb_cookie;
+	alloc_info.pages = pages;
+	alloc_info.num_pages = DIV_ROUND_UP(size, XEN_PAGE_SIZE);
+	alloc_info.sgt = sgt;
+	alloc_info.be_alloc = be_alloc;
+	buf = xdrv_shbuf_alloc(&alloc_info);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
+
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory = xdrv_shbuf_get_dir_start(buf);

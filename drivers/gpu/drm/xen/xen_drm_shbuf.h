@@ -60,11 +60,19 @@ struct xdrv_shared_buffer_info {
 	grant_handle_t *be_alloc_map_handles;
 };
 
+struct xdrv_shared_buffer_alloc_info {
+	struct xenbus_device *xb_dev;
+	struct list_head *dumb_buf_list;
+	uint64_t dumb_cookie;
+	struct page **pages;
+	int num_pages;
+	struct sg_table *sgt;
+	bool be_alloc;
+};
+
 grant_ref_t xdrv_shbuf_get_dir_start(struct xdrv_shared_buffer_info *buf);
-struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
-	struct list_head *dumb_buf_list, uint64_t dumb_cookie,
-	struct page **pages, int num_pages, struct sg_table *sgt,
-	bool be_alloc);
+struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(
+	struct xdrv_shared_buffer_alloc_info *info);
 int xdrv_shbuf_be_alloc_map(struct xdrv_shared_buffer_info *buf);
 struct page **xdrv_shbuf_get_pages(struct xdrv_shared_buffer_info *buf);
 struct xdrv_shared_buffer_info *xdrv_shbuf_get_by_dumb_cookie(

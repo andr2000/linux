@@ -44,7 +44,9 @@ struct xen_gem_object {
 	/* map grant handles and addresses */
 	struct map_info {
 		grant_handle_t handle;
+#if defined(CONFIG_X86)
 		uint64_t dev_bus_addr;
+#endif
 	} *map_info;
 };
 
@@ -102,11 +104,15 @@ static int xen_import_map(struct xen_gem_object *xen_obj)
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		phys_addr_t addr;
 
-		/* Map the grant entry for access by I/O devices. */
 		/* Map the grant entry for access by host CPUs. */
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_map_op(&map_ops[i], addr,
+#if defined(CONFIG_X86)
+			/* Map the grant entry for access by I/O devices. */
 			GNTMAP_host_map | GNTMAP_device_map,
+#else
+			GNTMAP_host_map,
+#endif
 			xen_obj->grefs[i], xen_obj->otherend_id);
 	}
 	ret = gnttab_map_refs(map_ops, NULL, xen_obj->pages,
@@ -114,7 +120,9 @@ static int xen_import_map(struct xen_gem_object *xen_obj)
 	BUG_ON(ret);
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		xen_obj->map_info[i].handle = map_ops[i].handle;
+#if defined(CONFIG_X86)
 		xen_obj->map_info[i].dev_bus_addr = map_ops[i].dev_bus_addr;
+#endif
 		if (unlikely(map_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d with ref %d: %d\n",
 				i, xen_obj->grefs[i], map_ops[i].status);
@@ -146,7 +154,7 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		phys_addr_t addr;
 
-		/* Map the grant entry for access by I/O devices.
+		/*
 		 * Map the grant entry for access by host CPUs.
 		 * If <host_addr> or <dev_bus_addr> is zero, that
 		 * field is ignored. If non-zero, they must refer to
@@ -154,9 +162,16 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 		 */
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr,
+#if defined(CONFIG_X86)
+			/* Map the grant entry for access by I/O devices. */
 			GNTMAP_host_map | GNTMAP_device_map,
+#else
+			GNTMAP_host_map,
+#endif
 			xen_obj->map_info[i].handle);
+#if defined(CONFIG_X86)
 		unmap_ops[i].dev_bus_addr = xen_obj->map_info[i].dev_bus_addr;
+#endif
 	}
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, xen_obj->pages,
 		xen_obj->num_pages));

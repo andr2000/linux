@@ -339,10 +339,8 @@ static int xdrv_shbuf_alloc_storage(struct xdrv_shared_buffer_info *buf,
 	return 0;
 }
 
-struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
-	struct list_head *dumb_buf_list, uint64_t dumb_cookie,
-	struct page **pages, int num_pages_buffer, struct sg_table *sgt,
-	bool be_alloc)
+struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(
+	struct xdrv_shared_buffer_alloc_info *info)
 {
 	struct xdrv_shared_buffer_info *buf;
 	int num_pages_dir;
@@ -351,24 +349,24 @@ struct xdrv_shared_buffer_info *xdrv_shbuf_alloc(struct xenbus_device *xb_dev,
 	if (!buf)
 		return NULL;
 	/* number of pages the directory itself consumes */
-	num_pages_dir = DIV_ROUND_UP(num_pages_buffer,
+	num_pages_dir = DIV_ROUND_UP(info->num_pages,
 		XENDRM_NUM_GREFS_PER_PAGE);
-	buf->xb_dev = xb_dev;
-	buf->dumb_cookie = dumb_cookie;
-	buf->be_alloc = be_alloc;
-	buf->sgt = sgt;
-	buf->num_pages = num_pages_buffer;
-	buf->pages = pages;
+	buf->xb_dev = info->xb_dev;
+	buf->dumb_cookie = info->dumb_cookie;
+	buf->be_alloc = info->be_alloc;
+	buf->sgt = info->sgt;
+	buf->num_pages = info->num_pages;
+	buf->pages = info->pages;
 	if (buf->be_alloc)
 		buf->num_grefs = num_pages_dir;
 	else
-		buf->num_grefs = num_pages_dir + num_pages_buffer;
-	if (xdrv_shbuf_alloc_storage(buf, num_pages_buffer, num_pages_dir) < 0)
+		buf->num_grefs = num_pages_dir + info->num_pages;
+	if (xdrv_shbuf_alloc_storage(buf, info->num_pages, num_pages_dir) < 0)
 		goto fail;
-	if (xdrv_shbuf_grant_refs(buf, num_pages_buffer, num_pages_dir) < 0)
+	if (xdrv_shbuf_grant_refs(buf, info->num_pages, num_pages_dir) < 0)
 		goto fail;
-	xdrv_shbuf_fill_page_dir(buf, num_pages_buffer, num_pages_dir);
-	list_add(&buf->list, dumb_buf_list);
+	xdrv_shbuf_fill_page_dir(buf, info->num_pages, num_pages_dir);
+	list_add(&buf->list, info->dumb_buf_list);
 	return buf;
 fail:
 	xdrv_shbuf_free(buf);

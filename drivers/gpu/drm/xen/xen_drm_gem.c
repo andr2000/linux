@@ -323,7 +323,7 @@ static inline void xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 	vma->vm_flags &= ~VM_PFNMAP;
 	vma->vm_flags |= VM_MIXEDMAP;
 	/* this is the only way we can map in unprivileged domain */
-	vma->vm_page_prot = pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
 }
 
 int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)

@@ -104,7 +104,6 @@
  * /local/domain/0/backend/vdispl/1/0/frontend = "/local/domain/1/device/vdispl/0"
  * /local/domain/0/backend/vdispl/1/0/state = "4"
  * /local/domain/0/backend/vdispl/1/0/versions = "1,2"
- * /local/domain/0/backend/vdispl/1/0/features = "be_alloc"
  *
  *--------------------------------- Frontend ----------------------------------
  *
@@ -112,22 +111,23 @@
  * /local/domain/1/device/vdispl/0/backend = "/local/domain/0/backend/vdispl/1/0"
  * /local/domain/1/device/vdispl/0/state = "4"
  * /local/domain/1/device/vdispl/0/version = "1"
+ * /local/domain/1/device/vdispl/0/be_alloc = "1"
  *
  *-------------------------- Connector 0 configuration ------------------------
  *
  * /local/domain/1/device/vdispl/0/0/resolution = "1920x1080"
- * /local/domain/1/device/vdispl/0/0/ctrl-ring-ref = "2832"
- * /local/domain/1/device/vdispl/0/0/ctrl-event-channel = "15"
- * /local/domain/1/device/vdispl/0/0/event-ring-ref = "387"
- * /local/domain/1/device/vdispl/0/0/event-channel = "16"
+ * /local/domain/1/device/vdispl/0/0/req-ring-ref = "2832"
+ * /local/domain/1/device/vdispl/0/0/req-event-channel = "15"
+ * /local/domain/1/device/vdispl/0/0/evt-ring-ref = "387"
+ * /local/domain/1/device/vdispl/0/0/evt-event-channel = "16"
  *
  *-------------------------- Connector 1 configuration ------------------------
  *
  * /local/domain/1/device/vdispl/0/1/resolution = "800x600"
- * /local/domain/1/device/vdispl/0/1/ctrl-ring-ref = "2833"
- * /local/domain/1/device/vdispl/0/1/ctrl-event-channel = "17"
- * /local/domain/1/device/vdispl/0/1/event-ring-ref = "388"
- * /local/domain/1/device/vdispl/0/1/event-channel = "18"
+ * /local/domain/1/device/vdispl/0/1/req-ring-ref = "2833"
+ * /local/domain/1/device/vdispl/0/1/req-event-channel = "17"
+ * /local/domain/1/device/vdispl/0/1/evt-ring-ref = "388"
+ * /local/domain/1/device/vdispl/0/1/evt-event-channel = "18"
  *
  ******************************************************************************
  *                            Backend XenBus Nodes
@@ -140,16 +140,6 @@
  *
  *      List of XENDISPL_LIST_SEPARATOR separated protocol versions supported
  *      by the backend. For example "1,2,3".
- *
- * features
- *      Values:         <list of strings>
- *
- *      XENDISPL_LIST_SEPARATOR separated list of features
- *      XENDISPL_FEATURE_BE_??? that the backend supports.
- *
- *      be_alloc
- *             Backend can be a buffer provider/allocator during
- *             XENDISPL_OP_DBUF_CREATE operation (see below for negotiation).
  *
  ******************************************************************************
  *                            Frontend XenBus Nodes
@@ -180,6 +170,16 @@
  *
  *      Protocol version, chosen among the ones supported by the backend.
  *
+ *------------------------- Backend buffer allocation -------------------------
+ *
+ * be_alloc
+ *      Values:         "0", "1"
+ *
+ *      If value is set to "1", then backend can be a buffer provider/allocator
+ *      for this domain during XENDISPL_OP_DBUF_CREATE operation (see below
+ *      for negotiation).
+ *      If value is not "1" or omitted frontend must allocate buffers itself.
+ *
  *----------------------------- Connector settings ----------------------------
  *
  * resolution
@@ -195,13 +195,13 @@
  * and get the corresponding responses from backend to frontend,
  * set up per connector.
  *
- * ctrl-event-channel
+ * req-event-channel
  *      Values:         <uint32_t>
  *
  *      The identifier of the Xen connector's control event channel
  *      used to signal activity in the ring buffer.
  *
- * ctrl-ring-ref
+ * req-ring-ref
  *      Values:         <uint32_t>
  *
  *      The Xen grant reference granting permission for the backend to map
@@ -212,13 +212,13 @@
  * This communication path is used to deliver asynchronous events from backend
  * to frontend, set up per connector.
  *
- * event-channel
+ * evt-event-channel
  *      Values:         <uint32_t>
  *
  *      The identifier of the Xen connector's event channel
  *      used to signal activity in the ring buffer.
  *
- * event-ring-ref
+ * evt-ring-ref
  *      Values:         <uint32_t>
  *
  *      The Xen grant reference granting permission for the backend to map
@@ -341,7 +341,7 @@
  *                                 EVENT CODES
  ******************************************************************************
  */
-#define XENDISPL_EVT_PG_FLIP          0
+#define XENDISPL_EVT_PG_FLIP          0x00
 
 /*
  ******************************************************************************
@@ -352,17 +352,15 @@
 
 #define XENDISPL_LIST_SEPARATOR       ","
 #define XENDISPL_RESOLUTION_SEPARATOR "x"
-/* Field names */
+
 #define XENDISPL_FIELD_BE_VERSIONS    "versions"
 #define XENDISPL_FIELD_FE_VERSION     "version"
-#define XENDISPL_FIELD_FEATURES       "features"
-#define XENDISPL_FIELD_CTRL_RING_REF  "ctrl-ring-ref"
-#define XENDISPL_FIELD_CTRL_CHANNEL   "ctrl-event-channel"
-#define XENDISPL_FIELD_EVT_RING_REF   "event-ring-ref"
-#define XENDISPL_FIELD_EVT_CHANNEL    "event-channel"
+#define XENDISPL_FIELD_REQ_RING_REF   "req-ring-ref"
+#define XENDISPL_FIELD_REQ_CHANNEL    "req-event-channel"
+#define XENDISPL_FIELD_EVT_RING_REF   "evt-ring-ref"
+#define XENDISPL_FIELD_EVT_CHANNEL    "evt-event-channel"
 #define XENDISPL_FIELD_RESOLUTION     "resolution"
-
-#define XENDISPL_FEATURE_BE_ALLOC     "be_alloc"
+#define XENDISPL_FIELD_BE_ALLOC       "be_alloc"
 
 /*
  ******************************************************************************
@@ -451,8 +449,9 @@
  * an error. dbuf_cookie can be re-used after destroying the corresponding
  * display buffer.
  *
- * Width and height can be smaller, equal or bigger than the connector's
- * resolution.
+ * Width and height of the display buffers can be smaller, equal or bigger
+ * than the connector's resolution. Depth/pixel format of the individual
+ * buffers can differ as well.
  *
  * width - uint32_t, width in pixels
  * height - uint32_t, height in pixels
@@ -732,7 +731,7 @@ struct xendispl_page_flip_req {
  *----------------------------------- Events ----------------------------------
  *
  * Events are sent via a shared page allocated by the front and propagated by
- *   event-channel/event-ring-ref XenStore entries
+ *   evt-event-channel/evt-ring-ref XenStore entries
  * All event packets have the same length (64 octets)
  * All event packets have common header:
  *         0                1                 2               3        octet

@@ -208,6 +208,7 @@ struct page **xendispl_front_dbuf_create(struct xdrv_info *drv_info,
 	req->op.dbuf_create.bpp = bpp;
 	if (be_alloc)
 		req->op.dbuf_create.flags |= XENDISPL_DBUF_FLG_REQ_ALLOC;
+DRM_ERROR("----------------------- be_alloc %d\n", be_alloc);
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
 	if (ret < 0)
 		goto fail;
@@ -714,8 +715,8 @@ again:
 		ret = xdrv_evtchnl_publish(xbt,
 			&drv_info->evt_pairs[conn].ctrl,
 			plat_data->connectors[conn].xenstore_path,
-			XENDISPL_FIELD_CTRL_RING_REF,
-			XENDISPL_FIELD_CTRL_CHANNEL);
+			XENDISPL_FIELD_REQ_RING_REF,
+			XENDISPL_FIELD_REQ_CHANNEL);
 		if (ret < 0)
 			goto fail;
 		ret = xdrv_evtchnl_publish(xbt,
@@ -808,15 +809,13 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
 	int ret, i;
 
-	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
-			XENDISPL_FEATURE_BE_ALLOC, 0)) {
+	if (xenbus_read_unsigned(xb_dev->nodename,
+			XENDISPL_FIELD_BE_ALLOC, 0)) {
 		DRM_INFO("Backend can provide dumb buffers\n");
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
 #else
-#if 0
 		plat_data->be_alloc = true;
-#endif
 #endif
 	}
 	plat_data->num_connectors = 0;

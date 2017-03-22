@@ -50,17 +50,15 @@ struct xdrv_shared_buffer_info *xdrv_shbuf_get_by_dumb_cookie(
 
 void xdrv_shbuf_flush_fb(struct list_head *dumb_buf_list, uint64_t fb_cookie)
 {
-	/* TODO: drm_clflush_sg??? */
-#ifdef CONFIG_X86
+#if defined(CONFIG_X86)
 	struct xdrv_shared_buffer_info *buf, *q;
 
 	list_for_each_entry_safe(buf, q, dumb_buf_list, list) {
 		if (buf->fb_cookie == fb_cookie) {
-			struct scatterlist *sg;
-			unsigned int count;
-
-			for_each_sg(buf->sgt->sgl, sg, buf->sgt->nents, count)
-				clflush_cache_range(sg_virt(sg), sg->length);
+			if (buf->sgt)
+				drm_clflush_sg(buf->sgt);
+			else
+				drm_clflush_pages(buf->pages, buf->num_pages);
 			break;
 		}
 	}

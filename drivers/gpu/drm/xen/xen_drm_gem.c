@@ -71,7 +71,7 @@ static struct xen_gem_object *xendrm_gem_create_obj(struct drm_device *dev,
 	if (!xen_obj)
 		return ERR_PTR(-ENOMEM);
 	ret = drm_gem_object_init(dev, &xen_obj->base, size);
-	if (ret)
+	if (ret < 0)
 		goto error;
 	return xen_obj;
 
@@ -104,13 +104,18 @@ static struct xen_gem_object *xendrm_gem_create(struct drm_device *dev,
 	 * with the backend
 	 */
 	xen_obj->pages = drm_gem_get_pages(&xen_obj->base);
-	if (IS_ERR_OR_NULL(xen_obj->pages))
-		goto fail;
-	return xen_obj;
+	if (IS_ERR_OR_NULL(xen_obj->pages)) {
+		int ret;
 
-fail:
-	DRM_ERROR("Failed to allocate buffer with size %zu\n", size);
-	drm_gem_object_unreference_unlocked(&xen_obj->base);
+		if (!xen_obj->pages)
+			ret = -ENOMEM;
+		else
+			ret = PTR_ERR(xen_obj->pages);
+		xen_obj->pages = NULL;
+		DRM_ERROR("Failed to allocate buffer with size %zu\n", size);
+		drm_gem_object_unreference_unlocked(&xen_obj->base);
+		return ERR_PTR(ret);
+	}
 	return xen_obj;
 }
 
@@ -123,13 +128,13 @@ static struct xen_gem_object *xendrm_gem_create_with_handle(
 	int ret;
 
 	xen_obj = xendrm_gem_create(dev, size);
-	if (IS_ERR(xen_obj))
+	if (IS_ERR_OR_NULL(xen_obj))
 		return xen_obj;
 	gem_obj = &xen_obj->base;
 	ret = drm_gem_handle_create(file_priv, gem_obj, handle);
 	/* handle holds the reference */
 	drm_gem_object_unreference_unlocked(gem_obj);
-	if (ret)
+	if (ret < 0)
 		return ERR_PTR(ret);
 	return xen_obj;
 }

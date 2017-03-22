@@ -853,12 +853,7 @@ export INSTALL_DTBS_PATH ?= $(INSTALL_PATH)/dtbs/$(KERNELRELEASE)
 # relocations required by build roots.  This is not defined in the
 # makefile but the argument can be passed to make if needed.
 #
-ifeq ($(ARCH), arm64)
-MODLIB	= $(INSTALL_MOD_PATH)/lib64/modules/
-else
-MODLIB	= $(INSTALL_MOD_PATH)/lib/modules/
-endif
-export MODLIB
+export MODLIB ?= $(INSTALL_MOD_PATH)
 
 #
 # INSTALL_MOD_STRIP, if defined, will cause modules to be

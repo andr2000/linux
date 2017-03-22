@@ -14,44 +14,36 @@
 # limitations under the License.
 
 # Android makefile to build kernel as a part of Android Build
+ifeq ($(TARGET_PREBUILT_KERNEL),)
 
 LOCAL_PATH := $(call my-dir)
 
 KERNEL_SRC := $(TARGET_KERNEL_SOURCE)
-
 KERNEL_DEFCONFIG := $(TARGET_KERNEL_CONFIG)
-VARIANT_DEFCONFIG := $(TARGET_KERNEL_VARIANT_CONFIG)
-SELINUX_DEFCONFIG := $(TARGET_KERNEL_SELINUX_CONFIG)
-
-## Internal variables
-ifeq ($(OUT_DIR),out)
-KERNEL_OUT := $(ANDROID_BUILD_TOP)/$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
-else
-KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
-endif
-
 KERNEL_CONFIG := $(KERNEL_OUT)/.config
 
-TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz
-TARGET_PREBUILT_INT_KERNEL_TYPE := Image.gz
+# Internal variables
+ifeq ($(OUT_DIR),out)
+KERNEL_OUT := $(ANDROID_BUILD_TOP)/$(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
+KERNEL_MODULES_OUT ?= $(ANDROID_BUILD_TOP)/$(TARGET_OUT_INTERMEDIATES)/KERNEL_MODULES
+else
+KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
+KERNEL_MODULES_OUT ?= $(TARGET_OUT_INTERMEDIATES)/KERNEL_MODULES
+endif
 
-KERNEL_MODULES_INSTALL := vendor
-KERNEL_MODULES_OUT := $(TARGET_OUT_VENDOR)/lib64/modules
+KERNEL_TARGET_BINARY := $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz
 
-define mv-modules
-    mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.order`;\
-    if [ "$$mdpath" != "" ];then\
-        mpath=`dirname $$mdpath`;\
-        ko=`find $$mpath/kernel -type f -name *.ko`;\
-        for i in $$ko; do $(ANDROID_TOOLCHAIN)/aarch64-linux-android-strip --strip-unneeded $$i;\
-        mv $$i $(KERNEL_MODULES_OUT)/; done;\
-    fi
-endef
+ifeq ($(TARGET_KERNEL_MODULES_OUT),)
+$(warning "TARGET_KERNEL_MODULES_OUT is not set, default path '$(KERNEL_MODULES_OUT)' used")
+endif
 
-define clean-module-folder
-    mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.order`;\
-    if [ "$$mdpath" != "" ];then\
-        mpath=`dirname $$mdpath`; rm -rf $$mpath;\
+define strip-modules
+    mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.order`; \
+    if [ "$$mdpath" != "" ];then \
+        mpath=`dirname $$mdpath`; \
+        ko=`find $$mpath/kernel -type f -name *.ko`; \
+        for i in $$ko; do $(ANDROID_TOOLCHAIN)/aarch64-linux-android-strip --strip-unneeded $$i; \
+        done; \
     fi
 endef
 
@@ -67,8 +59,8 @@ ifeq ($(TARGET_ARCH),arm64)
     endif
 endif
 
-ifeq ($(TARGET_KERNEL_MODULES),)
-    TARGET_KERNEL_MODULES := no-external-modules
+ifeq ($(TARGET_KERNEL_EXT_MODULES),)
+    TARGET_KERNEL_EXT_MODULES := no-external-modules
 endif
 
 $(KERNEL_OUT):
@@ -80,32 +72,16 @@ $(KERNEL_MODULES_OUT):
 $(KERNEL_CONFIG): $(KERNEL_OUT)
 	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) VARIANT_DEFCONFIG=$(VARIANT_DEFCONFIG) SELINUX_DEFCONFIG=$(SELINUX_DEFCONFIG) $(KCFLAGS) $(KERNEL_DEFCONFIG)
 
-$(KERNEL_OUT)/piggy : $(TARGET_PREBUILT_INT_KERNEL)
-	$(hide) gunzip -c $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/compressed/piggy.gzip > $(KERNEL_OUT)/piggy
+$(KERNEL_TARGET_BINARY): $(KERNEL_OUT) $(KERNEL_CONFIG) $(KERNEL_MODULES_OUT)
+	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) $(KCFLAGS) Image.gz dtbs
 
-TARGET_KERNEL_BINARIES: $(KERNEL_OUT) $(KERNEL_CONFIG) $(KERNEL_MODULES_OUT) $(INSTALLED_RAMDISK_TARGET)
-	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) $(KCFLAGS) $(TARGET_PREBUILT_INT_KERNEL_TYPE) modules dtbs
-	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) INSTALL_MOD_PATH=../../$(KERNEL_MODULES_INSTALL) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) modules_install
-	$(mv-modules)
-	$(clean-module-folder)
+TARGET_KERNEL_MODULES: $(KERNEL_TARGET_BINARY)
+	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) INSTALL_MOD_PATH=$(KERNEL_MODULES_OUT) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) modules
+	$(MAKE) -C $(KERNEL_SRC) O=$(KERNEL_OUT) INSTALL_MOD_PATH=$(KERNEL_MODULES_OUT) ARCH=$(TARGET_ARCH) $(ARM_CROSS_COMPILE) modules_install
 
-$(TARGET_KERNEL_MODULES): TARGET_KERNEL_BINARIES
+$(TARGET_KERNEL_EXT_MODULES) : TARGET_KERNEL_MODULES
 
-$(TARGET_PREBUILT_INT_KERNEL): $(TARGET_KERNEL_MODULES)
-	$(mv-modules)
-	$(clean-module-folder)
+$(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES)
+	cp $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz $(PRODUCT_OUT)/kernel
 
-ifeq ($(TARGET_PREBUILT_KERNEL),)
-
-include $(CLEAR_VARS)
-
-KERNEL_IMG_PATH := $(TARGET_PREBUILT_INT_KERNEL)
-$(KERNEL_IMG_PATH): $(TARGET_KERNEL_MODULES)
-
-LOCAL_MODULE := $(PRODUCT_OUT)/kernel
-LOCAL_PREBUILT_MODULE_FILE := $(KERNEL_IMG_PATH)
-LOCAL_MODULE_PATH := $(ANDROID_BUILD_TOP)
-
-include $(BUILD_EXECUTABLE)
-
-endif
+endif # TARGET_PREBUILT_KERNEL

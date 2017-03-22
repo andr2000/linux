@@ -67,7 +67,7 @@ xendrm_kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 		xendrm_fb_to_cookie(fb), fb->width, fb->height,
 		fb->pixel_format);
 	if (ret < 0) {
-		DRM_ERROR("Back failed to attach FB %p\n", fb);
+		DRM_ERROR("Back failed to attach FB %p: %d\n", fb, ret);
 		goto fail;
 	}
 	return fb;

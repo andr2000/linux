@@ -317,7 +317,9 @@ static struct xendispl_front_ops xendispl_front_funcs = {
 	.drm_last_close = xdrv_drm_unload,
 };
 
-/* Unprivileged guests (i.e. ones without hardware) are not permitted to
+#if defined(CONFIG_X86)
+/*
+ * Unprivileged guests (i.e. ones without hardware) are not permitted to
  * make mappings with anything other than a writeback memory type
  * So, we need to override mmap used by the kernel and make changes
  * to vma->vm_page_prot
@@ -345,11 +347,12 @@ static int xdrv_mmap(struct device *dev, struct vm_area_struct *vma,
 #endif	/* CONFIG_MMU && !CONFIG_ARCH_NO_COHERENT_DMA_MMAP */
 	return ret;
 }
+#endif
 
 static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
 	struct device *dev)
 {
-#if 0
+#if defined(CONFIG_X86)
 	if (xdrv_info->dma_map_ops.mmap != xdrv_mmap) {
 		xdrv_info->dma_map_ops = *(get_dma_ops(dev));
 		xdrv_info->dma_map_ops.mmap = xdrv_mmap;

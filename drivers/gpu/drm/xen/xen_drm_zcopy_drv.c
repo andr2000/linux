@@ -24,6 +24,7 @@
 
 #include <xen/balloon.h>
 #include <xen/grant_table.h>
+#include <asm/xen/page.h>
 
 #include <drm/xen_zcopy_drm.h>
 
@@ -41,13 +42,8 @@ struct xen_gem_object {
 	struct page **pages;
 	/* this will be set if we have imported a GEM object */
 	struct sg_table *sgt;
-	/* map grant handles and addresses */
-	struct map_info {
-		grant_handle_t handle;
-#if defined(CONFIG_X86)
-		uint64_t dev_bus_addr;
-#endif
-	} *map_info;
+	/* map grant handles */
+	grant_handle_t *map_handles;
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
@@ -84,9 +80,9 @@ static int xen_import_map(struct xen_gem_object *xen_obj)
 		ret = -ENOMEM;
 		goto fail;
 	}
-	xen_obj->map_info = kcalloc(xen_obj->num_pages,
-		sizeof(*xen_obj->map_info), GFP_KERNEL);
-	if (!xen_obj->map_info) {
+	xen_obj->map_handles = kcalloc(xen_obj->num_pages,
+		sizeof(*xen_obj->map_handles), GFP_KERNEL);
+	if (!xen_obj->map_handles) {
 		ret = -ENOMEM;
 		goto fail;
 	}
@@ -119,10 +115,7 @@ static int xen_import_map(struct xen_gem_object *xen_obj)
 		xen_obj->num_pages);
 	BUG_ON(ret);
 	for (i = 0; i < xen_obj->num_pages; i++) {
-		xen_obj->map_info[i].handle = map_ops[i].handle;
-#if defined(CONFIG_X86)
-		xen_obj->map_info[i].dev_bus_addr = map_ops[i].dev_bus_addr;
-#endif
+		xen_obj->map_handles[i] = map_ops[i].handle;
 		if (unlikely(map_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d with ref %d: %d\n",
 				i, xen_obj->grefs[i], map_ops[i].status);
@@ -133,8 +126,8 @@ static int xen_import_map(struct xen_gem_object *xen_obj)
 fail:
 	kfree(xen_obj->pages);
 	xen_obj->pages = NULL;
-	kfree(xen_obj->map_info);
-	xen_obj->map_info = NULL;
+	kfree(xen_obj->map_handles);
+	xen_obj->map_handles = NULL;
 	kfree(map_ops);
 	return ret;
 
@@ -145,7 +138,7 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
 
-	if (!xen_obj->pages || !xen_obj->map_info)
+	if (!xen_obj->pages || !xen_obj->map_handles)
 		return 0;
 
 	unmap_ops = kcalloc(xen_obj->num_pages, sizeof(*unmap_ops), GFP_KERNEL);
@@ -168,10 +161,9 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 #else
 			GNTMAP_host_map,
 #endif
-			xen_obj->map_info[i].handle);
-#if defined(CONFIG_X86)
-		unmap_ops[i].dev_bus_addr = xen_obj->map_info[i].dev_bus_addr;
-#endif
+			xen_obj->map_handles[i]);
+		unmap_ops[i].dev_bus_addr = __pfn_to_mfn(page_to_pfn(
+			xen_obj->pages[i]));
 	}
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, xen_obj->pages,
 		xen_obj->num_pages));
@@ -183,8 +175,8 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 	xen_free_ballooned_pages(xen_obj);
 	kfree(xen_obj->pages);
 	xen_obj->pages = NULL;
-	kfree(xen_obj->map_info);
-	xen_obj->map_info = NULL;
+	kfree(xen_obj->map_handles);
+	xen_obj->map_handles = NULL;
 	kfree(unmap_ops);
 	kfree(xen_obj->grefs);
 	xen_obj->grefs = NULL;
@@ -325,31 +317,52 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 	struct drm_gem_object *gem_obj)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
-	struct sg_table *sgt;
+	struct sg_table *sgt = NULL;
 
 	if (unlikely(!xen_obj->pages))
 		return NULL;
+	/*
+	 * we cannot use xen_obj->pages which are CPU view of the buffer:
+	 * cook the buffer from corresponding MFNs
+	 */
 	/* N.B. there will be a single entry in the table if buffer
 	 * is contiguous. otherwise CMA drivers will not accept
 	 * the buffer
 	 */
 	if (swiotlb_active()) {
 		struct scatterlist *sg;
-		int i;
+		int i, ret;
 
 		sgt = kmalloc(sizeof(*sgt), GFP_KERNEL);
 		if (!sgt)
 			return NULL;
 
-		if (sg_alloc_table(sgt, xen_obj->num_pages, GFP_KERNEL) < 0) {
+		ret = sg_alloc_table(sgt, xen_obj->num_pages, GFP_KERNEL);
+		if (ret < 0) {
 			kfree(sgt);
-			return NULL;
+			return ERR_PTR(ret);
 		}
+		/*
+		 * insert individual pages, so we don't make pressure
+		 * on SWIOTLB
+		 */
 		for_each_sg(sgt->sgl, sg, xen_obj->num_pages, i)
-			sg_set_page(sg, xen_obj->pages[i], PAGE_SIZE, 0);
+			sg_set_page(sg, pfn_to_page(__pfn_to_mfn(
+				page_to_pfn(xen_obj->pages[i]))),
+				PAGE_SIZE, 0);
 
 	} else {
-		sgt = drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
+		struct page **dev_pages;
+		int i;
+
+		dev_pages = kcalloc(xen_obj->num_pages, sizeof(*dev_pages), GFP_KERNEL);
+		if (!dev_pages)
+			return ERR_PTR(-ENOMEM);
+		for (i = 0; i < xen_obj->num_pages; i++)
+			dev_pages[i] = pfn_to_page(__pfn_to_mfn(
+				page_to_pfn(xen_obj->pages[i])));
+		sgt = drm_prime_pages_to_sg(dev_pages, xen_obj->num_pages);
+		kfree(dev_pages);
 	}
 	if (unlikely(!sgt))
 		DRM_ERROR("Failed to export sgt\n");

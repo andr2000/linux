@@ -71,7 +71,7 @@ static inline void xen_free_ballooned_pages(struct xen_gem_object *xen_obj)
 #define xen_page_to_vaddr(page) \
 	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
 
-static int xen_import_map(struct xen_gem_object *xen_obj)
+static int xen_from_refs_map(struct xen_gem_object *xen_obj)
 {
 	struct gnttab_map_grant_ref *map_ops = NULL;
 	int ret, i;
@@ -139,7 +139,7 @@ fail:
 
 }
 
-static int xen_import_unmap(struct xen_gem_object *xen_obj)
+static int xen_from_refs_unmap(struct xen_gem_object *xen_obj)
 {
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
@@ -189,7 +189,7 @@ static int xen_import_unmap(struct xen_gem_object *xen_obj)
 	return 0;
 }
 
-static void xen_export_release_refs(struct xen_gem_object *xen_obj)
+static void xen_to_refs_release_refs(struct xen_gem_object *xen_obj)
 {
 	int i;
 
@@ -204,7 +204,7 @@ static void xen_export_release_refs(struct xen_gem_object *xen_obj)
 	xen_obj->sgt = NULL;
 }
 
-static int xen_export_grant_refs(struct xen_gem_object *xen_obj)
+static int xen_to_refs_grant_refs(struct xen_gem_object *xen_obj)
 {
 	grant_ref_t priv_gref_head;
 	int ret, j, cur_ref, num_pages;
@@ -304,9 +304,9 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 			if (xen_obj->base.import_attach)
 				drm_prime_gem_destroy(&xen_obj->base,
 					xen_obj->sgt);
-			xen_export_release_refs(xen_obj);
+			xen_to_refs_release_refs(xen_obj);
 		} else {
-			xen_import_unmap(xen_obj);
+			xen_from_refs_unmap(xen_obj);
 			kfree(xen_obj->dev_pages);
 		}
 	}
@@ -427,7 +427,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 		ret = -EINVAL;
 		goto fail;
 	}
-	ret = xen_import_map(xen_obj);
+	ret = xen_from_refs_map(xen_obj);
 	if (ret < 0)
 		goto fail;
 	ret = xen_gem_create_obj(xen_obj, dev, file_priv,
@@ -515,7 +515,7 @@ static int xen_ioctl_to_refs(struct drm_device *dev,
 		ret = -ENOMEM;
 		goto fail;
 	}
-	ret = xen_export_grant_refs(xen_obj);
+	ret = xen_to_refs_grant_refs(xen_obj);
 	if (ret < 0)
 		goto fail;
 	if (copy_to_user(req->grefs, xen_obj->grefs,
@@ -526,7 +526,7 @@ static int xen_ioctl_to_refs(struct drm_device *dev,
 	return 0;
 
 fail:
-	xen_export_release_refs(xen_obj);
+	xen_to_refs_release_refs(xen_obj);
 	return ret;
 }
 

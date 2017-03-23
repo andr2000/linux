@@ -1,0 +1,29 @@
+/*
+ * Device Tree Source for the Android
+ *
+ * Copyright (C) 2017 GlobalLogic
+ *
+ * This file is licensed under the terms of the GNU General Public License
+ * version 2.  This program is licensed "as is" without any warranty of any
+ * kind, whether express or implied.
+ */
+
+/ {
+    firmware {
+        android {
+            compatible = "android,firmware";
+
+            fstab {
+                compatible = "android,fstab";
+
+                vendor {
+                    compatible = "android,vendor";
+                    dev = "/dev/block/platform/soc/ee140000.sd/by-name/vendor";
+                    type = "ext4";
+                    mnt_flags = "ro,barrier=1";
+                    fsmgr_flags = "wait,slotselect";
+                };
+            };
+        };
+    };
+};

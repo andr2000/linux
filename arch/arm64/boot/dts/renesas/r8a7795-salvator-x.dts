@@ -1165,3 +1165,5 @@
 &vspi1 {
 	status = "okay";
 };
+
+#include "android-fstab.dtsi"

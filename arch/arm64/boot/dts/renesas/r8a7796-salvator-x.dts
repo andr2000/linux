@@ -1057,3 +1057,5 @@
 &vin0 {
 	status = "okay";
 };
+
+#include "android-fstab.dtsi"

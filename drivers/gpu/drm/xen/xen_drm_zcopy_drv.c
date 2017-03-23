@@ -44,6 +44,12 @@ struct xen_gem_object {
 	struct sg_table *sgt;
 	/* map grant handles */
 	grant_handle_t *map_handles;
+	/*
+	 * while exporting sg table we cannot use xen_obj->pages which are
+	 * CPU view of the buffer: an extra conversion of PFN -> MFN is needed.
+	 * these are the pages used to create sg table for device
+	 */
+	struct page **dev_pages;
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
@@ -301,6 +307,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 			xen_export_release_refs(xen_obj);
 		} else {
 			xen_import_unmap(xen_obj);
+			kfree(xen_obj->dev_pages);
 		}
 	}
 	drm_gem_object_release(gem_obj);
@@ -325,6 +332,10 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 	 * we cannot use xen_obj->pages which are CPU view of the buffer:
 	 * cook the buffer from corresponding MFNs
 	 */
+	xen_obj->dev_pages = kcalloc(xen_obj->num_pages,
+		sizeof(*xen_obj->dev_pages), GFP_KERNEL);
+	if (!xen_obj->dev_pages)
+		return ERR_PTR(-ENOMEM);
 	/* N.B. there will be a single entry in the table if buffer
 	 * is contiguous. otherwise CMA drivers will not accept
 	 * the buffer
@@ -346,23 +357,20 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 		 * insert individual pages, so we don't make pressure
 		 * on SWIOTLB
 		 */
-		for_each_sg(sgt->sgl, sg, xen_obj->num_pages, i)
-			sg_set_page(sg, pfn_to_page(__pfn_to_mfn(
-				page_to_pfn(xen_obj->pages[i]))),
+		for_each_sg(sgt->sgl, sg, xen_obj->num_pages, i) {
+			xen_obj->dev_pages[i] = pfn_to_page(__pfn_to_mfn(
+				page_to_pfn(xen_obj->pages[i])));
+			sg_set_page(sg, xen_obj->dev_pages[i],
 				PAGE_SIZE, 0);
+		}
 
 	} else {
-		struct page **dev_pages;
 		int i;
 
-		dev_pages = kcalloc(xen_obj->num_pages, sizeof(*dev_pages), GFP_KERNEL);
-		if (!dev_pages)
-			return ERR_PTR(-ENOMEM);
 		for (i = 0; i < xen_obj->num_pages; i++)
-			dev_pages[i] = pfn_to_page(__pfn_to_mfn(
+			xen_obj->dev_pages[i] = pfn_to_page(__pfn_to_mfn(
 				page_to_pfn(xen_obj->pages[i])));
-		sgt = drm_prime_pages_to_sg(dev_pages, xen_obj->num_pages);
-		kfree(dev_pages);
+		sgt = drm_prime_pages_to_sg(xen_obj->dev_pages, xen_obj->num_pages);
 	}
 	if (unlikely(!sgt))
 		DRM_ERROR("Failed to export sgt\n");

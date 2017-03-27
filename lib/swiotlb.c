@@ -764,8 +764,13 @@ dma_addr_t swiotlb_map_page(struct device *dev, struct page *page,
 	 * we can safely return the device addr and not worry about bounce
 	 * buffering it.
 	 */
-	if (dma_capable(dev, dev_addr, size) && !swiotlb_force)
+	if (dev_addr == 0x6c100000)
+	printk("dev_addr %llx\n", dev_addr);
+	if (dma_capable(dev, dev_addr, size) && !swiotlb_force) {
+		if (dev_addr == 0x6c100000)
+		printk("dma_capable\n");
 		return dev_addr;
+	}
 
 	trace_swiotlb_bounced(dev, dev_addr, size, swiotlb_force);
 

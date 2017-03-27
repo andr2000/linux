@@ -262,7 +262,6 @@ static struct sg_table *drm_gem_map_dma_buf(struct dma_buf_attachment *attach,
 	if (WARN_ON(dir == DMA_NONE || !prime_attach))
 		return ERR_PTR(-EINVAL);
 
-DRM_ERROR("%s prime_attach->sgt %p\n", __FUNCTION__, prime_attach->sgt);
 	/* return the cached mapping when possible */
 	if (prime_attach->dir == dir)
 		return prime_attach->sgt;

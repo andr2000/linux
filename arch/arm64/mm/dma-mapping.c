@@ -211,6 +211,12 @@ static dma_addr_t __swiotlb_map_page(struct device *dev, struct page *page,
 	dma_addr_t dev_addr;
 
 	dev_addr = swiotlb_map_page(dev, page, offset, size, dir, attrs);
+	if (dev_addr == 0x6c100000) {
+		printk("dma_to_phys %llx \n", dma_to_phys(dev, dev_addr));
+		printk("phys_to_virt(dma_to_phys(dev, dev_addr)) %p\n", phys_to_virt(dma_to_phys(dev, dev_addr)));
+		printk("is_device_dma_coherent(dev) %d\n", is_device_dma_coherent(dev));
+	}
+
 	if (!is_device_dma_coherent(dev) &&
 	    (attrs & DMA_ATTR_SKIP_CPU_SYNC) == 0)
 		__dma_map_area(phys_to_virt(dma_to_phys(dev, dev_addr)), size, dir);
@@ -342,6 +348,7 @@ static int __swiotlb_get_sgtable(struct device *dev, struct sg_table *sgt,
 {
 	int ret = sg_alloc_table(sgt, 1, GFP_KERNEL);
 
+printk("------------------ %s DMA addr %llx dma_to_phys(dev, handle) %llx\n", __FUNCTION__, handle, dma_to_phys(dev, handle));
 	if (!ret)
 		sg_set_page(sgt->sgl, phys_to_page(dma_to_phys(dev, handle)),
 			    PAGE_ALIGN(size), 0);

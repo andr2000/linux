@@ -549,12 +549,10 @@ xen_swiotlb_map_sg_attrs(struct device *hwdev, struct scatterlist *sgl,
 		phys_addr_t paddr = sg_phys(sg);
 		dma_addr_t dev_addr = xen_phys_to_bus(paddr);
 
-printk("paddr %llx dev_addr %llx\n", paddr, dev_addr);
 		if (swiotlb_force ||
 		    xen_arch_need_swiotlb(hwdev, paddr, dev_addr) ||
 		    !dma_capable(hwdev, dev_addr, sg->length) ||
 		    range_straddles_page_boundary(paddr, sg->length)) {
-printk("swiotlb_tbl_map_single\n");
 			phys_addr_t map = swiotlb_tbl_map_single(hwdev,
 								 start_dma_addr,
 								 sg_phys(sg),
@@ -580,17 +578,6 @@ printk("swiotlb_tbl_map_single\n");
 			/* we are not interested in the dma_addr returned by
 			 * xen_dma_map_page, only in the potential cache flushes executed
 			 * by the function. */
-{
-	struct page *page = pfn_to_page(paddr >> PAGE_SHIFT);
-	unsigned long page_pfn = page_to_xen_pfn(page);
-	unsigned long dev_pfn = XEN_PFN_DOWN(dev_addr);
-	unsigned long compound_pages =
-		(1<<compound_order(page)) * XEN_PFN_PER_PAGE;
-	bool local = (page_pfn <= dev_pfn) &&
-		(dev_pfn - page_pfn < compound_pages);
-
-	printk("xen_dma_map_page local %d\n", local);
-}
 			xen_dma_map_page(hwdev, pfn_to_page(paddr >> PAGE_SHIFT),
 						dev_addr,
 						paddr & ~PAGE_MASK,

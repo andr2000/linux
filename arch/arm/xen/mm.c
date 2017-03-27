@@ -100,16 +100,12 @@ void __xen_dma_map_page(struct device *hwdev, struct page *page,
 	     dma_addr_t dev_addr, unsigned long offset, size_t size,
 	     enum dma_data_direction dir, unsigned long attrs)
 {
-printk("is_device_dma_coherent(hwdev) %d attrs & DMA_ATTR_SKIP_CPU_SYNC %lu\n",
-	is_device_dma_coherent(hwdev), attrs & DMA_ATTR_SKIP_CPU_SYNC);
 	if (is_device_dma_coherent(hwdev))
 		return;
 	if (attrs & DMA_ATTR_SKIP_CPU_SYNC)
 		return;
 
-//printk("will map dev_addr %llx\n", dev_addr, page_to_pfn(page));
 	__xen_dma_page_cpu_to_dev(hwdev, dev_addr, size, dir);
-//printk("will mapped dev_addr %llx\n", dev_addr, page_to_pfn(page));
 }
 
 void __xen_dma_unmap_page(struct device *hwdev, dma_addr_t handle,
@@ -184,19 +180,6 @@ static int xen_swiotlb_get_sgtable(struct device *dev, struct sg_table *sgt,
 				 void *cpu_addr, dma_addr_t handle, size_t size,
 				 unsigned long attrs)
 {
-printk("RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR %s DMA addr %llx\n", __FUNCTION__, handle);
-
-#if 0
-if (paddr == 0x5cf00000)
-	return 0x6c100000;
-if (paddr == 0x5d700000)
-	return 0x6c900000;
-#endif
-if (0x6c100000 == handle)
-	handle = 0x5cf00000;
-if (0x6c900000 == handle)
-	handle = 0x5d700000;
-
 	if (__generic_dma_ops(dev)->get_sgtable)
 		return __generic_dma_ops(dev)->get_sgtable(dev, sgt, cpu_addr, handle,
 								 size, attrs);

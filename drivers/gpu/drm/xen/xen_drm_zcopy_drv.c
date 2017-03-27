@@ -22,7 +22,13 @@
 #include <linux/dma-buf.h>
 #include <linux/platform_device.h>
 
+#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#include <asm/xen/hypercall.h>
+#include <xen/interface/memory.h>
+#include <xen/page.h>
+#else
 #include <xen/balloon.h>
+#endif
 #include <xen/grant_table.h>
 #include <asm/xen/page.h>
 
@@ -40,16 +46,14 @@ struct xen_gem_object {
 	grant_ref_t *grefs;
 	/* these are pages from Xen balloon for allocated Xen GEM object */
 	struct page **pages;
+#ifdef CONFIG_DRM_GEM_CMA_HELPER
+	void *vaddr;
+	dma_addr_t paddr;
+#endif
 	/* this will be set if we have imported a GEM object */
 	struct sg_table *sgt;
 	/* map grant handles */
 	grant_handle_t *map_handles;
-	/*
-	 * while exporting sg table we cannot use xen_obj->pages which are
-	 * CPU view of the buffer: an extra conversion of PFN -> MFN is needed.
-	 * these are the pages used to create sg table for device
-	 */
-	struct page **dev_pages;
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
@@ -58,20 +62,142 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
 
-static inline int xen_alloc_ballooned_pages(struct xen_gem_object *xen_obj)
+#ifdef CONFIG_DRM_GEM_CMA_HELPER
+static int xen_alloc_ballooned_pages(struct device *dev,
+	struct xen_gem_object *xen_obj)
 {
+	struct page **pages;
+	xen_pfn_t *frame_list;
+	int num_pages, i, tries_left;
+	size_t size;
+	int ret;
+	dma_addr_t paddr, cpu_addr;
+	void *vaddr = NULL;
+	struct xen_memory_reservation reservation = {
+		.address_bits = 0,
+		.extent_order = 0,
+		.domid        = DOMID_SELF
+	};
+
+	num_pages = xen_obj->num_pages;
+	pages = xen_obj->pages;
+	size = num_pages * PAGE_SIZE;
+	DRM_DEBUG("Ballooning out %d pages, size %zu\n", num_pages, size);
+	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
+	if (!frame_list)
+		return -ENOMEM;
+	vaddr = dma_alloc_wc(dev, size, &paddr, GFP_KERNEL | __GFP_NOWARN);
+	if (!vaddr) {
+		DRM_ERROR("Failed to allocate DMA buffer with size %zu\n",
+			size);
+		ret = -ENOMEM;
+		goto fail;
+	}
+	cpu_addr = paddr;
+	for (i = 0; i < num_pages; i++) {
+		pages[i] = pfn_to_page(__phys_to_pfn(cpu_addr));
+		/* XENMEM_populate_physmap requires a PFN based on Xen
+		 * granularity.
+		 */
+		frame_list[i] = page_to_xen_pfn(pages[i]);
+		cpu_addr += PAGE_SIZE;
+	}
+	tries_left = 3;
+again:
+	set_xen_guest_handle(reservation.extent_start, frame_list);
+	reservation.nr_extents = num_pages;
+	/* rc will hold number of pages processed */
+	ret = HYPERVISOR_memory_op(XENMEM_populate_physmap, &reservation);
+	if (ret <= 0) {
+		DRM_ERROR("Failed to balloon out %d pages (%d), retrying\n",
+			num_pages, ret);
+		if (--tries_left)
+			goto again;
+		WARN_ON(ret != num_pages);
+		ret = -EFAULT;
+		goto fail;
+	}
+	xen_obj->vaddr = vaddr;
+	xen_obj->paddr = paddr;
+	kfree(frame_list);
+DRM_ERROR("vaddr %p paddr %llx\n", vaddr, paddr);
+	return 0;
+
+fail:
+	if (vaddr)
+		dma_free_wc(dev, size, vaddr, paddr);
+	kfree(frame_list);
+	return ret;
+}
+
+static void xen_free_ballooned_pages(struct device *dev,
+	struct xen_gem_object *xen_obj)
+{
+	struct page **pages;
+	xen_pfn_t *frame_list;
+	int num_pages, i;
+	int ret;
+	size_t size;
+	struct xen_memory_reservation reservation = {
+		.address_bits = 0,
+		.extent_order = 0,
+		.domid        = DOMID_SELF
+	};
+
+	num_pages = xen_obj->num_pages;
+	pages = xen_obj->pages;
+	if (!pages)
+		return;
+	if (!xen_obj->vaddr)
+		return;
+	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
+	if (!frame_list) {
+		DRM_ERROR("Failed to balloon in %d pages\n", num_pages);
+		return;
+	}
+	DRM_DEBUG("Ballooning in %d pages\n", num_pages);
+	size = num_pages * PAGE_SIZE;
+	for (i = 0; i < num_pages; i++) {
+		/*
+		 * XENMEM_populate_physmap requires a PFN based on Xen
+		 * granularity.
+		 */
+		frame_list[i] = page_to_xen_pfn(pages[i]);
+	}
+	set_xen_guest_handle(reservation.extent_start, frame_list);
+	reservation.nr_extents = num_pages;
+	/* rc will hold number of pages processed */
+	ret = HYPERVISOR_memory_op(XENMEM_decrease_reservation, &reservation);
+	if (ret <= 0) {
+		DRM_ERROR("Failed to balloon in %d pages\n", num_pages);
+		WARN_ON(ret != num_pages);
+	}
+	if (xen_obj->vaddr)
+		dma_free_wc(dev, size, xen_obj->vaddr, xen_obj->paddr);
+	xen_obj->vaddr = NULL;
+	xen_obj->paddr = 0;
+	kfree(frame_list);
+}
+#else
+static inline int xen_alloc_ballooned_pages(struct device *dev,
+	struct xen_gem_object *xen_obj)
+{
+	UNUSED(dev);
 	return alloc_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
 }
 
-static inline void xen_free_ballooned_pages(struct xen_gem_object *xen_obj)
+static inline void xen_free_ballooned_pages(struct device *dev,
+	struct xen_gem_object *xen_obj)
 {
+	UNUSED(dev);
 	free_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
 }
+#endif /* CONFIG_DRM_GEM_CMA_HELPER */
 
 #define xen_page_to_vaddr(page) \
 	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
 
-static int xen_from_refs_map(struct xen_gem_object *xen_obj)
+static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 {
 	struct gnttab_map_grant_ref *map_ops = NULL;
 	int ret, i;
@@ -97,12 +223,18 @@ static int xen_from_refs_map(struct xen_gem_object *xen_obj)
 		ret = -ENOMEM;
 		goto fail;
 	}
-	ret = xen_alloc_ballooned_pages(xen_obj);
+	ret = xen_alloc_ballooned_pages(dev, xen_obj);
 	if (ret < 0) {
 		DRM_ERROR("Cannot allocate %d ballooned pages: %d\n",
 			xen_obj->num_pages, ret);
 		goto fail;
 	}
+{
+	struct page *page;
+
+	page = xen_obj->pages[0];
+	DRM_ERROR("pages[0] %p\n", page_to_virt(page));
+}
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		phys_addr_t addr;
 
@@ -139,7 +271,8 @@ fail:
 
 }
 
-static int xen_from_refs_unmap(struct xen_gem_object *xen_obj)
+static int xen_from_refs_unmap(struct device *dev,
+	struct xen_gem_object *xen_obj)
 {
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
@@ -178,7 +311,7 @@ static int xen_from_refs_unmap(struct xen_gem_object *xen_obj)
 			DRM_ERROR("Failed to unmap page %d with ref %d: %d\n",
 				i, xen_obj->grefs[i], unmap_ops[i].status);
 	}
-	xen_free_ballooned_pages(xen_obj);
+	xen_free_ballooned_pages(dev, xen_obj);
 	kfree(xen_obj->pages);
 	xen_obj->pages = NULL;
 	kfree(xen_obj->map_handles);
@@ -306,8 +439,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 					xen_obj->sgt);
 			xen_to_refs_release_refs(xen_obj);
 		} else {
-			xen_from_refs_unmap(xen_obj);
-			kfree(xen_obj->dev_pages);
+			xen_from_refs_unmap(gem_obj->dev->dev, xen_obj);
 		}
 	}
 	drm_gem_object_release(gem_obj);
@@ -328,14 +460,6 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 
 	if (unlikely(!xen_obj->pages))
 		return NULL;
-	/*
-	 * we cannot use xen_obj->pages which are CPU view of the buffer:
-	 * cook the buffer from corresponding MFNs
-	 */
-	xen_obj->dev_pages = kcalloc(xen_obj->num_pages,
-		sizeof(*xen_obj->dev_pages), GFP_KERNEL);
-	if (!xen_obj->dev_pages)
-		return ERR_PTR(-ENOMEM);
 	/* N.B. there will be a single entry in the table if buffer
 	 * is contiguous. otherwise CMA drivers will not accept
 	 * the buffer
@@ -358,19 +482,12 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 		 * on SWIOTLB
 		 */
 		for_each_sg(sgt->sgl, sg, xen_obj->num_pages, i) {
-			xen_obj->dev_pages[i] = pfn_to_page(__pfn_to_mfn(
-				page_to_pfn(xen_obj->pages[i])));
-			sg_set_page(sg, xen_obj->dev_pages[i],
+			sg_set_page(sg, xen_obj->pages[i],
 				PAGE_SIZE, 0);
 		}
 
 	} else {
-		int i;
-
-		for (i = 0; i < xen_obj->num_pages; i++)
-			xen_obj->dev_pages[i] = pfn_to_page(__pfn_to_mfn(
-				page_to_pfn(xen_obj->pages[i])));
-		sgt = drm_prime_pages_to_sg(xen_obj->dev_pages, xen_obj->num_pages);
+		sgt = drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
 	}
 	if (unlikely(!sgt))
 		DRM_ERROR("Failed to export sgt\n");
@@ -427,7 +544,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 		ret = -EINVAL;
 		goto fail;
 	}
-	ret = xen_from_refs_map(xen_obj);
+	ret = xen_from_refs_map(dev->dev, xen_obj);
 	if (ret < 0)
 		goto fail;
 	ret = xen_gem_create_obj(xen_obj, dev, file_priv,
@@ -582,6 +699,14 @@ static int xen_probe(struct platform_device *pdev)
 	int ret;
 
 	DRM_INFO("Creating %s\n", xen_driver.desc);
+	arch_setup_dma_ops(&pdev->dev, 0, 0, NULL, false);
+#if 0
+	ret = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
+	if (ret < 0) {
+		DRM_ERROR("Failed to set DMA coherency\n");
+		return ret;
+	}
+#endif
 	drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);
 	if (!drm_dev)
 		return -ENOMEM;

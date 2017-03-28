@@ -39,6 +39,11 @@ static inline void xen_dma_map_page(struct device *hwdev, struct page *page,
 	bool local = (page_pfn <= dev_pfn) &&
 		(dev_pfn - page_pfn < compound_pages);
 
+	if (dev_addr == 0x6c100000)
+		printk("%s page is %slocal: dev_addr = %llx PFN %lx\n",
+			__FUNCTION__,
+			local ? "" : "non-", dev_addr, page_to_pfn(page));
+
 	/*
 	 * Dom0 is mapped 1:1, while the Linux page can span across
 	 * multiple Xen pages, it's not possible for it to contain a

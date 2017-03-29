@@ -68,7 +68,7 @@ static int xen_alloc_ballooned_pages(struct device *dev,
 {
 	struct page **pages;
 	xen_pfn_t *frame_list;
-	int num_pages, i, tries_left;
+	int num_pages, i;
 	size_t size;
 	int ret;
 	dma_addr_t paddr, cpu_addr;
@@ -102,8 +102,6 @@ static int xen_alloc_ballooned_pages(struct device *dev,
 		frame_list[i] = page_to_xen_pfn(pages[i]);
 		cpu_addr += PAGE_SIZE;
 	}
-	tries_left = 3;
-again:
 	set_xen_guest_handle(reservation.extent_start, frame_list);
 	reservation.nr_extents = num_pages;
 	/* rc will hold number of pages processed */
@@ -111,8 +109,6 @@ again:
 	if (ret <= 0) {
 		DRM_ERROR("Failed to balloon out %d pages (%d), retrying\n",
 			num_pages, ret);
-		if (--tries_left)
-			goto again;
 		WARN_ON(ret != num_pages);
 		ret = -EFAULT;
 		goto fail;

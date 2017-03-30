@@ -22,6 +22,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/sys_soc.h>
 #include <linux/workqueue.h>
+#include <linux/slab.h>
 
 #include <media/v4l2-of.h>
 

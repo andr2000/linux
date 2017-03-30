@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/sys_soc.h>
+#include <asm-generic/io.h>
 
 #include <media/v4l2-of.h>
 #include <media/v4l2-subdev.h>

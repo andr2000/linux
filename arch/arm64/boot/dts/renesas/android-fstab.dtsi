@@ -21,7 +21,7 @@
                     dev = "/dev/block/platform/soc/ee140000.sd/by-name/vendor";
                     type = "ext4";
                     mnt_flags = "ro,barrier=1";
-                    fsmgr_flags = "wait,slotselect";
+                    fsmgr_flags = "wait,slotselect,avb";
                 };
             };
         };

@@ -48,7 +48,7 @@ struct xen_gem_object {
 	struct page **pages;
 #ifdef CONFIG_DRM_GEM_CMA_HELPER
 	void *vaddr;
-	dma_addr_t paddr;
+	dma_addr_t dev_bus_addr;
 #endif
 	/* this will be set if we have imported a GEM object */
 	struct sg_table *sgt;
@@ -71,7 +71,7 @@ static int xen_alloc_ballooned_pages(struct device *dev,
 	int num_pages, i;
 	size_t size;
 	int ret;
-	dma_addr_t paddr, cpu_addr;
+	dma_addr_t dev_addr, cpu_addr;
 	void *vaddr = NULL;
 	struct xen_memory_reservation reservation = {
 		.address_bits = 0,
@@ -86,14 +86,14 @@ static int xen_alloc_ballooned_pages(struct device *dev,
 	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
 	if (!frame_list)
 		return -ENOMEM;
-	vaddr = dma_alloc_wc(dev, size, &paddr, GFP_KERNEL | __GFP_NOWARN);
+	vaddr = dma_alloc_wc(dev, size, &dev_addr, GFP_KERNEL | __GFP_NOWARN);
 	if (!vaddr) {
 		DRM_ERROR("Failed to allocate DMA buffer with size %zu\n",
 			size);
 		ret = -ENOMEM;
 		goto fail;
 	}
-	cpu_addr = paddr;
+	cpu_addr = dev_addr;
 	for (i = 0; i < num_pages; i++) {
 		pages[i] = pfn_to_page(__phys_to_pfn(cpu_addr));
 		/* XENMEM_populate_physmap requires a PFN based on Xen
@@ -114,14 +114,13 @@ static int xen_alloc_ballooned_pages(struct device *dev,
 		goto fail;
 	}
 	xen_obj->vaddr = vaddr;
-	xen_obj->paddr = paddr;
+	xen_obj->dev_bus_addr = dev_addr;
 	kfree(frame_list);
-DRM_ERROR("vaddr %p paddr %llx\n", vaddr, paddr);
 	return 0;
 
 fail:
 	if (vaddr)
-		dma_free_wc(dev, size, vaddr, paddr);
+		dma_free_wc(dev, size, vaddr, dev_addr);
 	kfree(frame_list);
 	return ret;
 }
@@ -169,9 +168,9 @@ static void xen_free_ballooned_pages(struct device *dev,
 		WARN_ON(ret != num_pages);
 	}
 	if (xen_obj->vaddr)
-		dma_free_wc(dev, size, xen_obj->vaddr, xen_obj->paddr);
+		dma_free_wc(dev, size, xen_obj->vaddr, xen_obj->dev_bus_addr);
 	xen_obj->vaddr = NULL;
-	xen_obj->paddr = 0;
+	xen_obj->dev_bus_addr = 0;
 	kfree(frame_list);
 }
 #else
@@ -225,12 +224,7 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 			xen_obj->num_pages, ret);
 		goto fail;
 	}
-{
-	struct page *page;
 
-	page = xen_obj->pages[0];
-	DRM_ERROR("pages[0] %p\n", page_to_virt(page));
-}
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		phys_addr_t addr;
 
@@ -695,13 +689,8 @@ static int xen_probe(struct platform_device *pdev)
 	int ret;
 
 	DRM_INFO("Creating %s\n", xen_driver.desc);
+#ifdef CONFIG_DRM_GEM_CMA_HELPER
 	arch_setup_dma_ops(&pdev->dev, 0, 0, NULL, false);
-#if 0
-	ret = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
-	if (ret < 0) {
-		DRM_ERROR("Failed to set DMA coherency\n");
-		return ret;
-	}
 #endif
 	drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);
 	if (!drm_dev)

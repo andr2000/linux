@@ -72,7 +72,7 @@ struct xdrv_evtchnl_info {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
-		} ctrl;
+		} req;
 		struct {
 			struct xendispl_event_page *page;
 		} evt;
@@ -80,7 +80,7 @@ struct xdrv_evtchnl_info {
 };
 
 struct xdrv_evtchnl_pair_info {
-	struct xdrv_evtchnl_info ctrl;
+	struct xdrv_evtchnl_info req;
 	struct xdrv_evtchnl_info evt;
 };
 
@@ -111,8 +111,8 @@ static inline struct xendispl_req *ddrv_be_prepare_req(
 {
 	struct xendispl_req *req;
 
-	req = RING_GET_REQUEST(&evtchnl->u.ctrl.ring,
-		evtchnl->u.ctrl.ring.req_prod_pvt);
+	req = RING_GET_REQUEST(&evtchnl->u.req.ring,
+		evtchnl->u.req.ring.req_prod_pvt);
 	req->operation = operation;
 	req->id = evtchnl->evt_next_id++;
 	evtchnl->evt_id = req->id;
@@ -127,7 +127,7 @@ static int ddrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 {
 	int ret;
 
-	reinit_completion(&evtchnl->u.ctrl.completion);
+	reinit_completion(&evtchnl->u.req.completion);
 	if (unlikely(evtchnl->state != EVTCHNL_STATE_CONNECTED)) {
 		spin_unlock_irqrestore(&evtchnl->drv_info->io_lock, flags);
 		return -EIO;
@@ -136,12 +136,12 @@ static int ddrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 	spin_unlock_irqrestore(&evtchnl->drv_info->io_lock, flags);
 	ret = 0;
 	if (wait_for_completion_timeout(
-			&evtchnl->u.ctrl.completion,
+			&evtchnl->u.req.completion,
 			msecs_to_jiffies(VDRM_WAIT_BACK_MS)) <= 0)
 		ret = -ETIMEDOUT;
 	if (ret < 0)
 		return ret;
-	return evtchnl->u.ctrl.resp_status;
+	return evtchnl->u.req.resp_status;
 }
 
 int xendispl_front_mode_set(struct xendrm_crtc *xen_crtc, uint32_t x,
@@ -155,7 +155,7 @@ int xendispl_front_mode_set(struct xendrm_crtc *xen_crtc, uint32_t x,
 	unsigned long flags;
 
 	drv_info = xen_crtc->xendrm_dev->xdrv_info;
-	evtchnl = &drv_info->evt_pairs[xen_crtc->index].ctrl;
+	evtchnl = &drv_info->evt_pairs[xen_crtc->index].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -181,7 +181,7 @@ struct page **xendispl_front_dbuf_create(struct xdrv_info *drv_info,
 	bool be_alloc;
 	int ret;
 
-	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
+	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
 	if (unlikely(!evtchnl))
 		return ERR_PTR(-EIO);
 	be_alloc = drv_info->cfg_plat_data.be_alloc;
@@ -231,7 +231,7 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	bool ext_buffer;
 	int ret;
 
-	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
+	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -257,7 +257,7 @@ int xendispl_front_fb_attach(struct xdrv_info *drv_info,
 	struct xendispl_req *req;
 	unsigned long flags;
 
-	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
+	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 	buf = xdrv_shbuf_get_by_dumb_cookie(&drv_info->dumb_buf_list,
@@ -281,7 +281,7 @@ int xendispl_front_fb_detach(struct xdrv_info *drv_info, uint64_t fb_cookie)
 	struct xendispl_req *req;
 	unsigned long flags;
 
-	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].ctrl;
+	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -300,7 +300,7 @@ int xendispl_front_page_flip(struct xdrv_info *drv_info, int conn_idx,
 	if (unlikely(conn_idx >= drv_info->num_evt_pairs))
 		return -EINVAL;
 	xdrv_shbuf_flush_fb(&drv_info->dumb_buf_list, fb_cookie);
-	evtchnl = &drv_info->evt_pairs[conn_idx].ctrl;
+	evtchnl = &drv_info->evt_pairs[conn_idx].req;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_PG_FLIP);
 	req->op.pg_flip.fb_cookie = fb_cookie;
@@ -437,11 +437,11 @@ static irqreturn_t xdrv_evtchnl_interrupt_ctrl(int irq, void *dev_id)
 	if (unlikely(channel->state != EVTCHNL_STATE_CONNECTED))
 		goto out;
 again:
-	rp = channel->u.ctrl.ring.sring->rsp_prod;
+	rp = channel->u.req.ring.sring->rsp_prod;
 	/* Ensure we see queued responses up to 'rp'. */
 	virt_rmb();
-	for (i = channel->u.ctrl.ring.rsp_cons; i != rp; i++) {
-		resp = RING_GET_RESPONSE(&channel->u.ctrl.ring, i);
+	for (i = channel->u.req.ring.rsp_cons; i != rp; i++) {
+		resp = RING_GET_RESPONSE(&channel->u.req.ring, i);
 		if (unlikely(resp->id != channel->evt_id))
 			continue;
 		switch (resp->operation) {
@@ -451,8 +451,8 @@ again:
 		case XENDISPL_OP_DBUF_CREATE:
 		case XENDISPL_OP_DBUF_DESTROY:
 		case XENDISPL_OP_SET_CONFIG:
-			channel->u.ctrl.resp_status = resp->status;
-			complete(&channel->u.ctrl.completion);
+			channel->u.req.resp_status = resp->status;
+			complete(&channel->u.req.completion);
 			break;
 		default:
 			DRM_ERROR("Operation %d is not supported\n",
@@ -460,16 +460,16 @@ again:
 			break;
 		}
 	}
-	channel->u.ctrl.ring.rsp_cons = i;
-	if (i != channel->u.ctrl.ring.req_prod_pvt) {
+	channel->u.req.ring.rsp_cons = i;
+	if (i != channel->u.req.ring.req_prod_pvt) {
 		int more_to_do;
 
-		RING_FINAL_CHECK_FOR_RESPONSES(&channel->u.ctrl.ring,
+		RING_FINAL_CHECK_FOR_RESPONSES(&channel->u.req.ring,
 			more_to_do);
 		if (more_to_do)
 			goto again;
 	} else
-		channel->u.ctrl.ring.sring->rsp_event = i + 1;
+		channel->u.req.ring.sring->rsp_event = i + 1;
 out:
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return IRQ_HANDLED;
@@ -521,7 +521,7 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 	unsigned long page = 0;
 
 	if (channel->type == EVTCHNL_TYPE_CTRL)
-		page = (unsigned long)channel->u.ctrl.ring.sring;
+		page = (unsigned long)channel->u.req.ring.sring;
 	else if (channel->type == EVTCHNL_TYPE_EVT)
 		page = (unsigned long)channel->u.evt.page;
 	if (!page)
@@ -529,8 +529,8 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 	channel->state = EVTCHNL_STATE_DISCONNECTED;
 	if (channel->type == EVTCHNL_TYPE_CTRL) {
 		/* release all who still waits for response if any */
-		channel->u.ctrl.resp_status = -EIO;
-		complete_all(&channel->u.ctrl.completion);
+		channel->u.req.resp_status = -EIO;
+		complete_all(&channel->u.req.completion);
 	}
 	if (channel->irq)
 		unbind_from_irqhandler(channel->irq, channel);
@@ -540,7 +540,7 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 	if (channel->gref != GRANT_INVALID_REF)
 		gnttab_end_foreign_access(channel->gref, 0, page);
 	if (channel->type == EVTCHNL_TYPE_CTRL)
-		channel->u.ctrl.ring.sring = NULL;
+		channel->u.req.ring.sring = NULL;
 	else
 		channel->u.evt.page = NULL;
 	memset(channel, 0, sizeof(*channel));
@@ -554,7 +554,7 @@ static void xdrv_evtchnl_free_all(struct xdrv_info *drv_info)
 		return;
 	for (i = 0; i < drv_info->num_evt_pairs; i++) {
 		xdrv_evtchnl_free(drv_info,
-			&drv_info->evt_pairs[i].ctrl);
+			&drv_info->evt_pairs[i].req);
 		xdrv_evtchnl_free(drv_info,
 			&drv_info->evt_pairs[i].evt);
 	}
@@ -586,10 +586,10 @@ static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info, int index,
 	if (type == EVTCHNL_TYPE_CTRL) {
 		struct xen_displif_sring *sring;
 
-		init_completion(&evt_channel->u.ctrl.completion);
+		init_completion(&evt_channel->u.req.completion);
 		sring = (struct xen_displif_sring *)page;
 		SHARED_RING_INIT(sring);
-		FRONT_RING_INIT(&evt_channel->u.ctrl.ring,
+		FRONT_RING_INIT(&evt_channel->u.req.ring,
 			sring, XEN_PAGE_SIZE);
 
 		ret = xenbus_grant_ring(xb_dev, sring, 1, &gref);
@@ -657,8 +657,8 @@ static inline void xdrv_evtchnl_flush(
 {
 	int notify;
 
-	channel->u.ctrl.ring.req_prod_pvt++;
-	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&channel->u.ctrl.ring, notify);
+	channel->u.req.ring.req_prod_pvt++;
+	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&channel->u.req.ring, notify);
 	if (notify)
 		notify_remote_via_irq(channel->irq);
 }
@@ -678,7 +678,7 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info)
 	}
 	for (conn = 0; conn < plat_data->num_connectors; conn++) {
 		ret = xdrv_evtchnl_alloc(drv_info, conn,
-			&drv_info->evt_pairs[conn].ctrl, EVTCHNL_TYPE_CTRL);
+			&drv_info->evt_pairs[conn].req, EVTCHNL_TYPE_CTRL);
 		if (ret < 0) {
 			DRM_ERROR("Error allocating control channel\n");
 			goto fail;
@@ -712,10 +712,10 @@ again:
 	}
 	for (conn = 0; conn < plat_data->num_connectors; conn++) {
 		ret = xdrv_evtchnl_publish(xbt,
-			&drv_info->evt_pairs[conn].ctrl,
+			&drv_info->evt_pairs[conn].req,
 			plat_data->connectors[conn].xenstore_path,
-			XENDISPL_FIELD_CTRL_RING_REF,
-			XENDISPL_FIELD_CTRL_CHANNEL);
+			XENDISPL_FIELD_REQ_RING_REF,
+			XENDISPL_FIELD_REQ_CHANNEL);
 		if (ret < 0)
 			goto fail;
 		ret = xdrv_evtchnl_publish(xbt,
@@ -752,7 +752,7 @@ static void xdrv_evtchnl_set_state(struct xdrv_info *drv_info,
 		return;
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	for (i = 0; i < drv_info->num_evt_pairs; i++) {
-		drv_info->evt_pairs[i].ctrl.state = state;
+		drv_info->evt_pairs[i].req.state = state;
 		drv_info->evt_pairs[i].evt.state = state;
 	}
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
@@ -809,7 +809,7 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	int ret, i;
 
 	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
-			XENDISPL_FEATURE_BE_ALLOC, 0)) {
+			XENDISPL_FIELD_BE_ALLOC, 0)) {
 		DRM_INFO("Backend can provide dumb buffers\n");
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");

@@ -23,7 +23,6 @@
 #include <linux/platform_device.h>
 #include <linux/irq.h>
 #include <linux/scatterlist.h>
-#include <linux/version.h>
 
 #include <asm/xen/hypervisor.h>
 #include <xen/xen.h>
@@ -788,21 +787,6 @@ static int xdrv_cfg_connector(struct xdrv_info *drv_info,
 fail:
 	return ret;
 }
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0))
-unsigned int xenbus_read_unsigned(const char *dir, const char *node,
-				  unsigned int default_val)
-{
-	unsigned int val;
-	int ret;
-
-	ret = xenbus_scanf(XBT_NIL, dir, node, "%u", &val);
-	if (ret <= 0)
-		val = default_val;
-
-	return val;
-}
-#endif
 
 static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	struct xendrm_plat_data *plat_data)

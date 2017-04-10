@@ -99,7 +99,9 @@ struct xdrv_info {
 	/* dumb buffers */
 	struct list_head dumb_buf_list;
 
+#if defined(CONFIG_X86)
 	struct dma_map_ops dma_map_ops;
+#endif
 };
 
 static inline void xdrv_evtchnl_flush(

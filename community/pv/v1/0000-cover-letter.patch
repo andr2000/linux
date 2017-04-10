@@ -1,0 +1,37 @@
+From f66e34702d7a27624e9fe3e512942c2d0428684f Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Mon, 10 Apr 2017 09:20:16 +0300
+Subject: [For Linux v1 0/4] PV protocol headers for Linux Kernel
+
+Hi, all!
+
+This patch series adds/updates para-virtual device
+protocols for Linux Kernel (headers):
+ o kbdif (updated/multitouch support added)
+ o sndif - sound (new)
+ o displif - display (new)
+
+Changes since v0:
+ * removed editor blocks
+ * XENDISPL_EVENT_PAGE_SIZE -> XEN_PAGE_SIZE, not 4096
+ * removed Reviewed-by from Xen's review
+
+Thank you,
+Oleksandr
+
+Oleksandr Andrushchenko (4):
+  xen/kbdif: update protocol description
+  xen/kbdif: add multi-touch support
+  xen/sndif: add sound-device ABI
+  xen/displif: add ABI for para-virtual display
+
+ include/xen/interface/io/displif.h | 854 +++++++++++++++++++++++++++++++++++++
+ include/xen/interface/io/kbdif.h   | 458 ++++++++++++++++++--
+ include/xen/interface/io/sndif.h   | 793 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 2078 insertions(+), 27 deletions(-)
+ create mode 100644 include/xen/interface/io/displif.h
+ create mode 100644 include/xen/interface/io/sndif.h
+
+-- 
+2.7.4
+

@@ -1,10 +1,6 @@
 /*
  *  Xen para-virtual sound device
  *
- *  Based on sound/drivers/dummy.c
- *  Based on drivers/net/xen-netfront.c
- *  Based on drivers/block/xen-blkfront.c
- *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation; either version 2 of the License, or
@@ -15,31 +11,29 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016 EPAM Systems Inc.
+ * Copyright (C) 2016-2017 EPAM Systems Inc.
  */
 
-#include <linux/kernel.h>
-#include <linux/errno.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
-#include <linux/irq.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
 
 #include <asm/xen/hypervisor.h>
 #include <xen/xen.h>
-#include <xen/platform_pci.h>
-#include <xen/xenbus.h>
 #include <xen/events.h>
 #include <xen/grant_table.h>
-#include <xen/interface/io/ring.h>
+#include <xen/platform_pci.h>
+#include <xen/xenbus.h>
+
 #include <xen/interface/io/sndif.h>
 
 #define GRANT_INVALID_REF	0
 /* timeout in ms to wait for backend to respond */
 #define VSND_WAIT_BACK_MS	3000
+
+#define VSND_MAX_STREAM		8
 
 enum xdrv_evtchnl_state {
 	EVTCHNL_STATE_DISCONNECTED,
@@ -82,7 +76,7 @@ struct sdev_alsa_timer_info {
 };
 
 struct sdev_pcm_stream_info {
-	int index;
+	int unique_id;
 	struct snd_pcm_hardware pcm_hw;
 	struct xdrv_evtchnl_info *evtchnl;
 	bool is_open;
@@ -111,7 +105,7 @@ struct sdev_card_info {
 };
 
 struct cfg_stream {
-	int index;
+	int unique_id;
 	char *xenstore_path;
 	struct snd_pcm_hardware pcm_hw;
 };
@@ -172,26 +166,6 @@ static int xdrv_sh_buf_alloc(struct xenbus_device *xb_dev,
 	unsigned int buffer_size);
 static grant_ref_t xdrv_sh_buf_get_dir_start(
 	struct xdrv_shared_buffer_info *buf);
-
-struct SNDIF_TO_KERN_ERROR {
-	int sndif;
-	int kern;
-};
-static struct SNDIF_TO_KERN_ERROR sndif_kern_error_codes[] = {
-	{ .sndif = XENSND_RSP_OKAY,     .kern = 0 },
-	{ .sndif = XENSND_RSP_ERROR,    .kern = EIO },
-	{ .sndif = XENSND_RSP_NOTSUPP,  .kern = EOPNOTSUPP },
-};
-
-static int sndif_to_kern_error(int sndif_err)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(sndif_kern_error_codes); i++)
-		if (sndif_kern_error_codes[i].sndif == sndif_err)
-			return -sndif_kern_error_codes[i].kern;
-	return -EIO;
-}
 
 struct ALSA_SNDIF_SAMPLE_FORMAT {
 	uint8_t sndif;
@@ -310,7 +284,7 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 	return -EINVAL;
 }
 
-struct sdev_pcm_stream_info *sdrv_stream_get(
+static struct sdev_pcm_stream_info *sdrv_stream_get(
 	struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -331,7 +305,7 @@ static void sdrv_stream_clear(struct sdev_pcm_stream_info *stream)
 	xdrv_sh_buf_clear(&stream->sh_buf);
 }
 
-static inline struct xensnd_req *sdrv_be_stream_prepare_req(
+static struct xensnd_req *sdrv_be_stream_prepare_req(
 	struct sdev_pcm_stream_info *stream, uint8_t operation)
 {
 	struct xensnd_req *req;
@@ -339,22 +313,22 @@ static inline struct xensnd_req *sdrv_be_stream_prepare_req(
 	req = RING_GET_REQUEST(&stream->evtchnl->ring,
 		stream->evtchnl->ring.req_prod_pvt);
 	req->operation = operation;
-	req->stream_idx = stream->index;
 	req->id = stream->req_next_id++;
 	stream->evtchnl->resp_id = req->id;
 	return req;
 }
 
-void sdrv_be_stream_free(struct sdev_pcm_stream_info *stream)
+static void sdrv_be_stream_free(struct sdev_pcm_stream_info *stream)
 {
 	xdrv_sh_buf_free(&stream->sh_buf);
 	sdrv_stream_clear(stream);
 }
 
-/* CAUTION!!! Call this with the spin lock held.
+/*
+ *  CAUTION!!! Call this with the spin lock held.
  * This function will release it
  */
-int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
+static int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 	struct xensnd_req *req, unsigned long flags)
 {
 	int ret;
@@ -373,10 +347,10 @@ int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl,
 		ret = -ETIMEDOUT;
 	if (ret < 0)
 		return ret;
-	return sndif_to_kern_error(evtchnl->resp_status);
+	return 0;
 }
 
-int sdrv_be_stream_open(struct snd_pcm_substream *substream,
+static int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	struct sdev_pcm_stream_info *stream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -395,20 +369,19 @@ int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 		return ret;
 	}
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
-
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_OPEN);
 	req->op.open.pcm_format = (uint8_t)ret;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
 	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;
-	req->op.open.gref_directory_start =
+	req->op.open.gref_directory =
 		xdrv_sh_buf_get_dir_start(&stream->sh_buf);
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 	stream->is_open = ret < 0 ? false : true;
 	return ret;
 }
 
-int sdrv_be_stream_close(struct snd_pcm_substream *substream,
+static int sdrv_be_stream_close(struct snd_pcm_substream *substream,
 	struct sdev_pcm_stream_info *stream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -420,14 +393,13 @@ int sdrv_be_stream_close(struct snd_pcm_substream *substream,
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
-
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_CLOSE);
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 	stream->is_open = false;
 	return ret;
 }
 
-static void sdrv_alsa_timer_rearm(struct sdev_alsa_timer_info *dpcm)
+static inline void sdrv_alsa_timer_rearm(struct sdev_alsa_timer_info *dpcm)
 {
 	mod_timer(&dpcm->timer, jiffies +
 		(dpcm->frac_period_rest + dpcm->rate - 1) / dpcm->rate);
@@ -532,7 +504,7 @@ static int sdrv_alsa_timer_create(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-int sdrv_alsa_open(struct snd_pcm_substream *substream)
+static int sdrv_alsa_open(struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
@@ -559,7 +531,7 @@ int sdrv_alsa_open(struct snd_pcm_substream *substream)
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	xdrv_sh_buf_clear(&stream->sh_buf);
 	sdrv_stream_clear(stream);
-	stream->evtchnl = &xdrv_info->evtchnls[stream->index];
+	stream->evtchnl = &xdrv_info->evtchnls[stream->unique_id];
 	if (ret < 0)
 		stream->evtchnl->state = EVTCHNL_STATE_DISCONNECTED;
 	else
@@ -568,7 +540,7 @@ int sdrv_alsa_open(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-int sdrv_alsa_close(struct snd_pcm_substream *substream)
+static int sdrv_alsa_close(struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
@@ -584,7 +556,7 @@ int sdrv_alsa_close(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
+static int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
 {
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -607,12 +579,12 @@ int sdrv_alsa_hw_params(struct snd_pcm_substream *substream,
 fail:
 	dev_err(&xdrv_info->xb_dev->dev,
 		"Failed to allocate buffers for stream idx %d\n",
-		stream->index);
+		stream->unique_id);
 	sdrv_be_stream_free(stream);
 	return ret;
 }
 
-int sdrv_alsa_hw_free(struct snd_pcm_substream *substream)
+static int sdrv_alsa_hw_free(struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	int ret;
@@ -622,7 +594,7 @@ int sdrv_alsa_hw_free(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-int sdrv_alsa_prepare(struct snd_pcm_substream *substream)
+static int sdrv_alsa_prepare(struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	int ret = 0;
@@ -636,7 +608,7 @@ int sdrv_alsa_prepare(struct snd_pcm_substream *substream)
 	return ret;
 }
 
-int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
+static int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
@@ -653,12 +625,12 @@ int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	return 0;
 }
 
-snd_pcm_uframes_t sdrv_alsa_pointer(struct snd_pcm_substream *substream)
+static snd_pcm_uframes_t sdrv_alsa_pointer(struct snd_pcm_substream *substream)
 {
 	return sdrv_alsa_timer_pointer(substream);
 }
 
-int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
+static int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	snd_pcm_uframes_t len)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
@@ -671,13 +643,14 @@ int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_WRITE);
-	req->op.rw.len = len;
+	req->op.rw.length = len;
 	req->op.rw.offset = 0;
 	return sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 }
 
-int sdrv_alsa_playback_copy(struct snd_pcm_substream *substream, int channel,
-	snd_pcm_uframes_t pos, void __user *buf, snd_pcm_uframes_t count)
+static int sdrv_alsa_playback_copy(struct snd_pcm_substream *substream,
+	int channel, snd_pcm_uframes_t pos, void __user *buf,
+	snd_pcm_uframes_t count)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	ssize_t len;
@@ -690,8 +663,9 @@ int sdrv_alsa_playback_copy(struct snd_pcm_substream *substream, int channel,
 	return sdrv_alsa_playback_do_write(substream, len);
 }
 
-int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream, int channel,
-	snd_pcm_uframes_t pos, void __user *buf, snd_pcm_uframes_t count)
+static int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream,
+	int channel, snd_pcm_uframes_t pos, void __user *buf,
+	snd_pcm_uframes_t count)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	struct sdev_pcm_instance_info *pcm_instance =
@@ -708,7 +682,7 @@ int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream, int channel,
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_READ);
-	req->op.rw.len = len;
+	req->op.rw.length = len;
 	req->op.rw.offset = 0;
 	ret = sdrv_be_stream_do_io(stream->evtchnl, req, flags);
 	if (ret < 0)
@@ -716,8 +690,8 @@ int sdrv_alsa_capture_copy(struct snd_pcm_substream *substream, int channel,
 	return copy_to_user(buf, stream->sh_buf.vbuffer, len);
 }
 
-int sdrv_alsa_playback_silence(struct snd_pcm_substream *substream, int channel,
-	snd_pcm_uframes_t pos, snd_pcm_uframes_t count)
+static int sdrv_alsa_playback_silence(struct snd_pcm_substream *substream,
+	int channel, snd_pcm_uframes_t pos, snd_pcm_uframes_t count)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
 	ssize_t len;
@@ -764,7 +738,8 @@ static struct snd_pcm_hardware sdrv_pcm_hardware_def = {
 	.fifo_size =		0,
 };
 
-/* FIXME: The mmap data transfer is asynchronous and there is no
+/*
+ * FIXME: The mmap data transfer is asynchronous and there is no
  * ack signal from user-space when it is done. This is the
  * reason it is not implemented in the PV driver as we do need
  * to know when the buffer can be transferred to the back.
@@ -840,14 +815,14 @@ static int sdrv_new_pcm(struct sdev_card_info *card_info,
 	for (i = 0; i < pcm_instance_info->num_pcm_streams_pb; i++) {
 		pcm_instance_info->streams_pb[i].pcm_hw =
 			instance_config->streams_pb[i].pcm_hw;
-		pcm_instance_info->streams_pb[i].index =
-			instance_config->streams_pb[i].index;
+		pcm_instance_info->streams_pb[i].unique_id =
+			instance_config->streams_pb[i].unique_id;
 	}
 	for (i = 0; i < pcm_instance_info->num_pcm_streams_cap; i++) {
 		pcm_instance_info->streams_cap[i].pcm_hw =
 			instance_config->streams_cap[i].pcm_hw;
-		pcm_instance_info->streams_cap[i].index =
-			instance_config->streams_cap[i].index;
+		pcm_instance_info->streams_cap[i].unique_id =
+			instance_config->streams_cap[i].unique_id;
 	}
 
 	ret = snd_pcm_new(card_info->card, instance_config->name,
@@ -1045,7 +1020,7 @@ static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 			break;
 		case XENSND_OP_SET_VOLUME:
 		case XENSND_OP_GET_VOLUME:
-			channel->resp_status = XENSND_RSP_OKAY;
+			channel->resp_status = 0;
 			complete(&channel->completion);
 			break;
 		default:
@@ -1079,7 +1054,7 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 		return;
 	channel->state = EVTCHNL_STATE_DISCONNECTED;
 	/* release all who still waits for response if any */
-	channel->resp_status = -XENSND_RSP_ERROR;
+	channel->resp_status = -EIO;
 	complete_all(&channel->completion);
 	if (channel->irq)
 		unbind_from_irqhandler(channel->irq, channel);
@@ -1220,7 +1195,7 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 
 		pcm_instance = &plat_data->cfg_card.pcm_instances[d];
 		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
-			stream_idx = pcm_instance->streams_pb[s].index;
+			stream_idx = pcm_instance->streams_pb[s].unique_id;
 			ret = xdrv_evtchnl_create(drv_info,
 				&drv_info->evtchnls[stream_idx],
 				pcm_instance->streams_pb[s].xenstore_path);
@@ -1228,7 +1203,7 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 				goto fail;
 		}
 		for (s = 0; s < pcm_instance->num_streams_cap; s++) {
-			stream_idx = pcm_instance->streams_cap[s].index;
+			stream_idx = pcm_instance->streams_cap[s].unique_id;
 			ret = xdrv_evtchnl_create(drv_info,
 				&drv_info->evtchnls[stream_idx],
 				pcm_instance->streams_cap[s].xenstore_path);
@@ -1245,27 +1220,12 @@ fail:
 	return ret;
 }
 
-/* get number of nodes under the path to get number of
- * cards configured or number of devices within the card
- */
-static char **xdrv_cfg_get_num_nodes(const char *path, const char *node,
-		int *num_entries)
-{
-	char **result;
-
-	result = xenbus_directory(XBT_NIL, path, node, num_entries);
-	if (IS_ERR(result)) {
-		*num_entries = 0;
-		return NULL;
-	}
-	return result;
-}
-
 struct CFG_HW_SAMPLE_RATE {
 	const char *name;
 	unsigned int mask;
 	unsigned int value;
 };
+
 static struct CFG_HW_SAMPLE_RATE xdrv_cfg_hw_supported_rates[] = {
 	{ .name = "5512",   .mask = SNDRV_PCM_RATE_5512,   .value = 5512 },
 	{ .name = "8000",   .mask = SNDRV_PCM_RATE_8000,   .value = 8000 },
@@ -1285,6 +1245,7 @@ struct CFG_HW_SAMPLE_FORMAT {
 	const char *name;
 	u64 mask;
 };
+
 static struct CFG_HW_SAMPLE_FORMAT xdrv_cfg_hw_supported_formats[] = {
 	{
 		.name = XENSND_PCM_FORMAT_U8_STR,
@@ -1492,8 +1453,7 @@ static int xdrv_cfg_get_stream_type(const char *path, int index,
 
 	*num_pb = 0;
 	*num_cap = 0;
-	stream_path = kasprintf(GFP_KERNEL, "%s/%s/%d", path,
-		XENSND_PATH_STREAM, index);
+	stream_path = kasprintf(GFP_KERNEL, "%s/%d", path, index);
 	if (!stream_path) {
 		ret = -ENOMEM;
 		goto fail;
@@ -1531,7 +1491,7 @@ static int xdrv_cfg_stream(struct xdrv_info *drv_info,
 	struct cfg_stream *stream;
 
 	stream_path = devm_kasprintf(&drv_info->xb_dev->dev,
-		GFP_KERNEL, "%s/%s/%d", path, XENSND_PATH_STREAM, index);
+		GFP_KERNEL, "%s/%d", path, index);
 	if (!stream_path) {
 		ret = -ENOMEM;
 		goto fail;
@@ -1552,10 +1512,10 @@ static int xdrv_cfg_stream(struct xdrv_info *drv_info,
 		goto fail;
 	}
 	/* assign and publish next unique stream index */
-	stream->index = (*stream_idx)++;
+	stream->unique_id = (*stream_idx)++;
 	stream->xenstore_path = stream_path;
 	ret = xenbus_printf(XBT_NIL, stream->xenstore_path,
-		XENSND_FIELD_STREAM_INDEX, "%d", stream->index);
+		XENSND_FIELD_STREAM_UNIQUE_ID, "%d", stream->unique_id);
 	if (ret < 0)
 		goto fail;
 	xdrv_cfg_pcm_hw(stream->xenstore_path,
@@ -1569,40 +1529,37 @@ fail:
 static int xdrv_cfg_device(struct xdrv_info *drv_info,
 	struct cfg_pcm_instance *pcm_instance,
 	struct snd_pcm_hardware *parent_pcm_hw,
-	const char *path, const char *device_node,
+	const char *path, int node_index,
 	int *stream_idx)
 {
-	char **stream_nodes;
 	char *str;
 	char *device_path;
 	int ret, i, num_streams;
 	int num_pb, num_cap;
 	int cur_pb, cur_cap;
+	char node[3];
 
-	device_path = kasprintf(GFP_KERNEL, "%s/%s", path, device_node);
-	if (!device_path) {
-		ret = -ENOMEM;
-		goto fail;
-	}
+	device_path = kasprintf(GFP_KERNEL, "%s/%d", path, node_index);
+	if (!device_path)
+		return -ENOMEM;
 	str = xenbus_read(XBT_NIL, device_path, XENSND_FIELD_DEVICE_NAME, NULL);
 	if (!IS_ERR(str)) {
 		strncpy(pcm_instance->name, str, sizeof(pcm_instance->name));
 		kfree(str);
 	}
-	if (kstrtoint(device_node, 10, &pcm_instance->device_id)) {
-		dev_err(&drv_info->xb_dev->dev,
-			"Wrong device id at %s\n", device_path);
-		ret = -EINVAL;
-		goto fail;
-	}
+	pcm_instance->device_id = node_index;
 	/* check if PCM HW configuration exists for this device
 	 * and update if so
 	 */
 	xdrv_cfg_pcm_hw(device_path, parent_pcm_hw, &pcm_instance->pcm_hw);
 	/* read streams */
-	stream_nodes = xdrv_cfg_get_num_nodes(device_path, XENSND_PATH_STREAM,
-		&num_streams);
-	kfree(stream_nodes);
+	num_streams = 0;
+	do {
+		sprintf(node, "%d", num_streams);
+		if (!xenbus_exists(XBT_NIL, device_path, node))
+			break;
+		num_streams++;
+	} while (num_streams < VSND_MAX_STREAM);
 	pcm_instance->num_streams_pb = 0;
 	pcm_instance->num_streams_cap = 0;
 	/* get number of playback and capture streams */
@@ -1660,49 +1617,39 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	struct sdev_card_plat_data *plat_data, int *stream_idx)
 {
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
-	char *path = NULL;
-	char **device_nodes = NULL;
 	int ret, num_devices, i;
+	char node[3];
 
-	device_nodes = xdrv_cfg_get_num_nodes(xb_dev->nodename,
-		XENSND_PATH_DEVICE, &num_devices);
+	num_devices = 0;
+	do {
+		sprintf(node, "%d", num_devices);
+		if (!xenbus_exists(XBT_NIL, xb_dev->nodename, node))
+			break;
+		num_devices++;
+	} while (num_devices < SNDRV_PCM_DEVICES);
 	if (!num_devices) {
 		dev_warn(&xb_dev->dev,
-			"No devices configured for sound card at %s/%s\n",
-			xb_dev->nodename, XENSND_PATH_DEVICE);
-		ret = -ENODEV;
-		goto fail;
+			"No devices configured for sound card at %s\n",
+			xb_dev->nodename);
+		return -ENODEV;
 	}
 	xdrv_cfg_card_common(xb_dev->nodename, &plat_data->cfg_card);
 	/* read configuration for devices of this card */
-	plat_data->cfg_card.pcm_instances = devm_kzalloc(
-		&drv_info->xb_dev->dev,
-		num_devices * sizeof(struct cfg_pcm_instance),
-		GFP_KERNEL);
-	if (!plat_data->cfg_card.pcm_instances) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	path = kasprintf(GFP_KERNEL, "%s/" XENSND_PATH_DEVICE,
-		xb_dev->nodename);
-	if (!path) {
-		ret = -ENOMEM;
-		goto fail;
-	}
+	plat_data->cfg_card.pcm_instances = devm_kcalloc(
+		&drv_info->xb_dev->dev, num_devices,
+		sizeof(struct cfg_pcm_instance), GFP_KERNEL);
+	if (!plat_data->cfg_card.pcm_instances)
+		return -ENOMEM;
 	for (i = 0; i < num_devices; i++) {
 		ret = xdrv_cfg_device(drv_info,
 			&plat_data->cfg_card.pcm_instances[i],
 			&plat_data->cfg_card.pcm_hw,
-			path, device_nodes[i], stream_idx);
+			xb_dev->nodename, i, stream_idx);
 		if (ret < 0)
-			goto fail;
+			return ret;
 	}
 	plat_data->cfg_card.num_devices = num_devices;
-	ret = 0;
-fail:
-	kfree(device_nodes);
-	kfree(path);
-	return ret;
+	return 0;
 }
 
 static void xdrv_remove_internal(struct xdrv_info *drv_info)
@@ -1780,14 +1727,15 @@ static void xdrv_sh_buf_free(struct xdrv_shared_buffer_info *buf)
 	xdrv_sh_buf_clear(buf);
 }
 
-/* number of grefs a page can hold with respect to the
+/*
+ * number of grefs a page can hold with respect to the
  * xendispl_page_directory header
  */
 #define XENSND_NUM_GREFS_PER_PAGE ((XEN_PAGE_SIZE - \
 	offsetof(struct xensnd_page_directory, gref)) / \
 	sizeof(grant_ref_t))
 
-void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
+static void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
 	int num_pages_dir)
 {
 	struct xensnd_page_directory *page_dir;
@@ -1815,7 +1763,7 @@ void xdrv_sh_buf_fill_page_dir(struct xdrv_shared_buffer_info *buf,
 	}
 }
 
-int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
+static int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
 	struct xdrv_shared_buffer_info *buf,
 	int num_pages_dir, int num_pages_vbuffer, int num_grefs)
 {
@@ -1852,7 +1800,7 @@ int xdrv_sh_buf_grant_refs(struct xenbus_device *xb_dev,
 	return 0;
 }
 
-int xdrv_sh_buf_alloc_buffers(struct xdrv_shared_buffer_info *buf,
+static int xdrv_sh_buf_alloc_buffers(struct xdrv_shared_buffer_info *buf,
 		int num_pages_dir, int num_pages_vbuffer,
 		int num_grefs)
 {
@@ -1920,12 +1868,12 @@ static int xdrv_be_on_initwait(struct xdrv_info *drv_info)
 	return xdrv_evtchnl_create_all(drv_info, stream_idx);
 }
 
-static int xdrv_be_on_connected(struct xdrv_info *drv_info)
+static inline int xdrv_be_on_connected(struct xdrv_info *drv_info)
 {
 	return sdrv_init(drv_info);
 }
 
-static void xdrv_be_on_disconnected(struct xdrv_info *drv_info)
+static inline void xdrv_be_on_disconnected(struct xdrv_info *drv_info)
 {
 	xdrv_remove_internal(drv_info);
 }
@@ -1940,12 +1888,14 @@ static void xdrv_be_on_changed(struct xenbus_device *xb_dev,
 		"Backend state is %s, front is %s\n",
 		xenbus_strstate(backend_state),
 		xenbus_strstate(xb_dev->state));
+
 	switch (backend_state) {
 	case XenbusStateReconfiguring:
 		/* fall through */
 	case XenbusStateReconfigured:
 		/* fall through */
 	case XenbusStateInitialised:
+		/* fall through */
 		break;
 
 	case XenbusStateInitialising:
@@ -1985,17 +1935,18 @@ static void xdrv_be_on_changed(struct xenbus_device *xb_dev,
 		xenbus_switch_state(xb_dev, XenbusStateConnected);
 		break;
 
+	case XenbusStateClosing:
+		/*
+		 * in this state backend starts freeing resources,
+		 * so let it go into closed state, so we can also
+		 * remove ours
+		 */
+		break;
+
 	case XenbusStateUnknown:
 		/* fall through */
 	case XenbusStateClosed:
 		if (xb_dev->state == XenbusStateClosed)
-			break;
-		if (xb_dev->state == XenbusStateInitialising)
-			break;
-		/* Missed the backend's CLOSING state -- fallthrough */
-	case XenbusStateClosing:
-		/* FIXME: is this check needed? */
-		if (xb_dev->state == XenbusStateClosing)
 			break;
 		mutex_lock(&drv_info->mutex);
 		xdrv_be_on_disconnected(drv_info);

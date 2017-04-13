@@ -177,14 +177,12 @@ static void xen_free_ballooned_pages(struct device *dev,
 static inline int xen_alloc_ballooned_pages(struct device *dev,
 	struct xen_gem_object *xen_obj)
 {
-	UNUSED(dev);
 	return alloc_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
 }
 
 static inline void xen_free_ballooned_pages(struct device *dev,
 	struct xen_gem_object *xen_obj)
 {
-	UNUSED(dev);
 	free_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
 }
 #endif /* CONFIG_DRM_XEN_ZCOPY_CMA */

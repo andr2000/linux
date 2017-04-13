@@ -50,3 +50,12 @@ config DRM_XEN_ZCOPY_WA_SWIOTLB
 	  pages rather combining contiguous chunks. This may
 	  help systems which suffer from SWIOTLB buffer
 	  overflows.
+
+config DRM_XEN_ZCOPY_CMA
+	bool "Use CMA to allocate buffers"
+	depends on DRM_XEN_ZCOPY=y
+	help
+	  Use CMA to allocate buffers.
+	  This is only available for built-in driver, because
+	  there is a dependency on DMA ops which are only available
+	  for built-in code.

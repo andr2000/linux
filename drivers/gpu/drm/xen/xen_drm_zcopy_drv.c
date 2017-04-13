@@ -22,7 +22,7 @@
 #include <linux/dma-buf.h>
 #include <linux/platform_device.h>
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 #include <asm/xen/hypercall.h>
 #include <xen/interface/memory.h>
 #include <xen/page.h>
@@ -46,7 +46,7 @@ struct xen_gem_object {
 	grant_ref_t *grefs;
 	/* these are pages from Xen balloon for allocated Xen GEM object */
 	struct page **pages;
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 	void *vaddr;
 	dma_addr_t dev_bus_addr;
 #endif
@@ -62,7 +62,7 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
 
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 static int xen_alloc_ballooned_pages(struct device *dev,
 	struct xen_gem_object *xen_obj)
 {
@@ -187,7 +187,7 @@ static inline void xen_free_ballooned_pages(struct device *dev,
 	UNUSED(dev);
 	free_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
 }
-#endif /* CONFIG_DRM_GEM_CMA_HELPER */
+#endif /* CONFIG_DRM_XEN_ZCOPY_CMA */
 
 #define xen_page_to_vaddr(page) \
 	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
@@ -689,7 +689,7 @@ static int xen_probe(struct platform_device *pdev)
 	int ret;
 
 	DRM_INFO("Creating %s\n", xen_driver.desc);
-#ifdef CONFIG_DRM_GEM_CMA_HELPER
+#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 	arch_setup_dma_ops(&pdev->dev, 0, 0, NULL, false);
 #endif
 	drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);

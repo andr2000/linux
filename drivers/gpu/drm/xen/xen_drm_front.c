@@ -922,6 +922,7 @@ static void xdrv_be_on_changed(struct xenbus_device *xb_dev,
 
 	DRM_DEBUG("Backend state is %s, front is %s\n",
 		xenbus_strstate(backend_state), xenbus_strstate(xb_dev->state));
+
 	switch (backend_state) {
 	case XenbusStateReconfiguring:
 		/* fall through */
@@ -968,17 +969,18 @@ static void xdrv_be_on_changed(struct xenbus_device *xb_dev,
 		xenbus_switch_state(xb_dev, XenbusStateConnected);
 		break;
 
+	case XenbusStateClosing:
+		/*
+		 * in this state backend starts freeing resources,
+		 * so let it go into closed state, so we can also
+		 * remove ours
+		 */
+		break;
+
 	case XenbusStateUnknown:
 		/* fall through */
 	case XenbusStateClosed:
 		if (xb_dev->state == XenbusStateClosed)
-			break;
-		if (xb_dev->state == XenbusStateInitialising)
-			break;
-		/* Missed the backend's CLOSING state -- fall-through */
-	case XenbusStateClosing:
-		/* FIXME: is this check needed? */
-		if (xb_dev->state == XenbusStateClosing)
 			break;
 		mutex_lock(&drv_info->mutex);
 		xdrv_be_on_disconnected(drv_info);

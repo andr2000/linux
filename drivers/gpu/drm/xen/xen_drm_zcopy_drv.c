@@ -289,8 +289,8 @@ static int xen_from_refs_unmap(struct device *dev,
 			GNTMAP_host_map,
 #endif
 			xen_obj->map_handles[i]);
-		unmap_ops[i].dev_bus_addr = __pfn_to_mfn(page_to_pfn(
-			xen_obj->pages[i]));
+		unmap_ops[i].dev_bus_addr = __pfn_to_phys(__pfn_to_mfn(
+			page_to_pfn(xen_obj->pages[i])));
 	}
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, xen_obj->pages,
 		xen_obj->num_pages));

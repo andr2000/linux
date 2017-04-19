@@ -223,6 +223,7 @@ config SND_AC97_POWER_SAVE_DEFAULT
 config SND_XEN_FRONTEND
 	tristate "Xen virtual sound front-end driver support"
 	depends on SND_PCM && XEN
+	select XEN_XENBUS_FRONTEND
 	default n
 	help
 	  This driver implements a front-end for the Xen virtual

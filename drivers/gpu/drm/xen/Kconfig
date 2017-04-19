@@ -11,6 +11,7 @@ config DRM_XEN_FRONTEND
 	depends on DRM
 	select DRM_KMS_HELPER
 	select VIDEOMODE_HELPERS
+	select XEN_XENBUS_FRONTEND
 	help
 	  Choose this option if you want to enable a paravirtualized
 	  front-end DRM driver for Xen guest OSes.

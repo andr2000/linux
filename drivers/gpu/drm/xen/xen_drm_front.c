@@ -853,7 +853,25 @@ fail:
 static int xdrv_remove(struct xenbus_device *dev)
 {
 	struct xdrv_info *drv_info = dev_get_drvdata(&dev->dev);
+	int to = 10;
 
+	/*
+	 * FIXME: on driver removal it is disconnected from XenBus,
+	 * so no backend state change events come in via .otherend_changed
+	 * callback. This prevents us from exiting gracefully, e.g.
+	 * signaling the backend to free event channels, waiting for its
+	 * state change to closed and cleaning at our end.
+	 * Workaround: read backend's state manually
+	 */
+	xenbus_switch_state(dev, XenbusStateClosing);
+	while ((xenbus_read_unsigned(drv_info->xb_dev->otherend,
+		"state", XenbusStateUnknown) != XenbusStateInitWait) && to--)
+		msleep(10);
+	if (!to)
+		DRM_ERROR("Backend state is %s while removing driver\n",
+			xenbus_strstate(xenbus_read_unsigned(
+					drv_info->xb_dev->otherend,
+					"state", XenbusStateUnknown)));
 	mutex_lock(&drv_info->mutex);
 	xdrv_remove_internal(drv_info);
 	mutex_unlock(&drv_info->mutex);

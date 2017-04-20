@@ -794,15 +794,13 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
 	int ret, i;
 
-	if (xenbus_read_unsigned(drv_info->xb_dev->otherend,
+	if (xenbus_read_unsigned(drv_info->xb_dev->nodename,
 			XENDISPL_FIELD_BE_ALLOC, 0)) {
 		DRM_INFO("Backend can provide dumb buffers\n");
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
 #else
-#if 0
 		plat_data->be_alloc = true;
-#endif
 #endif
 	}
 	plat_data->num_connectors = 0;

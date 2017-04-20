@@ -48,7 +48,7 @@ enum xdrv_evtchnl_state {
 };
 
 enum xdrv_evtchnl_type {
-	EVTCHNL_TYPE_CTRL,
+	EVTCHNL_TYPE_REQ,
 	EVTCHNL_TYPE_EVT,
 };
 
@@ -521,14 +521,14 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 {
 	unsigned long page = 0;
 
-	if (channel->type == EVTCHNL_TYPE_CTRL)
+	if (channel->type == EVTCHNL_TYPE_REQ)
 		page = (unsigned long)channel->u.req.ring.sring;
 	else if (channel->type == EVTCHNL_TYPE_EVT)
 		page = (unsigned long)channel->u.evt.page;
 	if (!page)
 		return;
 	channel->state = EVTCHNL_STATE_DISCONNECTED;
-	if (channel->type == EVTCHNL_TYPE_CTRL) {
+	if (channel->type == EVTCHNL_TYPE_REQ) {
 		/* release all who still waits for response if any */
 		channel->u.req.resp_status = -EIO;
 		complete_all(&channel->u.req.completion);
@@ -540,7 +540,7 @@ static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 	/* End access and free the pages */
 	if (channel->gref != GRANT_INVALID_REF)
 		gnttab_end_foreign_access(channel->gref, 0, page);
-	if (channel->type == EVTCHNL_TYPE_CTRL)
+	if (channel->type == EVTCHNL_TYPE_REQ)
 		channel->u.req.ring.sring = NULL;
 	else
 		channel->u.evt.page = NULL;
@@ -584,7 +584,7 @@ static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info, int index,
 		ret = -ENOMEM;
 		goto fail;
 	}
-	if (type == EVTCHNL_TYPE_CTRL) {
+	if (type == EVTCHNL_TYPE_REQ) {
 		struct xen_displif_sring *sring;
 
 		init_completion(&evt_channel->u.req.completion);
@@ -679,7 +679,7 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info)
 	}
 	for (conn = 0; conn < plat_data->num_connectors; conn++) {
 		ret = xdrv_evtchnl_alloc(drv_info, conn,
-			&drv_info->evt_pairs[conn].req, EVTCHNL_TYPE_CTRL);
+			&drv_info->evt_pairs[conn].req, EVTCHNL_TYPE_REQ);
 		if (ret < 0) {
 			DRM_ERROR("Error allocating control channel\n");
 			goto fail;

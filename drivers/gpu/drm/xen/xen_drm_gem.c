@@ -347,7 +347,7 @@ int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	/*
 	 * vm_operations_struct.fault handler will be called if CPU access
 	 * to VM is here. For GPUs this isn't the case, because CPU
-	 * dpesn't touch the memory. Insert pages now, so both CPU and GPU are
+	 * doesn't touch the memory. Insert pages now, so both CPU and GPU are
 	 * happy.
 	 * FIXME: as we insert all the pages now then no .fault handler must
 	 * be called, so don't provide one

@@ -97,10 +97,6 @@ struct xdrv_info {
 
 	/* dumb buffers */
 	struct list_head dumb_buf_list;
-
-#if defined(CONFIG_X86)
-	struct dma_map_ops dma_map_ops;
-#endif
 };
 
 static inline void xdrv_evtchnl_flush(
@@ -318,59 +314,14 @@ static struct xendispl_front_ops xendispl_front_funcs = {
 	.drm_last_close = xdrv_drm_unload,
 };
 
-#if defined(CONFIG_X86)
-/*
- * Unprivileged guests (i.e. ones without hardware) are not permitted to
- * make mappings with anything other than a writeback memory type
- * So, we need to override mmap used by the kernel and make changes
- * to vma->vm_page_prot
- * N.B. this is almost the original dma_common_mmap altered
- */
-static int xdrv_mmap(struct device *dev, struct vm_area_struct *vma,
-	void *cpu_addr, dma_addr_t dma_addr, size_t size, unsigned long attrs)
+static int ddrv_probe(struct platform_device *pdev)
 {
-	int ret = -ENXIO;
-#if defined(CONFIG_MMU) && !defined(CONFIG_ARCH_NO_COHERENT_DMA_MMAP)
-	unsigned long user_count = vma_pages(vma);
-	unsigned long count = PAGE_ALIGN(size) >> PAGE_SHIFT;
-	unsigned long pfn = page_to_pfn(virt_to_page(cpu_addr));
-	unsigned long off = vma->vm_pgoff;
-
-	vma->vm_page_prot = PAGE_SHARED;
-
-	if (dma_mmap_from_coherent(dev, vma, cpu_addr, size, &ret))
-		return ret;
-	if (off < count && user_count <= (count - off)) {
-		ret = remap_pfn_range(vma, vma->vm_start,
-			pfn + off, user_count << PAGE_SHIFT,
-			vma->vm_page_prot);
-	}
-#endif	/* CONFIG_MMU && !CONFIG_ARCH_NO_COHERENT_DMA_MMAP */
-	return ret;
-}
-#endif
-
-static void xdrv_setup_dma_map_ops(struct xdrv_info *xdrv_info,
-	struct device *dev)
-{
-#if defined(CONFIG_X86)
-	if (xdrv_info->dma_map_ops.mmap != xdrv_mmap) {
-		xdrv_info->dma_map_ops = *(get_dma_ops(dev));
-		xdrv_info->dma_map_ops.mmap = xdrv_mmap;
-	}
-	dev->archdata.dma_ops = &xdrv_info->dma_map_ops;
-#endif
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
+	struct device *dev = &pdev->dev;
+
 	/* make sure we have DMA ops set up, so no dummy ops are in use */
 	arch_setup_dma_ops(dev, 0, *dev->dma_mask, NULL, false);
 #endif
-}
-
-static int ddrv_probe(struct platform_device *pdev)
-{
-	struct xendrm_plat_data *platdata = dev_get_platdata(&pdev->dev);
-
-	xdrv_setup_dma_map_ops(platdata->xdrv_info, &pdev->dev);
 	return xendrm_probe(pdev, &xendispl_front_funcs);
 }
 

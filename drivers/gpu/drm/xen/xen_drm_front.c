@@ -229,7 +229,7 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	struct xdrv_evtchnl_info *evtchnl;
 	struct xendispl_req *req;
 	unsigned long flags;
-	bool ext_buffer;
+	bool be_alloc;
 	int ret;
 
 	evtchnl = &drv_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
@@ -238,12 +238,12 @@ int xendispl_front_dbuf_destroy(struct xdrv_info *drv_info,
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = ddrv_be_prepare_req(evtchnl, XENDISPL_OP_DBUF_DESTROY);
 	req->op.dbuf_destroy.dbuf_cookie = dumb_cookie;
-	ext_buffer = drv_info->cfg_plat_data.be_alloc;
-	if (ext_buffer)
+	be_alloc = drv_info->cfg_plat_data.be_alloc;
+	if (be_alloc)
 		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
 			dumb_cookie);
 	ret = ddrv_be_stream_do_io(evtchnl, req, flags);
-	if (!ext_buffer)
+	if (!be_alloc)
 		xdrv_shbuf_free_by_dumb_cookie(&drv_info->dumb_buf_list,
 			dumb_cookie);
 	return ret;

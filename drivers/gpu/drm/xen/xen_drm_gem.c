@@ -327,8 +327,9 @@ static inline void xendrm_gem_mmap_obj(struct xen_gem_object *xen_obj,
 	 */
 	vma->vm_flags &= ~VM_PFNMAP;
 	vma->vm_flags |= VM_MIXEDMAP;
+	vma->vm_pgoff = 0;
 	/* this is the only way we can map in unprivileged domain */
-	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	vma->vm_page_prot = PAGE_SHARED;
 }
 
 int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -339,7 +340,7 @@ int xendrm_gem_mmap(struct file *filp, struct vm_area_struct *vma)
 	int ret, i;
 
 	ret = drm_gem_mmap(filp, vma);
-	if (ret)
+	if (ret < 0)
 		return ret;
 	gem_obj = vma->vm_private_data;
 	xen_obj = to_xen_gem_obj(gem_obj);

@@ -144,8 +144,10 @@ static int xdrv_shbuf_be_alloc_unmap(struct xdrv_shared_buffer_info *buf)
 
 	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops),
 		GFP_KERNEL);
-	if (!unmap_ops)
+	if (!unmap_ops) {
+		DRM_ERROR("Failed to get memory while unmapping\n");
 		return -ENOMEM;
+	}
 	for (i = 0; i < buf->num_pages; i++) {
 		phys_addr_t addr;
 

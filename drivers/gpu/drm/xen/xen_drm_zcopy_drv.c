@@ -226,11 +226,9 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		phys_addr_t addr;
 
-		/* Map the grant entry for access by host CPUs. */
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_map_op(&map_ops[i], addr,
 #if defined(CONFIG_X86)
-			/* Map the grant entry for access by I/O devices. */
 			GNTMAP_host_map | GNTMAP_device_map,
 #else
 			GNTMAP_host_map,
@@ -283,7 +281,6 @@ static int xen_from_refs_unmap(struct device *dev,
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr,
 #if defined(CONFIG_X86)
-			/* Map the grant entry for access by I/O devices. */
 			GNTMAP_host_map | GNTMAP_device_map,
 #else
 			GNTMAP_host_map,
@@ -556,6 +553,17 @@ static int xen_ioctl_from_refs(struct drm_device *dev,
 		(struct drm_xen_zcopy_dumb_from_refs *)data;
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
+
+	/*
+	 * FIXME: this kind of mapping will need extra care on platforms where
+	 * XENFEAT_auto_translated_physmap == 0 and user-space needs
+	 * to access these pages (see gntdev driver).
+	 * As we only use the pages to feed the real display HW
+	 * (no mmap) ignoring XENFEAT_auto_translated_physmap is ok
+	 */
+	if (!xen_feature(XENFEAT_auto_translated_physmap))
+		DRM_DEBUG("Buffer must not be accessed by user-space:"\
+			"platform has no XENFEAT_auto_translated_physmap\n");
 
 	if (!req->num_grefs || !req->grefs)
 		return -EINVAL;

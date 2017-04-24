@@ -751,7 +751,16 @@ static int xdrv_cfg_card(struct xdrv_info *drv_info,
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 		DRM_WARN("Cannot use backend's buffers with Xen CMA enabled\n");
 #else
-		plat_data->be_alloc = true;
+		/*
+		 * FIXME: this mapping will need extra care in case of
+		 * XENFEAT_auto_translated_physmap == 0 (see gntdev driver).
+		 * For now, only support BE allocated buffers on platforms,
+		 * that do auto translation
+		 */
+		if (!xen_feature(XENFEAT_auto_translated_physmap))
+			DRM_WARN("Cannot use backend's buffers on this platform\n");
+		else
+			plat_data->be_alloc = true;
 #endif
 	}
 	plat_data->num_connectors = 0;

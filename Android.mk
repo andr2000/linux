@@ -81,7 +81,12 @@ TARGET_KERNEL_MODULES: $(KERNEL_TARGET_BINARY)
 
 $(TARGET_KERNEL_EXT_MODULES) : TARGET_KERNEL_MODULES
 
-$(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES)
-	cp $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz $(PRODUCT_OUT)/kernel
+$(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES) mkdtimg
+	cp -v $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz $(PRODUCT_OUT)/kernel
+	mkdtimg create $(PRODUCT_OUT)/dtb.img --page_size=4096 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x.dtb --id=0x779510 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x.dtb --id=0x779511 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-x.dtb --id=0x779520 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779610
 
 endif # TARGET_PREBUILT_KERNEL

@@ -37,6 +37,10 @@ ifeq ($(TARGET_KERNEL_MODULES_OUT),)
 $(warning "TARGET_KERNEL_MODULES_OUT is not set, default path '$(KERNEL_MODULES_OUT)' used")
 endif
 
+ifeq ($(TARGET_USES_HIGHEST_DPI),true)
+DTB_FOOTER := -uhd
+endif
+
 define strip-modules
     mdpath=`find $(KERNEL_MODULES_OUT) -type f -name modules.order`; \
     if [ "$$mdpath" != "" ];then \
@@ -84,8 +88,8 @@ $(TARGET_KERNEL_EXT_MODULES) : TARGET_KERNEL_MODULES
 $(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES) mkdtimg
 	cp -v $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.gz $(PRODUCT_OUT)/kernel
 	mkdtimg create $(PRODUCT_OUT)/dtb.img --page_size=4096 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x.dtb --id=0x779510 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x.dtb --id=0x779511 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779510 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779511 \
 		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-x.dtb --id=0x779520 \
 		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779610
 

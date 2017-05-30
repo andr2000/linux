@@ -51,12 +51,6 @@ module_param_array(ptr_size, int, NULL, 0444);
 MODULE_PARM_DESC(ptr_size,
 	"Pointing device width, height in pixels (default 800,600)");
 
-enum { KPARAM_MT_X, KPARAM_MT_Y, KPARAM_MT_CNT };
-static int mtouch_size[KPARAM_MT_CNT] = { XENFB_WIDTH, XENFB_HEIGHT };
-module_param_array(mtouch_size, int, NULL, 0444);
-MODULE_PARM_DESC(ptr_size,
-	"Multi-touch device width, height in pixels (default 800,600)");
-
 static int xenkbd_remove(struct xenbus_device *);
 static int xenkbd_connect_backend(struct xenbus_device *, struct xenkbd_info *);
 static void xenkbd_disconnect_backend(struct xenkbd_info *);
@@ -114,8 +108,8 @@ static irqreturn_t input_handler(int rq, void *dev_id)
 			dev = info->mtouch;
 			if (unlikely(!dev))
 				break;
-			if (unlikely(event->mtouch.contact_id !=
-					info->mtouch_cur_contact_id)) {
+			if (event->mtouch.contact_id !=
+					info->mtouch_cur_contact_id) {
 				info->mtouch_cur_contact_id =
 					event->mtouch.contact_id;
 				input_mt_slot(dev, event->mtouch.contact_id);
@@ -327,10 +321,15 @@ static int xenkbd_probe(struct xenbus_device *dev,
 		input_set_abs_params(mtouch, ABS_MT_PRESSURE,
 				     0, 255, 0, 0);
 
-		input_mt_init_slots(mtouch, num_cont, 0);
+		ret = input_mt_init_slots(mtouch, num_cont,
+				INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
+		if (ret) {
+			input_free_device(mtouch);
+			xenbus_dev_fatal(info->xbdev, ret,
+					 "input_mt_init_slots");
+			goto error;
+		}
 
-		mtouch_size[KPARAM_MT_X] = width;
-		mtouch_size[KPARAM_MT_Y] = height;
 		info->mtouch_cur_contact_id = -1;
 
 		ret = input_register_device(mtouch);

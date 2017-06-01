@@ -91,6 +91,8 @@ $(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES) mkdtimg
 		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779510 \
 		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779511 \
 		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-x.dtb --id=0x779520 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779610
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779610 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779611 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779620
 
 endif # TARGET_PREBUILT_KERNEL

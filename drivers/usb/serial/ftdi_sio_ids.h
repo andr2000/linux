@@ -1512,3 +1512,9 @@
 #define CHETCO_SEASMART_DISPLAY_PID	0xA5AD /* SeaSmart NMEA2000 Display */
 #define CHETCO_SEASMART_LITE_PID	0xA5AE /* SeaSmart Lite USB Adapter */
 #define CHETCO_SEASMART_ANALOG_PID	0xA5AF /* SeaSmart Analog Adapter */
+
+/*
+ * IOData devices
+ */
+#define IODATA_VID			0x04bb
+#define IODATA_CUSTOM_GPS_PID		0x093c /* Custom USB GPS device */

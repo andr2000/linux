@@ -1015,6 +1015,8 @@ static const struct usb_device_id id_table_combined[] = {
 	{ USB_DEVICE(WICED_VID, WICED_USB20706V2_PID) },
 	{ USB_DEVICE(TI_VID, TI_CC3200_LAUNCHPAD_PID),
 		.driver_info = (kernel_ulong_t)&ftdi_jtag_quirk },
+	/* IOData devices */
+	{ USB_DEVICE(IODATA_VID, IODATA_CUSTOM_GPS_PID) },
 	{ }					/* Terminating entry */
 };
 

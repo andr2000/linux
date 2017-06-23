@@ -1,0 +1,2 @@
+git send-email --to xen-devel@lists.xenproject.org --to linux-kernel@vger.kernel.org --cc=joculator@gmail.com --cc=al1img@gmail.com --cc=vlad.babchuk@gmail.com --cc=andrii.anisov@gmail.com --cc=olekstysh@gmail.com --cc=andr2000@gmail.com -to dmitry.torokhov@gmail.com community/kbd/v1
+community/kbd/v1/0001-xen-input-add-multi-touch-support.patch

@@ -13,6 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Device tree ID <board id><SiP><revision>
+# Board ID:
+# 0x00 Salvator-X
+# 0x02 StarterKit Pro
+# 0x04 Salvator-XS
+# 0x05 Salvator-MS
+# 0x0A Salvator-M
+# 0x0B StarterKit Premier
+
+
 # Android makefile to build kernel as a part of Android Build
 ifeq ($(TARGET_PREBUILT_KERNEL),)
 
@@ -88,11 +98,15 @@ $(TARGET_KERNEL_EXT_MODULES) : TARGET_KERNEL_MODULES
 $(PRODUCT_OUT)/kernel: $(TARGET_KERNEL_EXT_MODULES) mkdtimg
 	cp -v $(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/Image.lz4 $(PRODUCT_OUT)/kernel
 	mkdtimg create $(PRODUCT_OUT)/dtb.img --page_size=4096 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779510 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x779511 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-x.dtb --id=0x779520 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779610 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779611 \
-		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x779620
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x00779510 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-es1-salvator-x$(DTB_FOOTER).dtb --id=0x00779511 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-x.dtb --id=0x00779520 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x00779610 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x00779611 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-x.dtb --id=0x00779620 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7795-salvator-xs.dtb --id=0x04779520 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-xs.dtb --id=0x04779610 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-xs.dtb --id=0x04779611 \
+		$(KERNEL_OUT)/arch/$(TARGET_ARCH)/boot/dts/renesas/r8a7796-salvator-xs.dtb --id=0x04779620
 
 endif # TARGET_PREBUILT_KERNEL

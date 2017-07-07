@@ -42,6 +42,7 @@
 	aliases {
 		serial0 = &scif2;
 		serial1 = &scif1;
+		serial2 = &hscif0;
 		ethernet0 = &avb;
 	};
 
@@ -490,6 +491,11 @@
 		function = "scif_clk";
 	};
 
+	hscif0_pins: hscif0 {
+		groups = "hscif0_data", "hscif0_ctrl";
+		function = "hscif0";
+	};
+
 	hscif1_pins: hscif1 {
 		groups = "hscif1_data_a", "hscif1_ctrl_a";
 		function = "hscif1";
@@ -623,6 +629,13 @@
 
 &scif_clk {
 	clock-frequency = <14745600>;
+	status = "okay";
+};
+
+&hscif0 {
+	pinctrl-0 = <&hscif0_pins>;
+	pinctrl-names = "default";
+	uart-has-rtscts;
 	status = "okay";
 };
 

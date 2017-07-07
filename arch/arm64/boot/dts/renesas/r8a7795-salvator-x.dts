@@ -248,20 +248,42 @@
 		clock-frequency = <11289600>;
 	};
 
-	rsnd_ak4613: sound {
+	rcar_audio: sound {
 		compatible = "simple-audio-card";
 
-		simple-audio-card,format = "left_j";
-		simple-audio-card,bitclock-master = <&sndcpu>;
-		simple-audio-card,frame-master = <&sndcpu>;
+		simple-audio-card,name = "R-CAR Audio Card";
 
-		sndcpu: simple-audio-card,cpu {
-			sound-dai = <&rcar_sound>;
+		simple-audio-card,dai-link@0 {
+			format = "left_j";
+			bitclock-master = <&sndcpu0>;
+			frame-master = <&sndcpu0>;
+
+			sndcpu0: cpu {
+				sound-dai = <&rcar_sound 0>;
+			};
+			codec {
+				sound-dai = <&ak4613>;
+			};
 		};
 
-		sndcodec: simple-audio-card,codec {
-			sound-dai = <&ak4613>;
+		simple-audio-card,dai-link@1 {
+			format = "left_j";
+			bitclock-master = <&sndcpu1>;
+			frame-master = <&sndcpu1>;
+
+			sndcpu1: cpu {
+				sound-dai = <&rcar_sound 1>;
+			};
+			codec {
+				sound-dai = <&bt_sound>;
+			};
 		};
+	};
+
+	bt_sound: bt_sco_sound {
+		#sound-dai-cells = <0>;
+		compatible = "linux,bt-sco";
+		status = "okay";
 	};
 
 	vga-encoder {
@@ -668,7 +690,8 @@
 	};
 
 	sound_pins: sound {
-		groups = "ssi01239_ctrl", "ssi0_data", "ssi1_data_a";
+		groups = "ssi01239_ctrl", "ssi0_data", "ssi1_data_a",
+				 "ssi78_ctrl", "ssi7_data", "ssi8_data";
 		function = "ssi";
 	};
 
@@ -856,8 +879,8 @@
 	pinctrl-0 = <&sound_pins &sound_clk_pins>;
 	pinctrl-names = "default";
 
-	/* Single DAI */
-	#sound-dai-cells = <0>;
+	/* Multiple DAI */
+	#sound-dai-cells = <1>;
 
 	/* audio_clkout0/1/2/3 */
 	#clock-cells = <1>;
@@ -889,6 +912,10 @@
 		dai0 {
 			playback = <&ssi0>;
 			capture  = <&ssi1>;
+		};
+		dai1 {
+			playback = <&ssi8>;
+			capture  = <&ssi7>;
 		};
 	};
 };

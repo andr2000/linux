@@ -35,6 +35,7 @@
 #include "r8a7796.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
+#include <dt-bindings/net/rfkill-regulator.h>
 
 / {
 	model = "Renesas Salvator-X board based on r8a7796";
@@ -192,6 +193,28 @@
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
 		clock-frequency = <24576000>;
+	};
+
+	bt_reg: regulator-bt {
+		compatible = "regulator-fixed";
+
+		regulator-name = "BT_REG";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		gpio = <&pca9654 2 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	wlan_reg: regulator-wlan {
+		compatible = "regulator-fixed";
+
+		regulator-name = "WLAN_REG";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		gpio = <&pca9654 1 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
 	};
 
 	audio_clkout: audio_clkout {
@@ -371,6 +394,20 @@
 		regulator-max-microvolt = <5000000>;
 		gpio = <&gpio6 16 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
+	};
+
+	bt-rfkill {
+		compatible = "rfkill-regulator";
+		label = "BT";
+		type = <RFKILL_TYPE_BLUETOOTH>;
+		vrfkill-supply = <&bt_reg>;
+	};
+
+	wlan-rfkill {
+		compatible = "rfkill-regulator";
+		label = "WLAN";
+		type = <RFKILL_TYPE_WLAN>;
+		vrfkill-supply = <&wlan_reg>;
 	};
 };
 
@@ -794,6 +831,13 @@
 			#clock-cells = <0>;
 			clocks = <&du_dotclkin2>;
 		};
+	};
+
+	pca9654: pca9654@20 {
+		compatible = "onsemi,pca9654";
+		reg = <0x20>;
+		gpio-controller;
+		#gpio-cells = <2>;
 	};
 };
 

@@ -544,6 +544,8 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	size_t len = 0;
 
 	DBG(cdev, "mtp_read(%zu)\n", count);
+	if (!cdev || !cdev->gadget)
+		return -EINVAL;
 
 	/* we will block until we're online */
 	DBG(cdev, "mtp_read: waiting for online state\n");

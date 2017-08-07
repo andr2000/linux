@@ -1,0 +1,2 @@
+git format-patch -11 -o community/snd/v0/ --cover-letter --subject-prefix="PATCH" snd_upstream_v0
+git send-email --to alsa-devel@alsa-project.org --to xen-devel@lists.xen.org --to linux-kernel@vger.kernel.org --cc=perex@perex.cz --cc=tiwai@suse.com --cc=andr2000@gmail.com community/snd/v0

@@ -1,0 +1,58 @@
+From 121aba1f67ffcd1f82881bdf5d10575010458b74 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 1 Aug 2017 10:42:49 +0300
+Subject: [PATCH 11/11] ALSA: vsnd: Introduce Kconfig option to enable Xen PV
+ sound
+
+Introduce Kconfig option to enable Xen para-virtualized sound
+frontend driver. Also add sound frontend to the Makefile.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ sound/drivers/Kconfig  | 12 ++++++++++++
+ sound/drivers/Makefile |  2 ++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/sound/drivers/Kconfig b/sound/drivers/Kconfig
+index 7144cc36e8ae..6b8fa6110ca3 100644
+--- a/sound/drivers/Kconfig
++++ b/sound/drivers/Kconfig
+@@ -235,4 +235,16 @@ config SND_AC97_POWER_SAVE_DEFAULT
+ 
+ 	  See SND_AC97_POWER_SAVE for more details.
+ 
++config SND_XEN_FRONTEND
++	tristate "Xen virtual sound front-end driver"
++	depends on SND_PCM && XEN
++	select XEN_XENBUS_FRONTEND
++	default n
++	help
++	  This driver implements a front-end for the Xen
++	  para-virtualized sound.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called snd-xen-front.
++
+ endif	# SND_DRIVERS
+diff --git a/sound/drivers/Makefile b/sound/drivers/Makefile
+index 1a8440c8b138..70ed920a030f 100644
+--- a/sound/drivers/Makefile
++++ b/sound/drivers/Makefile
+@@ -11,6 +11,7 @@ snd-portman2x4-objs := portman2x4.o
+ snd-serial-u16550-objs := serial-u16550.o
+ snd-virmidi-objs := virmidi.o
+ snd-ml403-ac97cr-objs := ml403-ac97cr.o pcm-indirect2.o
++snd-xen-front-objs := xen-front.o
+ 
+ # Toplevel Module Dependency
+ obj-$(CONFIG_SND_DUMMY) += snd-dummy.o
+@@ -21,5 +22,6 @@ obj-$(CONFIG_SND_MTPAV) += snd-mtpav.o
+ obj-$(CONFIG_SND_MTS64) += snd-mts64.o
+ obj-$(CONFIG_SND_PORTMAN2X4) += snd-portman2x4.o
+ obj-$(CONFIG_SND_ML403_AC97CR) += snd-ml403-ac97cr.o
++obj-$(CONFIG_SND_XEN_FRONTEND) += snd-xen-front.o
+ 
+ obj-$(CONFIG_SND) += opl3/ opl4/ mpu401/ vx/ pcsp/
+-- 
+2.7.4
+

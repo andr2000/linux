@@ -357,7 +357,7 @@ static inline int sdrv_be_stream_wait_io(struct xdrv_evtchnl_info *evtchnl)
 			&evtchnl->completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0)
 		return -ETIMEDOUT;
-	return 0;
+	return evtchnl->resp_status;
 }
 
 static int sdrv_be_stream_open(struct snd_pcm_substream *substream,

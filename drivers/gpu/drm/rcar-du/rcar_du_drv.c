@@ -536,11 +536,6 @@ static int rcar_du_probe(struct platform_device *pdev)
 	int ret;
 	const struct soc_device_attribute *attr;
 
-	if (np == NULL) {
-		dev_err(&pdev->dev, "no device tree node\n");
-		return -ENODEV;
-	}
-
 	/* Allocate and initialize the R-Car device structure. */
 	rcdu = devm_kzalloc(&pdev->dev, sizeof(*rcdu), GFP_KERNEL);
 	if (rcdu == NULL)

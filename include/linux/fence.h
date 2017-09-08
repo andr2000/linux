@@ -75,7 +75,8 @@ struct fence {
 	struct rcu_head rcu;
 	struct list_head cb_list;
 	spinlock_t *lock;
-	unsigned context, seqno;
+	u64 context;
+	unsigned seqno;
 	unsigned long flags;
 	ktime_t timestamp;
 	int status;
@@ -178,10 +179,20 @@ struct fence_ops {
 };
 
 void fence_init(struct fence *fence, const struct fence_ops *ops,
-		spinlock_t *lock, unsigned context, unsigned seqno);
+		spinlock_t *lock, u64 context, unsigned seqno);
 
 void fence_release(struct kref *kref);
 void fence_free(struct fence *fence);
+
+/**
+ * fence_put - decreases refcount of the fence
+ * @fence:	[in]	fence to reduce refcount of
+ */
+static inline void fence_put(struct fence *fence)
+{
+	if (fence)
+		kref_put(&fence->refcount, fence_release);
+}
 
 /**
  * fence_get - increases refcount of the fence
@@ -211,13 +222,49 @@ static inline struct fence *fence_get_rcu(struct fence *fence)
 }
 
 /**
- * fence_put - decreases refcount of the fence
- * @fence:	[in]	fence to reduce refcount of
+ * fence_get_rcu_safe  - acquire a reference to an RCU tracked fence
+ * @fence:	[in]	pointer to fence to increase refcount of
+ *
+ * Function returns NULL if no refcount could be obtained, or the fence.
+ * This function handles acquiring a reference to a fence that may be
+ * reallocated within the RCU grace period (such as with SLAB_DESTROY_BY_RCU),
+ * so long as the caller is using RCU on the pointer to the fence.
+ *
+ * An alternative mechanism is to employ a seqlock to protect a bunch of
+ * fences, such as used by struct reservation_object. When using a seqlock,
+ * the seqlock must be taken before and checked after a reference to the
+ * fence is acquired (as shown here).
+ *
+ * The caller is required to hold the RCU read lock.
  */
-static inline void fence_put(struct fence *fence)
+static inline struct fence *fence_get_rcu_safe(struct fence * __rcu *fencep)
 {
-	if (fence)
-		kref_put(&fence->refcount, fence_release);
+	do {
+		struct fence *fence;
+
+		fence = rcu_dereference(*fencep);
+		if (!fence || !fence_get_rcu(fence))
+			return NULL;
+
+		/* The atomic_inc_not_zero() inside fence_get_rcu()
+		 * provides a full memory barrier upon success (such as now).
+		 * This is paired with the write barrier from assigning
+		 * to the __rcu protected fence pointer so that if that
+		 * pointer still matches the current fence, we know we
+		 * have successfully acquire a reference to it. If it no
+		 * longer matches, we are holding a reference to some other
+		 * reallocated pointer. This is possible if the allocator
+		 * is using a freelist like SLAB_DESTROY_BY_RCU where the
+		 * fence remains valid for the RCU grace period, but it
+		 * may be reallocated. When using such allocators, we are
+		 * responsible for ensuring the reference we get is to
+		 * the right fence, as below.
+		 */
+		if (fence == rcu_access_pointer(*fencep))
+			return rcu_pointer_handoff(fence);
+
+		fence_put(fence);
+	} while (1);
 }
 
 int fence_signal(struct fence *fence);
@@ -352,27 +399,27 @@ static inline signed long fence_wait(struct fence *fence, bool intr)
 	return ret < 0 ? ret : 0;
 }
 
-unsigned fence_context_alloc(unsigned num);
+u64 fence_context_alloc(unsigned num);
 
 #define FENCE_TRACE(f, fmt, args...) \
 	do {								\
 		struct fence *__ff = (f);				\
-		if (config_enabled(CONFIG_FENCE_TRACE))			\
-			pr_info("f %u#%u: " fmt,			\
+		if (IS_ENABLED(CONFIG_FENCE_TRACE))			\
+			pr_info("f %llu#%u: " fmt,			\
 				__ff->context, __ff->seqno, ##args);	\
 	} while (0)
 
 #define FENCE_WARN(f, fmt, args...) \
 	do {								\
 		struct fence *__ff = (f);				\
-		pr_warn("f %u#%u: " fmt, __ff->context, __ff->seqno,	\
+		pr_warn("f %llu#%u: " fmt, __ff->context, __ff->seqno,	\
 			 ##args);					\
 	} while (0)
 
 #define FENCE_ERR(f, fmt, args...) \
 	do {								\
 		struct fence *__ff = (f);				\
-		pr_err("f %u#%u: " fmt, __ff->context, __ff->seqno,	\
+		pr_err("f %llu#%u: " fmt, __ff->context, __ff->seqno,	\
 			##args);					\
 	} while (0)
 

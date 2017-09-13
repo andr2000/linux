@@ -20,6 +20,7 @@
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/version.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -588,6 +589,7 @@ static int sdrv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 	return sdrv_alsa_playback_do_write(substream, pos, count);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int sdrv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void *src, unsigned long count)
 {
@@ -599,6 +601,7 @@ static int sdrv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream,
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
 	return sdrv_alsa_playback_do_write(substream, pos, count);
 }
+#endif
 
 static int sdrv_alsa_playback_do_read(struct snd_pcm_substream *substream,
 	unsigned long pos, unsigned long count)
@@ -645,6 +648,7 @@ static int sdrv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
 		-EFAULT : 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int sdrv_alsa_capture_copy_kernel(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void *dst, unsigned long count)
 {
@@ -661,6 +665,7 @@ static int sdrv_alsa_capture_copy_kernel(struct snd_pcm_substream *substream,
 	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
 }
+#endif
 
 static int sdrv_alsa_playback_fill_silence(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, unsigned long count)
@@ -724,9 +729,14 @@ static struct snd_pcm_ops sdrv_alsa_playback_ops = {
 	.prepare = sdrv_alsa_prepare,
 	.trigger = sdrv_alsa_trigger,
 	.pointer = sdrv_alsa_pointer,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 	.copy_user = sdrv_alsa_playback_copy_user,
 	.copy_kernel = sdrv_alsa_playback_copy_kernel,
 	.fill_silence = sdrv_alsa_playback_fill_silence,
+#else
+	.copy = sdrv_alsa_playback_copy_user,
+	.silence = sdrv_alsa_playback_fill_silence,
+#endif
 };
 
 static struct snd_pcm_ops sdrv_alsa_capture_ops = {
@@ -738,8 +748,12 @@ static struct snd_pcm_ops sdrv_alsa_capture_ops = {
 	.prepare = sdrv_alsa_prepare,
 	.trigger = sdrv_alsa_trigger,
 	.pointer = sdrv_alsa_pointer,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 	.copy_user = sdrv_alsa_capture_copy_user,
 	.copy_kernel = sdrv_alsa_capture_copy_kernel,
+#else
+	.copy = sdrv_alsa_capture_copy_user,
+#endif
 };
 
 static int sdrv_new_pcm(struct sdev_card_info *card_info,

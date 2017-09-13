@@ -59,6 +59,7 @@ struct xdrv_evtchnl_info {
 	/* latest response status and its corresponding id */
 	int resp_status;
 	uint16_t resp_id;
+	uint8_t req_next_id;
 };
 
 struct sh_buf_info {
@@ -74,7 +75,6 @@ struct sdev_pcm_stream_info {
 	struct snd_pcm_hardware pcm_hw;
 	struct xdrv_evtchnl_info *evt_chnl;
 	bool is_open;
-	uint8_t req_next_id;
 	struct sh_buf_info sh_buf;
 };
 
@@ -318,7 +318,7 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 static void sdrv_stream_clear(struct sdev_pcm_stream_info *stream)
 {
 	stream->is_open = false;
-	stream->req_next_id = 0;
+	stream->evt_chnl->req_next_id = 0;
 	sh_buf_clear(&stream->sh_buf);
 }
 
@@ -330,7 +330,7 @@ static struct xensnd_req *sdrv_be_stream_prepare_req(
 	req = RING_GET_REQUEST(&stream->evt_chnl->ring,
 		stream->evt_chnl->ring.req_prod_pvt);
 	req->operation = operation;
-	req->id = stream->req_next_id++;
+	req->id = stream->evt_chnl->req_next_id++;
 	stream->evt_chnl->resp_id = req->id;
 	return req;
 }

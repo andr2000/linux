@@ -49,18 +49,40 @@ enum xdrv_evtchnl_state {
 	EVTCHNL_STATE_CONNECTED,
 };
 
+enum xdrv_evtchnl_type {
+	EVTCHNL_TYPE_REQ,
+	EVTCHNL_TYPE_EVT,
+};
+
 struct xdrv_evtchnl_info {
 	struct xdrv_info *drv_info;
-	struct xen_sndif_front_ring ring;
-	int ring_ref;
+	int gref;
 	int port;
 	int irq;
-	struct completion completion;
+	int index;
+	/* state of the event channel */
 	enum xdrv_evtchnl_state state;
-	/* latest response status and its corresponding id */
-	int resp_status;
-	uint16_t resp_id;
-	uint8_t req_next_id;
+	enum xdrv_evtchnl_type type;
+	/* either response id or incoming event id */
+	uint16_t evt_id;
+	/* next request id or next expected event id */
+	uint16_t evt_next_id;
+	union {
+		struct {
+			struct xen_sndif_front_ring ring;
+			struct completion completion;
+			/* latest response status */
+			int resp_status;
+		} req;
+		struct {
+			struct xensnd_event_page *page;
+		} evt;
+	} u;
+};
+
+struct xdrv_evtchnl_pair_info {
+	struct xdrv_evtchnl_info req;
+	struct xdrv_evtchnl_info evt;
 };
 
 struct sh_buf_info {
@@ -74,7 +96,7 @@ struct sh_buf_info {
 struct sdev_pcm_stream_info {
 	int unique_id;
 	struct snd_pcm_hardware pcm_hw;
-	struct xdrv_evtchnl_info *evt_chnl;
+	struct xdrv_evtchnl_pair_info *evt_pair;
 	bool is_open;
 	struct sh_buf_info sh_buf;
 };
@@ -132,8 +154,8 @@ struct xdrv_info {
 	struct mutex mutex;
 	bool sdrv_registered;
 	struct platform_device *sdrv_pdev;
-	int num_evt_channels;
-	struct xdrv_evtchnl_info *evt_chnls;
+	int num_evt_pairs;
+	struct xdrv_evtchnl_pair_info *evt_pairs;
 	struct sdev_card_plat_data cfg_plat_data;
 };
 
@@ -319,20 +341,21 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 static void sdrv_stream_clear(struct sdev_pcm_stream_info *stream)
 {
 	stream->is_open = false;
-	stream->evt_chnl->req_next_id = 0;
+	stream->evt_pair->req.evt_next_id = 0;
+	stream->evt_pair->evt.evt_next_id = 0;
 	sh_buf_clear(&stream->sh_buf);
 }
 
 static struct xensnd_req *sdrv_be_stream_prepare_req(
-	struct sdev_pcm_stream_info *stream, uint8_t operation)
+	struct xdrv_evtchnl_info *evtchnl, uint8_t operation)
 {
 	struct xensnd_req *req;
 
-	req = RING_GET_REQUEST(&stream->evt_chnl->ring,
-		stream->evt_chnl->ring.req_prod_pvt);
+	req = RING_GET_REQUEST(&evtchnl->u.req.ring,
+		evtchnl->u.req.ring.req_prod_pvt);
 	req->operation = operation;
-	req->id = stream->evt_chnl->req_next_id++;
-	stream->evt_chnl->resp_id = req->id;
+	req->id = evtchnl->evt_next_id++;
+	evtchnl->evt_id = req->id;
 	return req;
 }
 
@@ -347,7 +370,7 @@ static int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl)
 	if (unlikely(evtchnl->state != EVTCHNL_STATE_CONNECTED))
 		return -EIO;
 
-	reinit_completion(&evtchnl->completion);
+	reinit_completion(&evtchnl->u.req.completion);
 	xdrv_evtchnl_flush(evtchnl);
 	return 0;
 }
@@ -355,10 +378,10 @@ static int sdrv_be_stream_do_io(struct xdrv_evtchnl_info *evtchnl)
 static inline int sdrv_be_stream_wait_io(struct xdrv_evtchnl_info *evtchnl)
 {
 	if (wait_for_completion_timeout(
-			&evtchnl->completion,
+			&evtchnl->u.req.completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0)
 		return -ETIMEDOUT;
-	return evtchnl->resp_status;
+	return evtchnl->u.req.resp_status;
 }
 
 static int sdrv_be_stream_open(struct snd_pcm_substream *substream,
@@ -369,6 +392,7 @@ static int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct xdrv_info *xdrv_info;
 	struct xensnd_req *req;
+	struct xdrv_evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
 
@@ -383,20 +407,21 @@ static int sdrv_be_stream_open(struct snd_pcm_substream *substream,
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	stream->is_open = false;
-	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_OPEN);
+	evt_chnl = &stream->evt_pair->req;
+	req = sdrv_be_stream_prepare_req(evt_chnl, XENSND_OP_OPEN);
 	req->op.open.pcm_format = (uint8_t)ret;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
 	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
 
-	ret = sdrv_be_stream_do_io(stream->evt_chnl);
+	ret = sdrv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
 
-	ret = sdrv_be_stream_wait_io(stream->evt_chnl);
+	ret = sdrv_be_stream_wait_io(evt_chnl);
 	stream->is_open = ret < 0 ? false : true;
 	return ret;
 }
@@ -408,6 +433,7 @@ static int sdrv_be_stream_close(struct snd_pcm_substream *substream,
 		snd_pcm_substream_chip(substream);
 	struct xdrv_info *xdrv_info;
 	struct xensnd_req *req;
+	struct xdrv_evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
 
@@ -415,15 +441,16 @@ static int sdrv_be_stream_close(struct snd_pcm_substream *substream,
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	stream->is_open = false;
-	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_CLOSE);
+	evt_chnl = &stream->evt_pair->req;
+	req = sdrv_be_stream_prepare_req(evt_chnl, XENSND_OP_CLOSE);
 
-	ret = sdrv_be_stream_do_io(stream->evt_chnl);
+	ret = sdrv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
 
-	return sdrv_be_stream_wait_io(stream->evt_chnl);
+	return sdrv_be_stream_wait_io(evt_chnl);
 }
 
 static int sdrv_alsa_open(struct snd_pcm_substream *substream)
@@ -450,11 +477,11 @@ static int sdrv_alsa_open(struct snd_pcm_substream *substream)
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	sdrv_stream_clear(stream);
-	stream->evt_chnl = &xdrv_info->evt_chnls[stream->unique_id];
+	stream->evt_pair = &xdrv_info->evt_pairs[stream->unique_id];
 	if (ret < 0)
-		stream->evt_chnl->state = EVTCHNL_STATE_DISCONNECTED;
+		stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
 	else
-		stream->evt_chnl->state = EVTCHNL_STATE_CONNECTED;
+		stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 	return ret;
 }
@@ -470,7 +497,7 @@ static int sdrv_alsa_close(struct snd_pcm_substream *substream)
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
-	stream->evt_chnl->state = EVTCHNL_STATE_DISCONNECTED;
+	stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 	return 0;
 }
@@ -555,23 +582,25 @@ static int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 		snd_pcm_substream_chip(substream);
 	struct xdrv_info *xdrv_info;
 	struct xensnd_req *req;
+	struct xdrv_evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
-	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_WRITE);
+	evt_chnl = &stream->evt_pair->req;
+	req = sdrv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
 	req->op.rw.length = count;
 	req->op.rw.offset = pos;
 
-	ret = sdrv_be_stream_do_io(stream->evt_chnl);
+	ret = sdrv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
 
-	return sdrv_be_stream_wait_io(stream->evt_chnl);
+	return sdrv_be_stream_wait_io(evt_chnl);
 }
 
 static int sdrv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
@@ -611,23 +640,25 @@ static int sdrv_alsa_playback_do_read(struct snd_pcm_substream *substream,
 		snd_pcm_substream_chip(substream);
 	struct xdrv_info *xdrv_info;
 	struct xensnd_req *req;
+	struct xdrv_evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
-	req = sdrv_be_stream_prepare_req(stream, XENSND_OP_READ);
+	evt_chnl = &stream->evt_pair->req;
+	req = sdrv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
 	req->op.rw.length = count;
 	req->op.rw.offset = pos;
 
-	ret = sdrv_be_stream_do_io(stream->evt_chnl);
+	ret = sdrv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&xdrv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
 
-	return sdrv_be_stream_wait_io(stream->evt_chnl);
+	return sdrv_be_stream_wait_io(evt_chnl);
 }
 
 static int sdrv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
@@ -926,6 +957,7 @@ static void sdrv_cleanup(struct xdrv_info *drv_info)
 		if (sdrv_pdev)
 			platform_device_unregister(sdrv_pdev);
 	}
+
 	platform_driver_unregister(&sdrv_info);
 	drv_info->sdrv_registered = false;
 }
@@ -957,7 +989,7 @@ fail:
 	return -ENODEV;
 }
 
-static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
+static irqreturn_t xdrv_evtchnl_interrupt_ctrl(int irq, void *dev_id)
 {
 	struct xdrv_evtchnl_info *channel = dev_id;
 	struct xdrv_info *drv_info = channel->drv_info;
@@ -970,13 +1002,13 @@ static irqreturn_t xdrv_evtchnl_interrupt(int irq, void *dev_id)
 		goto out;
 
 again:
-	rp = channel->ring.sring->rsp_prod;
+	rp = channel->u.req.ring.sring->rsp_prod;
 	/* ensure we see queued responses up to rp */
 	rmb();
 
-	for (i = channel->ring.rsp_cons; i != rp; i++) {
-		resp = RING_GET_RESPONSE(&channel->ring, i);
-		if (resp->id != channel->resp_id)
+	for (i = channel->u.req.ring.rsp_cons; i != rp; i++) {
+		resp = RING_GET_RESPONSE(&channel->u.req.ring, i);
+		if (resp->id != channel->evt_id)
 			continue;
 		switch (resp->operation) {
 		case XENSND_OP_OPEN:
@@ -986,8 +1018,8 @@ again:
 		case XENSND_OP_READ:
 			/* fall through */
 		case XENSND_OP_WRITE:
-			channel->resp_status = resp->status;
-			complete(&channel->completion);
+			channel->u.req.resp_status = resp->status;
+			complete(&channel->u.req.completion);
 			break;
 
 		default:
@@ -998,16 +1030,55 @@ again:
 		}
 	}
 
-	channel->ring.rsp_cons = i;
-	if (i != channel->ring.req_prod_pvt) {
+	channel->u.req.ring.rsp_cons = i;
+	if (i != channel->u.req.ring.req_prod_pvt) {
 		int more_to_do;
 
-		RING_FINAL_CHECK_FOR_RESPONSES(&channel->ring, more_to_do);
+		RING_FINAL_CHECK_FOR_RESPONSES(&channel->u.req.ring,
+			more_to_do);
 		if (more_to_do)
 			goto again;
 	} else
-		channel->ring.sring->rsp_event = i + 1;
+		channel->u.req.ring.sring->rsp_event = i + 1;
 
+out:
+	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t xdrv_evtchnl_interrupt_evt(int irq, void *dev_id)
+{
+	struct xdrv_evtchnl_info *channel = dev_id;
+	struct xdrv_info *drv_info = channel->drv_info;
+	struct xensnd_event_page *page = channel->u.evt.page;
+	uint32_t cons, prod;
+	unsigned long flags;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
+	if (unlikely(channel->state != EVTCHNL_STATE_CONNECTED))
+		goto out;
+
+	prod = page->in_prod;
+	/* ensure we see ring contents up to prod */
+	virt_rmb();
+	if (prod == page->in_cons)
+		goto out;
+
+	for (cons = page->in_cons; cons != prod; cons++) {
+		struct xensnd_evt *event;
+
+		event = &XENSND_IN_RING_REF(page, cons);
+		if (unlikely(event->id != channel->evt_id++))
+			continue;
+
+		switch (event->type) {
+		case XENSND_EVT_CUR_POS:
+			break;
+		}
+	}
+	page->in_cons = cons;
+	/* ensure ring contents */
+	virt_wmb();
 out:
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return IRQ_HANDLED;
@@ -1018,8 +1089,8 @@ static inline void xdrv_evtchnl_flush(
 {
 	int notify;
 
-	channel->ring.req_prod_pvt++;
-	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&channel->ring, notify);
+	channel->u.req.ring.req_prod_pvt++;
+	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&channel->u.req.ring, notify);
 	if (notify)
 		notify_remote_via_irq(channel->irq);
 }
@@ -1027,78 +1098,112 @@ static inline void xdrv_evtchnl_flush(
 static void xdrv_evtchnl_free(struct xdrv_info *drv_info,
 		struct xdrv_evtchnl_info *channel)
 {
-	if (!channel->ring.sring)
+	unsigned long page = 0;
+
+	if (channel->type == EVTCHNL_TYPE_REQ)
+		page = (unsigned long)channel->u.req.ring.sring;
+	else if (channel->type == EVTCHNL_TYPE_EVT)
+		page = (unsigned long)channel->u.evt.page;
+
+	if (!page)
 		return;
 
 	channel->state = EVTCHNL_STATE_DISCONNECTED;
-	channel->resp_status = -EIO;
-	complete_all(&channel->completion);
+	if (channel->type == EVTCHNL_TYPE_REQ) {
+		/* release all who still waits for response if any */
+		channel->u.req.resp_status = -EIO;
+		complete_all(&channel->u.req.completion);
+	}
 
 	if (channel->irq)
 		unbind_from_irqhandler(channel->irq, channel);
-	channel->irq = 0;
 
 	if (channel->port)
 		xenbus_free_evtchn(drv_info->xb_dev, channel->port);
-	channel->port = 0;
 
-	if (channel->ring_ref != GRANT_INVALID_REF)
-		gnttab_end_foreign_access(channel->ring_ref, 0,
-			(unsigned long)channel->ring.sring);
-	channel->ring_ref = GRANT_INVALID_REF;
-	channel->ring.sring = NULL;
+	/* End access and free the pages */
+	if (channel->gref != GRANT_INVALID_REF)
+		gnttab_end_foreign_access(channel->gref, 0, page);
+
+	if (channel->type == EVTCHNL_TYPE_REQ)
+		channel->u.req.ring.sring = NULL;
+	else
+		channel->u.evt.page = NULL;
+
+	memset(channel, 0, sizeof(*channel));
 }
 
 static void xdrv_evtchnl_free_all(struct xdrv_info *drv_info)
 {
 	int i;
 
-	if (!drv_info->evt_chnls)
+	if (!drv_info->evt_pairs)
 		return;
 
-	for (i = 0; i < drv_info->num_evt_channels; i++)
-		xdrv_evtchnl_free(drv_info, &drv_info->evt_chnls[i]);
-
-	devm_kfree(&drv_info->xb_dev->dev, drv_info->evt_chnls);
-	drv_info->evt_chnls = NULL;
+	for (i = 0; i < drv_info->num_evt_pairs; i++) {
+		xdrv_evtchnl_free(drv_info,
+			&drv_info->evt_pairs[i].req);
+		xdrv_evtchnl_free(drv_info,
+			&drv_info->evt_pairs[i].evt);
+	}
+	devm_kfree(&drv_info->xb_dev->dev, drv_info->evt_pairs);
+	drv_info->evt_pairs = NULL;
 }
 
-static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info,
-		struct xdrv_evtchnl_info *evt_channel)
+static int xdrv_evtchnl_alloc(struct xdrv_info *drv_info, int index,
+	struct xdrv_evtchnl_info *evt_channel,
+	enum xdrv_evtchnl_type type)
 {
 	struct xenbus_device *xb_dev = drv_info->xb_dev;
-	struct xen_sndif_sring *sring;
+	unsigned long page;
 	grant_ref_t gref;
+	irq_handler_t handler;
 	int ret;
 
+	memset(evt_channel, 0, sizeof(*evt_channel));
+	evt_channel->type = type;
+	evt_channel->index = index;
 	evt_channel->drv_info = drv_info;
-	init_completion(&evt_channel->completion);
 	evt_channel->state = EVTCHNL_STATE_DISCONNECTED;
-	evt_channel->ring_ref = GRANT_INVALID_REF;
-	evt_channel->ring.sring = NULL;
-	evt_channel->port = 0;
-	evt_channel->irq = 0;
-
-	sring = (struct xen_sndif_sring *)get_zeroed_page(
-		GFP_NOIO | __GFP_HIGH);
-	if (!sring) {
+	evt_channel->gref = GRANT_INVALID_REF;
+	page = get_zeroed_page(GFP_NOIO | __GFP_HIGH);
+	if (!page) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	SHARED_RING_INIT(sring);
-	FRONT_RING_INIT(&evt_channel->ring, sring, XEN_PAGE_SIZE);
-	ret = xenbus_grant_ring(xb_dev, sring, 1, &gref);
-	if (ret < 0)
-		goto fail;
-	evt_channel->ring_ref = gref;
+	if (type == EVTCHNL_TYPE_REQ) {
+		struct xen_sndif_sring *sring;
+
+		init_completion(&evt_channel->u.req.completion);
+		sring = (struct xen_sndif_sring *)page;
+		SHARED_RING_INIT(sring);
+		FRONT_RING_INIT(&evt_channel->u.req.ring,
+			sring, XEN_PAGE_SIZE);
+
+		ret = xenbus_grant_ring(xb_dev, sring, 1, &gref);
+		if (ret < 0)
+			goto fail;
+
+		handler = xdrv_evtchnl_interrupt_ctrl;
+	} else {
+		evt_channel->u.evt.page = (struct xensnd_event_page *)page;
+		ret = gnttab_grant_foreign_access(xb_dev->otherend_id,
+			virt_to_gfn((void *)page), 0);
+		if (ret < 0)
+			goto fail;
+
+		gref = ret;
+		handler = xdrv_evtchnl_interrupt_evt;
+	}
+	evt_channel->gref = gref;
 
 	ret = xenbus_alloc_evtchn(xb_dev, &evt_channel->port);
 	if (ret < 0)
 		goto fail;
 
 	ret = bind_evtchn_to_irqhandler(evt_channel->port,
-		xdrv_evtchnl_interrupt, 0, xb_dev->devicetype, evt_channel);
+		handler, 0, xb_dev->devicetype, evt_channel);
 	if (ret < 0)
 		goto fail;
 
@@ -1110,38 +1215,30 @@ fail:
 	return ret;
 }
 
-static int xdrv_evtchnl_create(struct xdrv_info *drv_info,
-		struct xdrv_evtchnl_info *evt_channel,
-		const char *path)
+static int xdrv_evtchnl_publish(struct xenbus_transaction xbt,
+	struct xdrv_evtchnl_info *evt_channel,
+	const char *path, const char *node_ring,
+	const char *node_chnl)
 {
+	struct xenbus_device *xb_dev = evt_channel->drv_info->xb_dev;
 	int ret;
 
-	ret = xdrv_evtchnl_alloc(drv_info, evt_channel);
+	/* write control channel ring reference */
+	ret = xenbus_printf(xbt, path, node_ring, "%u",
+			evt_channel->gref);
 	if (ret < 0) {
-		dev_err(&drv_info->xb_dev->dev,
-			"allocating event channel: %d\n", ret);
+		dev_err(&xb_dev->dev, "Error writing ring-ref: %d\n",ret);
 		return ret;
 	}
 
-	/*
-	 * write values to Xen store, so backend can find ring reference
-	 * and event channel
-	 */
-	ret = xenbus_printf(XBT_NIL, path, XENSND_FIELD_RING_REF, "%u",
-			evt_channel->ring_ref);
-	if (ret < 0) {
-		dev_err(&drv_info->xb_dev->dev,
-			"writing " XENSND_FIELD_RING_REF": %d\n", ret);
-		return ret;
-	}
-
-	ret = xenbus_printf(XBT_NIL, path, XENSND_FIELD_EVT_CHNL, "%u",
+	/* write event channel ring reference */
+	ret = xenbus_printf(xbt, path, node_chnl, "%u",
 		evt_channel->port);
 	if (ret < 0) {
-		dev_err(&drv_info->xb_dev->dev,
-			"writing " XENSND_FIELD_EVT_CHNL": %d\n", ret);
+		dev_err(&xb_dev->dev, "Error writing event channel: %d\n",ret);
 		return ret;
 	}
+
 	return 0;
 }
 
@@ -1151,9 +1248,9 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 	struct cfg_card *cfg_card;
 	int d, ret = 0;
 
-	drv_info->evt_chnls = devm_kcalloc(&drv_info->xb_dev->dev,
+	drv_info->evt_pairs = devm_kcalloc(&drv_info->xb_dev->dev,
 		num_streams, sizeof(struct xdrv_evtchnl_info), GFP_KERNEL);
-	if (!drv_info->evt_chnls) {
+	if (!drv_info->evt_pairs) {
 		ret = -ENOMEM;
 		goto fail;
 	}
@@ -1168,30 +1265,133 @@ static int xdrv_evtchnl_create_all(struct xdrv_info *drv_info,
 
 		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
 			stream_idx = pcm_instance->streams_pb[s].unique_id;
-			ret = xdrv_evtchnl_create(drv_info,
-				&drv_info->evt_chnls[stream_idx],
-				pcm_instance->streams_pb[s].xenstore_path);
+
+			ret = xdrv_evtchnl_alloc(drv_info, stream_idx,
+				&drv_info->evt_pairs[stream_idx].req,
+				EVTCHNL_TYPE_REQ);
+			if (ret < 0) {
+				dev_err(&drv_info->xb_dev->dev,
+					"Error allocating control channel\n");
+				goto fail;
+			}
+
+			ret = xdrv_evtchnl_alloc(drv_info, stream_idx,
+				&drv_info->evt_pairs[stream_idx].evt,
+				EVTCHNL_TYPE_EVT);
+			if (ret < 0) {
+				dev_err(&drv_info->xb_dev->dev,
+					"Error allocating in-event channel\n");
+				goto fail;
+			}
+		}
+
+		for (s = 0; s < pcm_instance->num_streams_cap; s++) {
+			stream_idx = pcm_instance->streams_cap[s].unique_id;
+
+			ret = xdrv_evtchnl_alloc(drv_info, stream_idx,
+				&drv_info->evt_pairs[stream_idx].req,
+				EVTCHNL_TYPE_REQ);
+			if (ret < 0) {
+				dev_err(&drv_info->xb_dev->dev,
+					"Error allocating control channel\n");
+				goto fail;
+			}
+
+			ret = xdrv_evtchnl_alloc(drv_info, stream_idx,
+				&drv_info->evt_pairs[stream_idx].evt,
+				EVTCHNL_TYPE_EVT);
+			if (ret < 0) {
+				dev_err(&drv_info->xb_dev->dev,
+					"Error allocating in-event channel\n");
+				goto fail;
+			}
+		}
+	}
+	if (ret < 0)
+		goto fail;
+
+	drv_info->num_evt_pairs = num_streams;
+	return 0;
+
+fail:
+	xdrv_evtchnl_free_all(drv_info);
+	return ret;
+}
+
+static int xdrv_evtchnl_publish_all(struct xdrv_info *drv_info)
+{
+	struct xenbus_transaction xbt;
+	struct cfg_card *cfg_card;
+	int ret, d;
+
+	cfg_card = &drv_info->cfg_plat_data.cfg_card;
+
+again:
+	ret = xenbus_transaction_start(&xbt);
+	if (ret < 0) {
+		xenbus_dev_fatal(drv_info->xb_dev, ret, "starting transaction");
+		return ret;
+	}
+
+	for (d = 0; d < cfg_card->num_pcm_instances; d++) {
+		struct cfg_pcm_instance *pcm_instance;
+		int s, stream_idx;
+
+		pcm_instance = &cfg_card->pcm_instances[d];
+
+		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
+			stream_idx = pcm_instance->streams_pb[s].unique_id;
+
+			ret = xdrv_evtchnl_publish(xbt,
+				&drv_info->evt_pairs[stream_idx].req,
+				pcm_instance->streams_pb[s].xenstore_path,
+				XENSND_FIELD_REQ_RING_REF,
+				XENSND_FIELD_REQ_EVT_CHNL);
+			if (ret < 0)
+				goto fail;
+
+			ret = xdrv_evtchnl_publish(xbt,
+				&drv_info->evt_pairs[stream_idx].evt,
+				pcm_instance->streams_pb[s].xenstore_path,
+				XENSND_FIELD_EVT_RING_REF,
+				XENSND_FIELD_EVT_CHANNEL);
 			if (ret < 0)
 				goto fail;
 		}
 
 		for (s = 0; s < pcm_instance->num_streams_cap; s++) {
 			stream_idx = pcm_instance->streams_cap[s].unique_id;
-			ret = xdrv_evtchnl_create(drv_info,
-				&drv_info->evt_chnls[stream_idx],
-				pcm_instance->streams_cap[s].xenstore_path);
+
+			ret = xdrv_evtchnl_publish(xbt,
+				&drv_info->evt_pairs[stream_idx].req,
+				pcm_instance->streams_cap[s].xenstore_path,
+				XENSND_FIELD_REQ_RING_REF,
+				XENSND_FIELD_REQ_EVT_CHNL);
+			if (ret < 0)
+				goto fail;
+
+			ret = xdrv_evtchnl_publish(xbt,
+				&drv_info->evt_pairs[stream_idx].evt,
+				pcm_instance->streams_cap[s].xenstore_path,
+				XENSND_FIELD_EVT_RING_REF,
+				XENSND_FIELD_EVT_CHANNEL);
 			if (ret < 0)
 				goto fail;
 		}
 	}
-	if (ret < 0)
-		goto fail;
-
-	drv_info->num_evt_channels = num_streams;
+	ret = xenbus_transaction_end(xbt, 0);
+	if (ret < 0) {
+		if (ret == -EAGAIN)
+			goto again;
+		xenbus_dev_fatal(drv_info->xb_dev, ret,
+			"completing transaction");
+		goto fail_to_end;
+	}
 	return 0;
-
 fail:
-	xdrv_evtchnl_free_all(drv_info);
+	xenbus_transaction_end(xbt, 1);
+fail_to_end:
+	xenbus_dev_fatal(drv_info->xb_dev, ret, "writing XenStore");
 	return ret;
 }
 
@@ -1825,15 +2025,19 @@ static int sh_buf_alloc(struct xenbus_device *xb_dev,
 
 static int xdrv_be_on_initwait(struct xdrv_info *drv_info)
 {
-	int stream_idx;
+	int num_streams;
 	int ret;
 
 	drv_info->cfg_plat_data.xdrv_info = drv_info;
-	stream_idx = 0;
-	ret = cfg_card(drv_info, &drv_info->cfg_plat_data, &stream_idx);
+	num_streams = 0;
+	ret = cfg_card(drv_info, &drv_info->cfg_plat_data, &num_streams);
 	if (ret < 0)
 		return ret;
-	return xdrv_evtchnl_create_all(drv_info, stream_idx);
+	/* create event channels for all streams and publish */
+	ret = xdrv_evtchnl_create_all(drv_info, num_streams);
+	if (ret < 0)
+		return ret;
+	return xdrv_evtchnl_publish_all(drv_info);
 }
 
 static inline int xdrv_be_on_connected(struct xdrv_info *drv_info)

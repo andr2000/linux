@@ -447,8 +447,6 @@ static int sdrv_alsa_open(struct snd_pcm_substream *substream)
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
 
-	ret = sdrv_alsa_timer_create(substream);
-
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	sdrv_stream_clear(stream);
 	stream->evt_chnl = &xdrv_info->evt_chnls[stream->unique_id];
@@ -469,8 +467,6 @@ static int sdrv_alsa_close(struct snd_pcm_substream *substream)
 	unsigned long flags;
 
 	xdrv_info = pcm_instance->card_info->xdrv_info;
-
-	sdrv_alsa_timer_stop(substream);
 
 	spin_lock_irqsave(&xdrv_info->io_lock, flags);
 	stream->evt_chnl->state = EVTCHNL_STATE_DISCONNECTED;
@@ -518,15 +514,11 @@ static int sdrv_alsa_hw_free(struct snd_pcm_substream *substream)
 static int sdrv_alsa_prepare(struct snd_pcm_substream *substream)
 {
 	struct sdev_pcm_stream_info *stream = sdrv_stream_get(substream);
-	int ret = 0;
 
-	if (!stream->is_open) {
-		ret = sdrv_be_stream_open(substream, stream);
-		if (ret < 0)
-			return ret;
-		ret = sdrv_alsa_timer_prepare(substream);
-	}
-	return ret;
+	if (!stream->is_open)
+		return sdrv_be_stream_open(substream, stream);
+
+	return 0;
 }
 
 static int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
@@ -535,12 +527,12 @@ static int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	case SNDRV_PCM_TRIGGER_START:
 		/* fall through */
 	case SNDRV_PCM_TRIGGER_RESUME:
-		return sdrv_alsa_timer_start(substream);
+		return 0;
 
 	case SNDRV_PCM_TRIGGER_STOP:
 		/* fall through */
 	case SNDRV_PCM_TRIGGER_SUSPEND:
-		return sdrv_alsa_timer_stop(substream);
+		return 0;
 
 	default:
 		break;
@@ -551,7 +543,7 @@ static int sdrv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 static inline snd_pcm_uframes_t sdrv_alsa_pointer(
 	struct snd_pcm_substream *substream)
 {
-	return sdrv_alsa_timer_pointer(substream);
+	return 0;
 }
 
 static int sdrv_alsa_playback_do_write(struct snd_pcm_substream *substream,

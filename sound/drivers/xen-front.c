@@ -494,6 +494,7 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
 	snd_drv_stream_clear(stream);
 	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
+	stream->evt_pair->evt.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.u.evt.substream = substream;
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
@@ -512,6 +513,7 @@ static int snd_drv_alsa_close(struct snd_pcm_substream *substream)
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
+	stream->evt_pair->evt.state = EVTCHNL_STATE_DISCONNECTED;
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }

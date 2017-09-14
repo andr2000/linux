@@ -18,6 +18,7 @@
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
 
+#include <linux/atomic.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/version.h>
@@ -76,6 +77,8 @@ struct evtchnl_info {
 		} req;
 		struct {
 			struct xensnd_event_page *page;
+			/* this is needed to handle XENSND_EVT_CUR_POS event */
+			struct snd_pcm_substream *substream;
 		} evt;
 	} u;
 };
@@ -99,6 +102,11 @@ struct pcm_stream_info {
 	struct evtchnl_pair_info *evt_pair;
 	bool is_open;
 	struct sh_buf_info sh_buf;
+
+	/* number of processed frames as reported by the backend */
+	snd_pcm_uframes_t appl_ptr;
+	/* current HW pointer to be reported */
+	atomic_t hw_ptr;
 };
 
 struct pcm_instance_info {
@@ -341,8 +349,11 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 static void snd_drv_stream_clear(struct pcm_stream_info *stream)
 {
 	stream->is_open = false;
+	stream->appl_ptr = 0;
+	atomic_set(&stream->hw_ptr, 0);
 	stream->evt_pair->req.evt_next_id = 0;
 	stream->evt_pair->evt.evt_next_id = 0;
+	stream->evt_pair->evt.u.evt.substream = NULL;
 	sh_buf_clear(&stream->sh_buf);
 }
 
@@ -461,20 +472,21 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
 	unsigned long flags;
 
 	printk("%s %d\n", __FUNCTION__, __LINE__);
 	snd_drv_copy_pcm_hw(&runtime->hw, &stream->pcm_hw,
 		&pcm_instance->pcm_hw);
-	substream->runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
+	runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_MMAP_VALID |
 		SNDRV_PCM_INFO_DOUBLE |
 		SNDRV_PCM_INFO_BATCH |
 		SNDRV_PCM_INFO_NONINTERLEAVED |
 		SNDRV_PCM_INFO_RESUME |
 		SNDRV_PCM_INFO_PAUSE);
-	substream->runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
+	runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
 
 	drv_info = pcm_instance->card_info->drv_info;
 
@@ -482,8 +494,9 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
 	snd_drv_stream_clear(stream);
 	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
+	stream->evt_pair->evt.u.evt.substream = substream;
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
-	return ret;
+	return 0;
 }
 
 static int snd_drv_alsa_close(struct snd_pcm_substream *substream)
@@ -572,15 +585,36 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	return 0;
 }
 
+static void snd_drv_handle_appl_ptr(struct evtchnl_info *channel,
+	uint64_t cur_frame)
+{
+	struct snd_pcm_substream *substream = channel->u.evt.substream;
+	struct pcm_stream_info *stream = stream_get(substream);
+	snd_pcm_uframes_t delta_appl_ptr, new_hw_ptr, period_size;
+
+	delta_appl_ptr = cur_frame - stream->appl_ptr;
+	stream->appl_ptr = cur_frame;
+
+	new_hw_ptr = (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
+	new_hw_ptr += delta_appl_ptr;
+	period_size = substream->runtime->period_size;
+	if (new_hw_ptr >= period_size) {
+		/*
+		 * properly handle overflows if the current position has
+		 * advanced too far
+		 */
+		new_hw_ptr = new_hw_ptr % period_size;
+		atomic_set(&stream->hw_ptr, (int)new_hw_ptr);
+		snd_pcm_period_elapsed(substream);
+	}
+}
+
 static inline snd_pcm_uframes_t snd_drv_alsa_pointer(
 	struct snd_pcm_substream *substream)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
-	static snd_pcm_uframes_t pos = 0;
 
-	printk("%s %d pos %lu\n", __FUNCTION__, __LINE__, pos);
-	pos += 500;
-	return pos;
+	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
 static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
@@ -1085,6 +1119,8 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENSND_EVT_CUR_POS:
+			snd_drv_handle_appl_ptr(channel,
+				event->op.cur_pos.cur_frame);
 			break;
 		}
 	}
@@ -1375,7 +1411,7 @@ again:
 				&drv_info->evt_pairs[index].evt,
 				pcm_instance->streams_pb[s].xenstore_path,
 				XENSND_FIELD_EVT_RING_REF,
-				XENSND_FIELD_EVT_CHANNEL);
+				XENSND_FIELD_EVT_EVT_CHNL);
 			if (ret < 0)
 				goto fail;
 		}
@@ -1396,7 +1432,7 @@ again:
 				&drv_info->evt_pairs[index].evt,
 				pcm_instance->streams_cap[s].xenstore_path,
 				XENSND_FIELD_EVT_RING_REF,
-				XENSND_FIELD_EVT_CHANNEL);
+				XENSND_FIELD_EVT_EVT_CHNL);
 			if (ret < 0)
 				goto fail;
 		}

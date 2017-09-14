@@ -476,8 +476,8 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	drv_info = pcm_instance->card_info->drv_info;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
-	snd_drv_stream_clear(stream);
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
+	snd_drv_stream_clear(stream);
 	if (ret < 0)
 		stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
 	else

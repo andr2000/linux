@@ -379,8 +379,11 @@ static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evtchnl)
 {
 	if (wait_for_completion_timeout(
 			&evtchnl->u.req.completion,
-			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0)
+			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
+		printk("%s timeout\n", __FUNCTION__);
 		return -ETIMEDOUT;
+	}
+	printk("%s response %d\n", __FUNCTION__, evtchnl->u.req.resp_status);
 	return evtchnl->u.req.resp_status;
 }
 
@@ -458,30 +461,27 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
-	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
 	unsigned long flags;
-	int ret;
 
-	snd_drv_copy_pcm_hw(&runtime->hw, &stream->pcm_hw, &pcm_instance->pcm_hw);
-	runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
+	printk("%s %d\n", __FUNCTION__, __LINE__);
+	snd_drv_copy_pcm_hw(&runtime->hw, &stream->pcm_hw,
+		&pcm_instance->pcm_hw);
+	substream->runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_MMAP_VALID |
 		SNDRV_PCM_INFO_DOUBLE |
 		SNDRV_PCM_INFO_BATCH |
 		SNDRV_PCM_INFO_NONINTERLEAVED |
 		SNDRV_PCM_INFO_RESUME |
 		SNDRV_PCM_INFO_PAUSE);
-	runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
+	substream->runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
 
 	drv_info = pcm_instance->card_info->drv_info;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
 	snd_drv_stream_clear(stream);
-	if (ret < 0)
-		stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
-	else
-		stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
+	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return ret;
 }
@@ -494,6 +494,7 @@ static int snd_drv_alsa_close(struct snd_pcm_substream *substream)
 	struct drv_info *drv_info;
 	unsigned long flags;
 
+	printk("%s %d\n", __FUNCTION__, __LINE__);
 	drv_info = pcm_instance->card_info->drv_info;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -512,6 +513,7 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	unsigned int buffer_size;
 	int ret;
 
+	printk("%s %d\n", __FUNCTION__, __LINE__);
 	buffer_size = params_buffer_bytes(params);
 	snd_drv_stream_clear(stream);
 	drv_info = pcm_instance->card_info->drv_info;
@@ -555,11 +557,13 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	case SNDRV_PCM_TRIGGER_START:
 		/* fall through */
 	case SNDRV_PCM_TRIGGER_RESUME:
+		printk("%s %d IMPLEMENT ME\n", __FUNCTION__, __LINE__);
 		return 0;
 
 	case SNDRV_PCM_TRIGGER_STOP:
 		/* fall through */
 	case SNDRV_PCM_TRIGGER_SUSPEND:
+		printk("%s %d IMPLEMENT ME\n", __FUNCTION__, __LINE__);
 		return 0;
 
 	default:
@@ -571,7 +575,12 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 static inline snd_pcm_uframes_t snd_drv_alsa_pointer(
 	struct snd_pcm_substream *substream)
 {
-	return 0;
+	struct pcm_stream_info *stream = stream_get(substream);
+	static snd_pcm_uframes_t pos = 0;
+
+	printk("%s %d pos %lu\n", __FUNCTION__, __LINE__, pos);
+	pos += 500;
+	return pos;
 }
 
 static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
@@ -595,6 +604,7 @@ static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	req->op.rw.offset = pos;
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
+	printk("%s %d do io %d\n", __FUNCTION__, __LINE__, ret);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
 	if (ret < 0)
@@ -609,6 +619,7 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
+	printk("%s %d\n", __FUNCTION__, __LINE__);
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -997,6 +1008,7 @@ static irqreturn_t evtchnl_interrupt_req(int irq, void *dev_id)
 	RING_IDX i, rp;
 	unsigned long flags;
 
+	printk("%s state %d\n", __FUNCTION__, channel->state);
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	if (unlikely(channel->state != EVTCHNL_STATE_CONNECTED))
 		goto out;

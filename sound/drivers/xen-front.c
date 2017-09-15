@@ -104,9 +104,11 @@ struct pcm_stream_info {
 	struct sh_buf_info sh_buf;
 
 	/* number of processed frames as reported by the backend */
-	snd_pcm_uframes_t appl_ptr;
-	/* current HW pointer to be reported */
+	snd_pcm_uframes_t be_cur_frame;
+	/* current HW pointer to be reported via .period callback */
 	atomic_t hw_ptr;
+	/* modulo of the number of processed frames - for period detection */
+	uint32_t out_frames;
 };
 
 struct pcm_instance_info {
@@ -174,19 +176,38 @@ static int sh_buf_alloc(struct xenbus_device *xb_dev, struct sh_buf_info *buf,
 	unsigned int buffer_size);
 static grant_ref_t sh_buf_get_dir_start(struct sh_buf_info *buf);
 
-static struct pcm_stream_info *stream_get(
-	struct snd_pcm_substream *substream)
-{
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct pcm_stream_info *stream;
+#define MAX_BUFFER_SIZE		(64 * 1024)
+#define MIN_PERIOD_SIZE		64
+#define MAX_PERIOD_SIZE		MAX_BUFFER_SIZE
+#define USE_FORMATS		(SNDRV_PCM_FMTBIT_U8 | \
+				 SNDRV_PCM_FMTBIT_S16_LE)
+#define USE_RATE		(SNDRV_PCM_RATE_CONTINUOUS | \
+				 SNDRV_PCM_RATE_8000_48000)
+#define USE_RATE_MIN		5512
+#define USE_RATE_MAX		48000
+#define USE_CHANNELS_MIN	1
+#define USE_CHANNELS_MAX	2
+#define USE_PERIODS_MIN		2
+#define USE_PERIODS_MAX		(MAX_BUFFER_SIZE / MIN_PERIOD_SIZE)
 
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		stream = &pcm_instance->streams_pb[substream->number];
-	else
-		stream = &pcm_instance->streams_cap[substream->number];
-	return stream;
-}
+static struct snd_pcm_hardware snd_drv_pcm_hw_default = {
+	.info = (SNDRV_PCM_INFO_MMAP |
+		 SNDRV_PCM_INFO_INTERLEAVED |
+		 SNDRV_PCM_INFO_RESUME |
+		 SNDRV_PCM_INFO_MMAP_VALID),
+	.formats = USE_FORMATS,
+	.rates = USE_RATE,
+	.rate_min = USE_RATE_MIN,
+	.rate_max = USE_RATE_MAX,
+	.channels_min = USE_CHANNELS_MIN,
+	.channels_max = USE_CHANNELS_MAX,
+	.buffer_bytes_max = MAX_BUFFER_SIZE,
+	.period_bytes_min = MIN_PERIOD_SIZE,
+	.period_bytes_max = MAX_PERIOD_SIZE,
+	.periods_min = USE_PERIODS_MIN,
+	.periods_max = USE_PERIODS_MAX,
+	.fifo_size = 0,
+};
 
 static void snd_drv_copy_pcm_hw(struct snd_pcm_hardware *dst,
 	struct snd_pcm_hardware *src,
@@ -196,35 +217,43 @@ static void snd_drv_copy_pcm_hw(struct snd_pcm_hardware *dst,
 
 	if (src->formats)
 		dst->formats = src->formats;
+
 	if (src->buffer_bytes_max)
-		dst->buffer_bytes_max =
-			src->buffer_bytes_max;
+		dst->buffer_bytes_max = src->buffer_bytes_max;
+
 	if (src->period_bytes_min)
-		dst->period_bytes_min =
-			src->period_bytes_min;
+		dst->period_bytes_min = src->period_bytes_min;
+
 	if (src->period_bytes_max)
-		dst->period_bytes_max =
-			src->period_bytes_max;
+		dst->period_bytes_max = src->period_bytes_max;
+
 	if (src->periods_min)
 		dst->periods_min = src->periods_min;
+
 	if (src->periods_max)
 		dst->periods_max = src->periods_max;
+
 	if (src->rates)
 		dst->rates = src->rates;
+
 	if (src->rate_min)
 		dst->rate_min = src->rate_min;
+
 	if (src->rate_max)
 		dst->rate_max = src->rate_max;
+
 	if (src->channels_min)
 		dst->channels_min = src->channels_min;
+
 	if (src->channels_max)
 		dst->channels_max = src->channels_max;
+
 	if (src->buffer_bytes_max) {
 		dst->buffer_bytes_max = src->buffer_bytes_max;
 		dst->period_bytes_max = src->buffer_bytes_max /
-			src->periods_max;
+			src->periods_min;
 		dst->periods_max = dst->buffer_bytes_max /
-			dst->period_bytes_max;
+			dst->period_bytes_min;
 	}
 }
 
@@ -349,11 +378,11 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 static void snd_drv_stream_clear(struct pcm_stream_info *stream)
 {
 	stream->is_open = false;
-	stream->appl_ptr = 0;
+	stream->be_cur_frame = 0;
+	stream->out_frames = 0;
 	atomic_set(&stream->hw_ptr, 0);
 	stream->evt_pair->req.evt_next_id = 0;
 	stream->evt_pair->evt.evt_next_id = 0;
-	stream->evt_pair->evt.u.evt.substream = NULL;
 	sh_buf_clear(&stream->sh_buf);
 }
 
@@ -429,6 +458,10 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
 
+	printk("buffer_size %lu stream->sh_buf.vbuffer_sz %zu\n", runtime->buffer_size, stream->sh_buf.vbuffer_sz);
+	printk("period_size %lu\n", runtime->period_size);
+
+
 	ret = snd_drv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
@@ -467,6 +500,20 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
+static struct pcm_stream_info *stream_get(
+	struct snd_pcm_substream *substream)
+{
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct pcm_stream_info *stream;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		stream = &pcm_instance->streams_pb[substream->number];
+	else
+		stream = &pcm_instance->streams_cap[substream->number];
+	return stream;
+}
+
 static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 {
 	struct pcm_instance_info *pcm_instance =
@@ -476,7 +523,11 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct drv_info *drv_info;
 	unsigned long flags;
 
-	printk("%s %d\n", __FUNCTION__, __LINE__);
+	printk("%s %d index %d\n", __FUNCTION__, __LINE__, stream->index);
+	/*
+	 * return our HW properties: override defaults with those configured
+	 * via XenStore
+	 */
 	snd_drv_copy_pcm_hw(&runtime->hw, &stream->pcm_hw,
 		&pcm_instance->pcm_hw);
 	runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
@@ -496,6 +547,8 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.u.evt.substream = substream;
+	printk("%s %d substream %p\n", __FUNCTION__, __LINE__, stream->evt_pair->evt.u.evt.substream);
+	printk("%s %d channel %p\n", __FUNCTION__, __LINE__, &stream->evt_pair->evt);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }
@@ -529,13 +582,29 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	int ret;
 
 	printk("%s %d\n", __FUNCTION__, __LINE__);
-	buffer_size = params_buffer_bytes(params);
-	snd_drv_stream_clear(stream);
+
+	printk("buffer_size %lu\n", substream->runtime->buffer_size);
+	printk("period_size %lu\n", substream->runtime->period_size);
+#if 0
+	  buffer_size  : 8192
+	  period_size  : 2048
+	  period_time  : 46439
+#endif
+	/*
+	 * this callback may be called multiple times,
+	 * so free the previously allocated shared buffer if any
+	 */
+	snd_drv_be_stream_free(stream);
+
 	drv_info = pcm_instance->card_info->drv_info;
-	ret = sh_buf_alloc(drv_info->xb_dev,
-		&stream->sh_buf, buffer_size);
+	buffer_size = params_buffer_bytes(params);
+
+	printk("buffer_size %u, bytes\n", buffer_size);
+
+	ret = sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf, buffer_size);
 	if (ret < 0)
 		goto fail;
+
 	return 0;
 
 fail:
@@ -592,21 +661,20 @@ static void snd_drv_handle_appl_ptr(struct evtchnl_info *channel,
 {
 	struct snd_pcm_substream *substream = channel->u.evt.substream;
 	struct pcm_stream_info *stream = stream_get(substream);
-	snd_pcm_uframes_t delta_appl_ptr, new_hw_ptr, period_size;
+	snd_pcm_uframes_t delta, new_hw_ptr;
 
-	delta_appl_ptr = cur_frame - stream->appl_ptr;
-	stream->appl_ptr = cur_frame;
+	printk("%s cur_frame %llu\n", __FUNCTION__, cur_frame);
+
+	delta = cur_frame - stream->be_cur_frame;
+	stream->be_cur_frame = cur_frame;
 
 	new_hw_ptr = (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
-	new_hw_ptr += delta_appl_ptr;
-	period_size = substream->runtime->period_size;
-	if (new_hw_ptr >= period_size) {
-		/*
-		 * properly handle overflows if the current position has
-		 * advanced too far
-		 */
-		new_hw_ptr = new_hw_ptr % period_size;
-		atomic_set(&stream->hw_ptr, (int)new_hw_ptr);
+	new_hw_ptr = (new_hw_ptr + delta) % substream->runtime->buffer_size;
+	atomic_set(&stream->hw_ptr, (int)new_hw_ptr);
+
+	stream->out_frames += delta;
+	if (stream->out_frames > substream->runtime->period_size) {
+		stream->out_frames %= substream->runtime->period_size;
 		snd_pcm_period_elapsed(substream);
 	}
 }
@@ -616,6 +684,7 @@ static inline snd_pcm_uframes_t snd_drv_alsa_pointer(
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
+	printk("runtime->hw_ptr_base %lu\n", substream->runtime->hw_ptr_base);
 	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
@@ -640,7 +709,7 @@ static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	req->op.rw.offset = pos;
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
-	printk("%s %d do io %d\n", __FUNCTION__, __LINE__, ret);
+	printk("%s %d do io ret = %d, count %lu pos %lu\n", __FUNCTION__, __LINE__, ret, count, pos);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
 	if (ret < 0)
@@ -649,13 +718,14 @@ static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void __user *src,
 		unsigned long count)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
-	printk("%s %d\n", __FUNCTION__, __LINE__);
+	printk("%s %d count %lu\n", __FUNCTION__, __LINE__, count);
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -665,7 +735,6 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 	return snd_drv_alsa_playback_do_write(substream, pos, count);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void *src, unsigned long count)
 {
@@ -675,6 +744,25 @@ static int snd_drv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream
 		return -EINVAL;
 
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
+	return snd_drv_alsa_playback_do_write(substream, pos, count);
+}
+#else
+static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
+	int channel, snd_pcm_uframes_t pos, void __user *src,
+	snd_pcm_uframes_t count)
+{
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	count = frames_to_bytes(substream->runtime, count);
+	pos = frames_to_bytes(substream->runtime, pos);
+
+	printk("%s %d count %lu\n", __FUNCTION__, __LINE__, count);
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
+		return -EFAULT;
+
 	return snd_drv_alsa_playback_do_write(substream, pos, count);
 }
 #endif
@@ -708,6 +796,7 @@ static int snd_drv_alsa_playback_do_read(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void __user *dst,
 		unsigned long count)
@@ -726,7 +815,6 @@ static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
 		-EFAULT : 0;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_capture_copy_kernel(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void *dst, unsigned long count)
 {
@@ -743,6 +831,27 @@ static int snd_drv_alsa_capture_copy_kernel(struct snd_pcm_substream *substream,
 	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
 }
+#else
+static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
+	int channel, snd_pcm_uframes_t pos, void __user *dst,
+	snd_pcm_uframes_t count)
+{
+	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
+
+	count = frames_to_bytes(substream->runtime, count);
+	pos = frames_to_bytes(substream->runtime, pos);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	ret = snd_drv_alsa_playback_do_read(substream, pos, count);
+	if (ret < 0)
+		return ret;
+
+	return copy_to_user(dst, stream->sh_buf.vbuffer + pos, count) ?
+		-EFAULT : 0;
+}
 #endif
 
 static int snd_drv_alsa_playback_fill_silence(struct snd_pcm_substream *substream,
@@ -756,40 +865,6 @@ static int snd_drv_alsa_playback_fill_silence(struct snd_pcm_substream *substrea
 	memset(stream->sh_buf.vbuffer + pos, 0, count);
 	return snd_drv_alsa_playback_do_write(substream, pos, count);
 }
-
-#define MAX_XEN_BUFFER_SIZE	(64 * 1024)
-#define MAX_BUFFER_SIZE		MAX_XEN_BUFFER_SIZE
-#define MIN_PERIOD_SIZE		64
-#define MAX_PERIOD_SIZE		(MAX_BUFFER_SIZE / 8)
-#define USE_FORMATS		(SNDRV_PCM_FMTBIT_U8 | \
-				 SNDRV_PCM_FMTBIT_S16_LE)
-#define USE_RATE		(SNDRV_PCM_RATE_CONTINUOUS | \
-				 SNDRV_PCM_RATE_8000_48000)
-#define USE_RATE_MIN		5512
-#define USE_RATE_MAX		48000
-#define USE_CHANNELS_MIN	1
-#define USE_CHANNELS_MAX	2
-#define USE_PERIODS_MIN		2
-#define USE_PERIODS_MAX		8
-
-static struct snd_pcm_hardware snd_drv_pcm_hw_default = {
-	.info = (SNDRV_PCM_INFO_MMAP |
-		 SNDRV_PCM_INFO_INTERLEAVED |
-		 SNDRV_PCM_INFO_RESUME |
-		 SNDRV_PCM_INFO_MMAP_VALID),
-	.formats = USE_FORMATS,
-	.rates = USE_RATE,
-	.rate_min = USE_RATE_MIN,
-	.rate_max = USE_RATE_MAX,
-	.channels_min = USE_CHANNELS_MIN,
-	.channels_max = USE_CHANNELS_MAX,
-	.buffer_bytes_max = MAX_BUFFER_SIZE,
-	.period_bytes_min = MIN_PERIOD_SIZE,
-	.period_bytes_max = MAX_PERIOD_SIZE,
-	.periods_min = USE_PERIODS_MIN,
-	.periods_max = USE_PERIODS_MAX,
-	.fifo_size = 0,
-};
 
 /*
  * FIXME: The mmaped data transfer is asynchronous and there is no
@@ -1121,8 +1196,10 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENSND_EVT_CUR_POS:
+			spin_unlock_irqrestore(&drv_info->io_lock, flags);
 			snd_drv_handle_appl_ptr(channel,
 				event->op.cur_pos.cur_frame);
+			spin_lock_irqsave(&drv_info->io_lock, flags);
 			break;
 		}
 	}

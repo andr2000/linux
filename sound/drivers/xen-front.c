@@ -74,6 +74,8 @@ struct evtchnl_info {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
+			/* HW parameters received from the backend */
+			struct xensnd_get_hw_resp pcm_hw;
 		} req;
 		struct {
 			struct xensnd_event_page *page;
@@ -455,7 +457,7 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	req->op.open.pcm_format = (uint8_t)ret;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
-	req->op.open.buffer_sz = stream->sh_buf.vbuffer_sz;
+	req->op.open.buffer_sz = runtime->buffer_size;
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
 
 	printk("buffer_size %lu stream->sh_buf.vbuffer_sz %zu\n", runtime->buffer_size, stream->sh_buf.vbuffer_sz);
@@ -500,6 +502,65 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
+static int snd_drv_be_stream_get_hw_params(struct snd_pcm_substream *substream,
+	struct pcm_stream_info *stream, struct xensnd_get_hw_resp *hw)
+{
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct drv_info *drv_info;
+	struct xensnd_req *req;
+	struct evtchnl_info *evt_chnl;
+	unsigned long flags;
+	int ret;
+
+	drv_info = pcm_instance->card_info->drv_info;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
+	evt_chnl = &stream->evt_pair->req;
+	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_GET_HW_PARAMS);
+
+	ret = snd_drv_be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	ret = snd_drv_be_stream_wait_io(evt_chnl);
+
+	if (ret < 0)
+		return ret;
+
+	*hw = evt_chnl->u.req.pcm_hw;
+	return 0;
+}
+
+static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
+	struct pcm_stream_info *stream, int type)
+{
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct drv_info *drv_info;
+	struct xensnd_req *req;
+	struct evtchnl_info *evt_chnl;
+	unsigned long flags;
+	int ret;
+
+	drv_info = pcm_instance->card_info->drv_info;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
+	evt_chnl = &stream->evt_pair->req;
+	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
+	req->op.trigger.type = type;
+
+	ret = snd_drv_be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return snd_drv_be_stream_wait_io(evt_chnl);
+}
+
 static struct pcm_stream_info *stream_get(
 	struct snd_pcm_substream *substream)
 {
@@ -521,7 +582,9 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct pcm_stream_info *stream = stream_get(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
+	struct xensnd_get_hw_resp backend_hw;
 	unsigned long flags;
+	int ret;
 
 	printk("%s %d index %d\n", __FUNCTION__, __LINE__, stream->index);
 	/*
@@ -550,6 +613,17 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	printk("%s %d substream %p\n", __FUNCTION__, __LINE__, stream->evt_pair->evt.u.evt.substream);
 	printk("%s %d channel %p\n", __FUNCTION__, __LINE__, &stream->evt_pair->evt);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+
+	/* now get HW parameters from the backend */
+	ret = snd_drv_be_stream_get_hw_params(substream, stream, &backend_hw);
+	if (ret < 0)
+		return ret;
+
+	runtime->hw.period_bytes_min = backend_hw.period_sz_min;
+	runtime->hw.period_bytes_max = backend_hw.period_sz_max;
+	runtime->hw.buffer_bytes_max = backend_hw.buffer_sz_max;
+	runtime->hw.periods_max = backend_hw.buffer_sz_max /
+		backend_hw.period_sz_min;
 	return 0;
 }
 
@@ -577,19 +651,16 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
 	unsigned int buffer_size;
 	int ret;
 
 	printk("%s %d\n", __FUNCTION__, __LINE__);
 
-	printk("buffer_size %lu\n", substream->runtime->buffer_size);
-	printk("period_size %lu\n", substream->runtime->period_size);
-#if 0
-	  buffer_size  : 8192
-	  period_size  : 2048
-	  period_time  : 46439
-#endif
+	printk("buffer_size %lu\n", runtime->buffer_size);
+	printk("period_size %lu\n", runtime->period_size);
+
 	/*
 	 * this callback may be called multiple times,
 	 * so free the previously allocated shared buffer if any
@@ -637,33 +708,41 @@ static int snd_drv_alsa_prepare(struct snd_pcm_substream *substream)
 
 static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	int type;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		/* fall through */
+		type = XENSND_OP_TRIGGER_START;
+		break;
 	case SNDRV_PCM_TRIGGER_RESUME:
-		printk("%s %d IMPLEMENT ME\n", __FUNCTION__, __LINE__);
-		return 0;
+		type = XENSND_OP_TRIGGER_RESUME;
+		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
-		/* fall through */
+		type = XENSND_OP_TRIGGER_STOP;
+		break;
+
 	case SNDRV_PCM_TRIGGER_SUSPEND:
-		printk("%s %d IMPLEMENT ME\n", __FUNCTION__, __LINE__);
-		return 0;
+		type = XENSND_OP_TRIGGER_PAUSE;
+		break;
 
 	default:
-		break;
+		return 0;
 	}
-	return 0;
+
+	return snd_drv_be_stream_trigger(substream,
+		stream_get(substream), type);
 }
 
 static void snd_drv_handle_appl_ptr(struct evtchnl_info *channel,
-	uint64_t cur_frame)
+	uint64_t at)
 {
 	struct snd_pcm_substream *substream = channel->u.evt.substream;
 	struct pcm_stream_info *stream = stream_get(substream);
-	snd_pcm_uframes_t delta, new_hw_ptr;
+	snd_pcm_uframes_t delta, new_hw_ptr, cur_frame;
 
-	printk("%s cur_frame %llu\n", __FUNCTION__, cur_frame);
+	cur_frame = bytes_to_frames(substream->runtime, at);
+	printk("%s cur_frame %lu\n", __FUNCTION__, cur_frame);
 
 	delta = cur_frame - stream->be_cur_frame;
 	stream->be_cur_frame = cur_frame;
@@ -1145,6 +1224,12 @@ again:
 			complete(&channel->u.req.completion);
 			break;
 
+		case XENSND_OP_GET_HW_PARAMS:
+			channel->u.req.resp_status = resp->status;
+			channel->u.req.pcm_hw = resp->op.hw;
+			complete(&channel->u.req.completion);
+			break;
+
 		default:
 			dev_err(&drv_info->xb_dev->dev,
 				"Operation %d is not supported\n",
@@ -1198,7 +1283,7 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 		case XENSND_EVT_CUR_POS:
 			spin_unlock_irqrestore(&drv_info->io_lock, flags);
 			snd_drv_handle_appl_ptr(channel,
-				event->op.cur_pos.cur_frame);
+				event->op.cur_pos.position);
 			spin_lock_irqsave(&drv_info->io_lock, flags);
 			break;
 		}

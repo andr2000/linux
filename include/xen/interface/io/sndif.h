@@ -457,6 +457,14 @@
 #define XENSND_OP_GET_VOLUME		5
 #define XENSND_OP_MUTE			6
 #define XENSND_OP_UNMUTE		7
+#define XENSND_OP_GET_HW_PARAMS		8
+#define XENSND_OP_TRIGGER		9
+
+#define XENSND_OP_TRIGGER_START		0
+#define XENSND_OP_TRIGGER_PAUSE		1
+#define XENSND_OP_TRIGGER_STOP		2
+#define XENSND_OP_TRIGGER_RESUME	3
+
 
 /*
  ******************************************************************************
@@ -618,7 +626,19 @@ struct xensnd_open_req {
 	uint8_t pcm_channels;
 	uint16_t reserved;
 	uint32_t buffer_sz;
+	uint32_t period_sz;
 	grant_ref_t gref_directory;
+};
+
+struct xensnd_get_hw_resp {
+	uint32_t buffer_sz_min;
+	uint32_t buffer_sz_max;
+	uint32_t period_sz_min;
+	uint32_t period_sz_max;
+};
+
+struct xensnd_trigger_req {
+	uint8_t type;
 };
 
 /*
@@ -846,7 +866,7 @@ struct xensnd_rw_req {
  */
 
 struct xensnd_cur_pos_evt {
-	uint64_t cur_frame;
+	uint64_t position;
 };
 
 struct xensnd_req {
@@ -856,6 +876,7 @@ struct xensnd_req {
 	union {
 		struct xensnd_open_req open;
 		struct xensnd_rw_req rw;
+		struct xensnd_trigger_req trigger;
 		uint8_t reserved[24];
 	} op;
 };
@@ -865,7 +886,10 @@ struct xensnd_resp {
 	uint8_t operation;
 	uint8_t reserved;
 	int32_t status;
-	uint8_t reserved1[24];
+	union {
+		uint8_t reserved1[24];
+		struct xensnd_get_hw_resp hw;
+	} op;
 };
 
 struct xensnd_evt {

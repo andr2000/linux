@@ -74,6 +74,11 @@ struct evtchnl_info {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
+			/*
+			 * set if we are waiting for asynchronous
+			 * command to finish, e.g. before sending other request
+			 */
+			atomic_t wait_async;
 		} req;
 		struct {
 			struct xensnd_event_page *page;
@@ -302,6 +307,7 @@ static void snd_drv_stream_clear(struct pcm_stream_info *stream)
 	atomic_set(&stream->hw_ptr, 0);
 	stream->evt_pair->req.evt_next_id = 0;
 	stream->evt_pair->evt.evt_next_id = 0;
+	atomic_set(&stream->evt_pair->req.u.req.wait_async, 0);
 	sh_buf_clear(&stream->sh_buf);
 }
 
@@ -346,6 +352,21 @@ static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
+static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evtchnl)
+{
+	if (!atomic_cmpxchg(&evtchnl->u.req.wait_async, 1, 0))
+		return 0;
+
+	if (wait_for_completion_timeout(
+			&evtchnl->u.req.completion,
+			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
+		printk("%s timeout\n", __FUNCTION__);
+		return -ETIMEDOUT;
+	}
+	printk("%s response %d\n", __FUNCTION__, evtchnl->u.req.resp_status);
+	return evtchnl->u.req.resp_status;
+}
+
 static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	struct pcm_stream_info *stream)
 {
@@ -355,23 +376,29 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	struct drv_info *drv_info;
 	struct xensnd_req *req;
 	struct evtchnl_info *evt_chnl;
+	uint8_t sndif_format;
 	unsigned long flags;
 	int ret;
 
 	drv_info = pcm_instance->card_info->drv_info;
 
-	ret = alsa_to_sndif_format(runtime->format);
-	if (ret < 0) {
+	sndif_format = alsa_to_sndif_format(runtime->format);
+	if (sndif_format < 0) {
 		dev_err(&drv_info->xb_dev->dev,
 			"Unsupported sample format: %d\n", runtime->format);
-		return ret;
+		return sndif_format;
 	}
+
+	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->is_open = false;
-	evt_chnl = &stream->evt_pair->req;
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_OPEN);
-	req->op.open.pcm_format = (uint8_t)ret;
+	req->op.open.pcm_format = sndif_format;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
 	req->op.open.buffer_sz = snd_pcm_lib_buffer_bytes(substream);
@@ -406,9 +433,14 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 
 	drv_info = pcm_instance->card_info->drv_info;
 
+	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->is_open = false;
-	evt_chnl = &stream->evt_pair->req;
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_CLOSE);
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
@@ -423,7 +455,6 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
 	struct pcm_stream_info *stream, int type)
 {
-#if 0
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct drv_info *drv_info;
@@ -434,18 +465,22 @@ static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
 
 	drv_info = pcm_instance->card_info->drv_info;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
 	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
 	req->op.trigger.type = type;
+
+	atomic_set(&evt_chnl->u.req.wait_async, 1);
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
 	return ret;
-#else
-	return 0;
-#endif
 }
 
 static struct pcm_stream_info *stream_get(
@@ -656,8 +691,13 @@ static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 
 	drv_info = pcm_instance->card_info->drv_info;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
 	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
 	req->op.rw.length = count;
 	req->op.rw.offset = pos;
@@ -735,8 +775,13 @@ static int snd_drv_alsa_playback_do_read(struct snd_pcm_substream *substream,
 
 	drv_info = pcm_instance->card_info->drv_info;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
 	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
 	req->op.rw.length = count;
 	req->op.rw.offset = pos;
@@ -1094,12 +1139,10 @@ again:
 		case XENSND_OP_READ:
 			/* fall through */
 		case XENSND_OP_WRITE:
+			/* fall through */
+		case XENSND_OP_TRIGGER:
 			channel->u.req.resp_status = resp->status;
 			complete(&channel->u.req.completion);
-			break;
-
-		case XENSND_OP_TRIGGER:
-			/* this is the response for asynchronous command */
 			break;
 
 		default:

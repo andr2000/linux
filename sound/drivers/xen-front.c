@@ -363,46 +363,39 @@ static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
-static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
-	struct pcm_stream_info *stream)
+static int snd_drv_be_stream_open(struct pcm_stream_info *stream,
+	snd_pcm_format_t format, unsigned int channels, unsigned int rate,
+	uint32_t buffer_sz, uint32_t period_sz)
 {
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct drv_info *drv_info;
+	struct evtchnl_info *evt_chnl = &stream->evt_pair->req;
 	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
 	uint8_t sndif_format;
 	unsigned long flags;
 	int ret;
 
-	drv_info = pcm_instance->card_info->drv_info;
-
-	sndif_format = alsa_to_sndif_format(runtime->format);
+	sndif_format = alsa_to_sndif_format(format);
 	if (sndif_format < 0) {
-		dev_err(&drv_info->xb_dev->dev,
-			"Unsupported sample format: %d\n", runtime->format);
+		dev_err(&evt_chnl->drv_info->xb_dev->dev,
+			"Unsupported sample format: %d\n", format);
 		return sndif_format;
 	}
-
-	evt_chnl = &stream->evt_pair->req;
 
 	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
 	if (ret < 0)
 		return ret;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	stream->is_open = false;
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_OPEN);
 	req->op.open.pcm_format = sndif_format;
-	req->op.open.pcm_channels = runtime->channels;
-	req->op.open.pcm_rate = runtime->rate;
-	req->op.open.buffer_sz = snd_pcm_lib_buffer_bytes(substream);
-	req->op.open.period_sz = snd_pcm_lib_period_bytes(substream);
+	req->op.open.pcm_channels = channels;
+	req->op.open.pcm_rate = rate;
+	req->op.open.buffer_sz = buffer_sz;
+	req->op.open.period_sz = period_sz;
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
@@ -412,18 +405,12 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	return ret;
 }
 
-static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
-	struct pcm_stream_info *stream)
+static int snd_drv_be_stream_close(struct pcm_stream_info *stream)
 {
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct drv_info *drv_info;
 	struct xensnd_req *req;
 	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	drv_info = pcm_instance->card_info->drv_info;
 
 	evt_chnl = &stream->evt_pair->req;
 
@@ -431,12 +418,12 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 	if (ret < 0)
 		return ret;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	stream->is_open = false;
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_CLOSE);
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
 
 	if (ret < 0)
 		return ret;
@@ -444,18 +431,14 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
-static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
-	struct pcm_stream_info *stream, int type)
+
+static int snd_drv_be_stream_write(struct pcm_stream_info *stream,
+	unsigned long pos, unsigned long count)
 {
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct drv_info *drv_info;
 	struct xensnd_req *req;
 	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	drv_info = pcm_instance->card_info->drv_info;
 
 	evt_chnl = &stream->evt_pair->req;
 
@@ -463,14 +446,69 @@ static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
 	if (ret < 0)
 		return ret;
 
-	spin_lock_irqsave(&drv_info->io_lock, flags);
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
+	req->op.rw.length = count;
+	req->op.rw.offset = pos;
+
+	ret = snd_drv_be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return snd_drv_be_stream_wait_io(evt_chnl);
+}
+
+static int snd_drv_be_stream_read(struct pcm_stream_info *stream,
+	unsigned long pos, unsigned long count)
+{
+	struct xensnd_req *req;
+	struct evtchnl_info *evt_chnl;
+	unsigned long flags;
+	int ret;
+
+	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
+	req->op.rw.length = count;
+	req->op.rw.offset = pos;
+
+	ret = snd_drv_be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return snd_drv_be_stream_wait_io(evt_chnl);
+}
+
+static int snd_drv_be_stream_trigger(struct pcm_stream_info *stream, int type)
+{
+	struct xensnd_req *req;
+	struct evtchnl_info *evt_chnl;
+	unsigned long flags;
+	int ret;
+
+	evt_chnl = &stream->evt_pair->req;
+
+	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
+	if (ret < 0)
+		return ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
 	req->op.trigger.type = type;
 
 	atomic_set(&evt_chnl->u.req.wait_async, 1);
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
 
 	return ret;
 }
@@ -495,7 +533,7 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct drv_info *drv_info;
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
 	unsigned long flags;
 
 	/*
@@ -512,8 +550,6 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 		SNDRV_PCM_INFO_PAUSE);
 	runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
 
-	drv_info = pcm_instance->card_info->drv_info;
-
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
 	snd_drv_stream_clear(stream);
@@ -529,10 +565,8 @@ static int snd_drv_alsa_close(struct snd_pcm_substream *substream)
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
-	struct drv_info *drv_info;
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
 	unsigned long flags;
-
-	drv_info = pcm_instance->card_info->drv_info;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
@@ -547,7 +581,7 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
-	struct drv_info *drv_info;
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
 	int ret;
 
 	/*
@@ -556,7 +590,6 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	 */
 	snd_drv_be_stream_free(stream);
 
-	drv_info = pcm_instance->card_info->drv_info;
 	ret = sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf,
 		params_buffer_bytes(params));
 	if (ret < 0)
@@ -577,7 +610,7 @@ static int snd_drv_alsa_hw_free(struct snd_pcm_substream *substream)
 	struct pcm_stream_info *stream = stream_get(substream);
 	int ret;
 
-	ret = snd_drv_be_stream_close(substream, stream);
+	ret = snd_drv_be_stream_close(stream);
 	snd_drv_be_stream_free(stream);
 	return ret;
 }
@@ -586,8 +619,14 @@ static int snd_drv_alsa_prepare(struct snd_pcm_substream *substream)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
-	if (!stream->is_open)
-		return snd_drv_be_stream_open(substream, stream);
+	if (!stream->is_open) {
+		struct snd_pcm_runtime *runtime = substream->runtime;
+
+		return snd_drv_be_stream_open(stream, runtime->format,
+			runtime->channels, runtime->rate,
+			snd_pcm_lib_buffer_bytes(substream),
+			snd_pcm_lib_period_bytes(substream));
+	}
 
 	return 0;
 }
@@ -617,8 +656,7 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 		return -EINVAL;
 	}
 
-	return snd_drv_be_stream_trigger(substream,
-		stream_get(substream), type);
+	return snd_drv_be_stream_trigger(stream_get(substream), type);
 }
 
 static void snd_drv_handle_appl_ptr(struct evtchnl_info *channel,
@@ -652,40 +690,6 @@ static inline snd_pcm_uframes_t snd_drv_alsa_pointer(
 	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
-static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
-	unsigned long pos, unsigned long count)
-{
-	struct pcm_stream_info *stream = stream_get(substream);
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct drv_info *drv_info;
-	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
-	unsigned long flags;
-	int ret;
-
-	drv_info = pcm_instance->card_info->drv_info;
-
-	evt_chnl = &stream->evt_pair->req;
-
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
-
-	spin_lock_irqsave(&drv_info->io_lock, flags);
-	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
-	req->op.rw.length = count;
-	req->op.rw.offset = pos;
-
-	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
-
-	if (ret < 0)
-		return ret;
-
-	return snd_drv_be_stream_wait_io(evt_chnl);
-}
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 		int channel, unsigned long pos, void __user *src,
@@ -699,7 +703,7 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
 		return -EFAULT;
 
-	return snd_drv_alsa_playback_do_write(substream, pos, count);
+	return snd_drv_be_stream_write(stream, pos, count);
 }
 
 static int snd_drv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream,
@@ -711,7 +715,7 @@ static int snd_drv_alsa_playback_copy_kernel(struct snd_pcm_substream *substream
 		return -EINVAL;
 
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
-	return snd_drv_alsa_playback_do_write(substream, pos, count);
+	return snd_drv_be_stream_write(stream, pos, count);
 }
 #else
 static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
@@ -729,43 +733,9 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
 		return -EFAULT;
 
-	return snd_drv_alsa_playback_do_write(substream, pos, count);
+	return snd_drv_be_stream_write(stream, pos, count);
 }
 #endif
-
-static int snd_drv_alsa_playback_do_read(struct snd_pcm_substream *substream,
-	unsigned long pos, unsigned long count)
-{
-	struct pcm_stream_info *stream = stream_get(substream);
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct drv_info *drv_info;
-	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
-	unsigned long flags;
-	int ret;
-
-	drv_info = pcm_instance->card_info->drv_info;
-
-	evt_chnl = &stream->evt_pair->req;
-
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
-
-	spin_lock_irqsave(&drv_info->io_lock, flags);
-	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
-	req->op.rw.length = count;
-	req->op.rw.offset = pos;
-
-	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
-
-	if (ret < 0)
-		return ret;
-
-	return snd_drv_be_stream_wait_io(evt_chnl);
-}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
@@ -778,7 +748,7 @@ static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
-	ret = snd_drv_alsa_playback_do_read(substream, pos, count);
+	ret = snd_drv_be_stream_read(stream, pos, count);
 	if (ret < 0)
 		return ret;
 
@@ -795,7 +765,7 @@ static int snd_drv_alsa_capture_copy_kernel(struct snd_pcm_substream *substream,
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
-	ret = snd_drv_alsa_playback_do_read(substream, pos, count);
+	ret = snd_drv_be_stream_read(stream, pos, count);
 	if (ret < 0)
 		return ret;
 
@@ -816,7 +786,7 @@ static int snd_drv_alsa_capture_copy_user(struct snd_pcm_substream *substream,
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
-	ret = snd_drv_alsa_playback_do_read(substream, pos, count);
+	ret = snd_drv_be_stream_read(stream, pos, count);
 	if (ret < 0)
 		return ret;
 
@@ -834,7 +804,7 @@ static int snd_drv_alsa_playback_fill_silence(struct snd_pcm_substream *substrea
 		return -EINVAL;
 
 	memset(stream->sh_buf.vbuffer + pos, 0, count);
-	return snd_drv_alsa_playback_do_write(substream, pos, count);
+	return snd_drv_be_stream_write(stream, pos, count);
 }
 
 /*

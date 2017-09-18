@@ -345,10 +345,8 @@ static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evtchnl)
 	if (wait_for_completion_timeout(
 			&evtchnl->u.req.completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
-		printk("%s timeout\n", __FUNCTION__);
 		return -ETIMEDOUT;
 	}
-	printk("%s response %d\n", __FUNCTION__, evtchnl->u.req.resp_status);
 	return evtchnl->u.req.resp_status;
 }
 
@@ -360,10 +358,8 @@ static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evtchnl)
 	if (wait_for_completion_timeout(
 			&evtchnl->u.req.completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
-		printk("%s timeout\n", __FUNCTION__);
 		return -ETIMEDOUT;
 	}
-	printk("%s response %d\n", __FUNCTION__, evtchnl->u.req.resp_status);
 	return evtchnl->u.req.resp_status;
 }
 
@@ -404,10 +400,6 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	req->op.open.buffer_sz = snd_pcm_lib_buffer_bytes(substream);
 	req->op.open.period_sz = snd_pcm_lib_period_bytes(substream);
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
-
-	printk("buffer_size %u stream->sh_buf.vbuffer_sz %zu\n", req->op.open.buffer_sz, stream->sh_buf.vbuffer_sz);
-	printk("period_size %u\n", req->op.open.period_sz);
-
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
@@ -506,7 +498,6 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct drv_info *drv_info;
 	unsigned long flags;
 
-	printk("%s %d index %d\n", __FUNCTION__, __LINE__, stream->index);
 	/*
 	 * return our HW properties: override defaults with those configured
 	 * via XenStore
@@ -529,8 +520,6 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.u.evt.substream = substream;
-	printk("%s %d substream %p\n", __FUNCTION__, __LINE__, stream->evt_pair->evt.u.evt.substream);
-	printk("%s %d channel %p\n", __FUNCTION__, __LINE__, &stream->evt_pair->evt);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }
@@ -543,7 +532,6 @@ static int snd_drv_alsa_close(struct snd_pcm_substream *substream)
 	struct drv_info *drv_info;
 	unsigned long flags;
 
-	printk("%s %d\n", __FUNCTION__, __LINE__);
 	drv_info = pcm_instance->card_info->drv_info;
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
@@ -560,10 +548,7 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
 	struct drv_info *drv_info;
-	unsigned int buffer_size;
 	int ret;
-
-	printk("%s %d\n", __FUNCTION__, __LINE__);
 
 	/*
 	 * this callback may be called multiple times,
@@ -572,12 +557,8 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	snd_drv_be_stream_free(stream);
 
 	drv_info = pcm_instance->card_info->drv_info;
-	buffer_size = params_buffer_bytes(params);
-
-	printk("buffer_size %u, bytes\n", buffer_size);
-	printk("channels %u\n", params_channels(params));
-
-	ret = sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf, buffer_size);
+	ret = sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf,
+		params_buffer_bytes(params));
 	if (ret < 0)
 		goto fail;
 
@@ -618,22 +599,18 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		type = XENSND_OP_TRIGGER_START;
-		printk("%s SNDRV_PCM_TRIGGER_START\n", __FUNCTION__);
 		break;
 
 	case SNDRV_PCM_TRIGGER_RESUME:
 		type = XENSND_OP_TRIGGER_RESUME;
-		printk("%s SNDRV_PCM_TRIGGER_RESUME\n", __FUNCTION__);
 		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
 		type = XENSND_OP_TRIGGER_STOP;
-		printk("%s SNDRV_PCM_TRIGGER_STOP\n", __FUNCTION__);
 		break;
 
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 		type = XENSND_OP_TRIGGER_PAUSE;
-		printk("%s SNDRV_PCM_TRIGGER_SUSPEND\n", __FUNCTION__);
 		break;
 
 	default:
@@ -652,7 +629,6 @@ static void snd_drv_handle_appl_ptr(struct evtchnl_info *channel,
 	snd_pcm_uframes_t delta, new_hw_ptr, cur_frame;
 
 	cur_frame = bytes_to_frames(substream->runtime, at);
-	printk("%s cur_frame %lu\n", __FUNCTION__, cur_frame);
 
 	delta = cur_frame - stream->be_cur_frame;
 	stream->be_cur_frame = cur_frame;
@@ -673,7 +649,6 @@ static inline snd_pcm_uframes_t snd_drv_alsa_pointer(
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
-	printk("runtime->hw_ptr_base %lu\n", substream->runtime->hw_ptr_base);
 	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
@@ -703,7 +678,6 @@ static int snd_drv_alsa_playback_do_write(struct snd_pcm_substream *substream,
 	req->op.rw.offset = pos;
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
-	printk("%s %d do io ret = %d, count %lu pos %lu\n", __FUNCTION__, __LINE__, ret, count, pos);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
 	if (ret < 0)
@@ -719,7 +693,6 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
-	printk("%s %d count %lu\n", __FUNCTION__, __LINE__, count);
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -750,7 +723,6 @@ static int snd_drv_alsa_playback_copy_user(struct snd_pcm_substream *substream,
 	count = frames_to_bytes(substream->runtime, count);
 	pos = frames_to_bytes(substream->runtime, pos);
 
-	printk("%s %d count %lu\n", __FUNCTION__, __LINE__, count);
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -1117,7 +1089,6 @@ static irqreturn_t evtchnl_interrupt_req(int irq, void *dev_id)
 	RING_IDX i, rp;
 	unsigned long flags;
 
-	printk("%s state %d\n", __FUNCTION__, channel->state);
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	if (unlikely(channel->state != EVTCHNL_STATE_CONNECTED))
 		goto out;
@@ -1227,9 +1198,6 @@ static void evtchnl_free(struct drv_info *drv_info,
 {
 	unsigned long page = 0;
 
-	printk("Freeing evtchnl %s port %d IRQ %d gref %d dev_id %p\n",
-		channel->type == EVTCHNL_TYPE_REQ ? "REQ" : "EVT",
-		channel->port, channel->irq, channel->gref, channel);
 	if (channel->type == EVTCHNL_TYPE_REQ)
 		page = (unsigned long)channel->u.req.ring.sring;
 	else if (channel->type == EVTCHNL_TYPE_EVT)
@@ -1242,7 +1210,6 @@ static void evtchnl_free(struct drv_info *drv_info,
 	if (channel->type == EVTCHNL_TYPE_REQ) {
 		/* release all who still waits for response if any */
 		channel->u.req.resp_status = -EIO;
-		printk("complete_all %p\n", &channel->u.req.completion);
 		complete_all(&channel->u.req.completion);
 	}
 
@@ -1288,7 +1255,6 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 	irq_handler_t handler;
 	int ret;
 
-	printk("%s %d stream index %d type %s\n", __FUNCTION__, __LINE__, index, type == EVTCHNL_TYPE_REQ ? "REQ" : "EVT");
 	memset(channel, 0, sizeof(*channel));
 	channel->type = type;
 	channel->index = index;
@@ -1304,7 +1270,6 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 	if (type == EVTCHNL_TYPE_REQ) {
 		struct xen_sndif_sring *sring = (struct xen_sndif_sring *)page;
 
-		printk("init completion %p\n", &channel->u.req.completion);
 		init_completion(&channel->u.req.completion);
 		SHARED_RING_INIT(sring);
 		FRONT_RING_INIT(&channel->u.req.ring, sring, XEN_PAGE_SIZE);
@@ -1337,9 +1302,6 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 
 	channel->irq = ret;
 
-	printk("Allocated evtchnl %s port %d IRQ %d gref %d dev_id %p\n",
-		channel->type == EVTCHNL_TYPE_REQ ? "REQ" : "EVT",
-		channel->port, channel->irq, channel->gref, channel);
 	return 0;
 
 fail:
@@ -1354,8 +1316,6 @@ static int evtchnl_publish(struct xenbus_transaction xbt,
 {
 	struct xenbus_device *xb_dev = channel->drv_info->xb_dev;
 	int ret;
-
-	printk("%s %d type %s\n", __FUNCTION__, __LINE__, channel->type == EVTCHNL_TYPE_REQ ? "REQ" : "EVT");
 
 	/* write control channel ring reference */
 	ret = xenbus_printf(xbt, path, node_ring, "%u", channel->gref);
@@ -1385,14 +1345,12 @@ static int evtchnl_create_all(struct drv_info *drv_info, int num_streams)
 		return -ENOMEM;
 
 	cfg_card = &drv_info->cfg_plat_data.cfg_card;
-	printk("%s %d num_streams %d\n", __FUNCTION__, __LINE__, num_streams);
 	/* iterate over devices and their streams and create event channels */
 	for (d = 0; d < cfg_card->num_pcm_instances; d++) {
 		struct cfg_pcm_instance *pcm_instance;
 		int s, index;
 
 		pcm_instance = &cfg_card->pcm_instances[d];
-		printk("%s %d instance %d\n", __FUNCTION__, __LINE__, d);
 
 		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
 			index = pcm_instance->streams_pb[s].index;
@@ -1464,20 +1422,15 @@ again:
 		return ret;
 	}
 
-	printk("%s %d drv_info->num_evt_pairs %d\n", __FUNCTION__, __LINE__, drv_info->num_evt_pairs);
-
 	for (d = 0; d < cfg_card->num_pcm_instances; d++) {
 		struct cfg_pcm_instance *pcm_instance;
 		int s, index;
 
 		pcm_instance = &cfg_card->pcm_instances[d];
 
-		printk("%s %d pcm_instanse %d\n", __FUNCTION__, __LINE__, d);
-
 		for (s = 0; s < pcm_instance->num_streams_pb; s++) {
 			index = pcm_instance->streams_pb[s].index;
 
-			printk("%s %d index %d\n", __FUNCTION__, __LINE__, index);
 			ret = evtchnl_publish(xbt,
 				&drv_info->evt_pairs[index].req,
 				pcm_instance->streams_pb[s].xenstore_path,
@@ -1498,7 +1451,6 @@ again:
 		for (s = 0; s < pcm_instance->num_streams_cap; s++) {
 			index = pcm_instance->streams_cap[s].index;
 
-			printk("%s %d index %d\n", __FUNCTION__, __LINE__, index);
 			ret = evtchnl_publish(xbt,
 				&drv_info->evt_pairs[index].req,
 				pcm_instance->streams_cap[s].xenstore_path,
@@ -2239,8 +2191,9 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 	struct drv_info *drv_info = dev_get_drvdata(&xb_dev->dev);
 	int ret;
 
-	printk("Backend state is %s, front is %s\n",
+	dev_dbg(&xb_dev->dev, "Backend state is %s, front is %s\n",
 		xenbus_strstate(backend_state), xenbus_strstate(xb_dev->state));
+
 	switch (backend_state) {
 	case XenbusStateReconfiguring:
 		/* fall through */

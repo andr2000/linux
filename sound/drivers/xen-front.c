@@ -74,8 +74,6 @@ struct evtchnl_info {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
-			/* HW parameters received from the backend */
-			struct xensnd_get_hw_resp pcm_hw;
 		} req;
 		struct {
 			struct xensnd_event_page *page;
@@ -177,87 +175,6 @@ static void sh_buf_free(struct sh_buf_info *buf);
 static int sh_buf_alloc(struct xenbus_device *xb_dev, struct sh_buf_info *buf,
 	unsigned int buffer_size);
 static grant_ref_t sh_buf_get_dir_start(struct sh_buf_info *buf);
-
-#define MAX_BUFFER_SIZE		(64 * 1024)
-#define MIN_PERIOD_SIZE		64
-#define MAX_PERIOD_SIZE		MAX_BUFFER_SIZE
-#define USE_FORMATS		(SNDRV_PCM_FMTBIT_U8 | \
-				 SNDRV_PCM_FMTBIT_S16_LE)
-#define USE_RATE		(SNDRV_PCM_RATE_CONTINUOUS | \
-				 SNDRV_PCM_RATE_8000_48000)
-#define USE_RATE_MIN		5512
-#define USE_RATE_MAX		48000
-#define USE_CHANNELS_MIN	1
-#define USE_CHANNELS_MAX	2
-#define USE_PERIODS_MIN		2
-#define USE_PERIODS_MAX		(MAX_BUFFER_SIZE / MIN_PERIOD_SIZE)
-
-static struct snd_pcm_hardware snd_drv_pcm_hw_default = {
-	.info = (SNDRV_PCM_INFO_MMAP |
-		 SNDRV_PCM_INFO_INTERLEAVED |
-		 SNDRV_PCM_INFO_RESUME |
-		 SNDRV_PCM_INFO_MMAP_VALID),
-	.formats = USE_FORMATS,
-	.rates = USE_RATE,
-	.rate_min = USE_RATE_MIN,
-	.rate_max = USE_RATE_MAX,
-	.channels_min = USE_CHANNELS_MIN,
-	.channels_max = USE_CHANNELS_MAX,
-	.buffer_bytes_max = MAX_BUFFER_SIZE,
-	.period_bytes_min = MIN_PERIOD_SIZE,
-	.period_bytes_max = MAX_PERIOD_SIZE,
-	.periods_min = USE_PERIODS_MIN,
-	.periods_max = USE_PERIODS_MAX,
-	.fifo_size = 0,
-};
-
-static void snd_drv_copy_pcm_hw(struct snd_pcm_hardware *dst,
-	struct snd_pcm_hardware *src,
-	struct snd_pcm_hardware *ref_pcm_hw)
-{
-	*dst = *ref_pcm_hw;
-
-	if (src->formats)
-		dst->formats = src->formats;
-
-	if (src->buffer_bytes_max)
-		dst->buffer_bytes_max = src->buffer_bytes_max;
-
-	if (src->period_bytes_min)
-		dst->period_bytes_min = src->period_bytes_min;
-
-	if (src->period_bytes_max)
-		dst->period_bytes_max = src->period_bytes_max;
-
-	if (src->periods_min)
-		dst->periods_min = src->periods_min;
-
-	if (src->periods_max)
-		dst->periods_max = src->periods_max;
-
-	if (src->rates)
-		dst->rates = src->rates;
-
-	if (src->rate_min)
-		dst->rate_min = src->rate_min;
-
-	if (src->rate_max)
-		dst->rate_max = src->rate_max;
-
-	if (src->channels_min)
-		dst->channels_min = src->channels_min;
-
-	if (src->channels_max)
-		dst->channels_max = src->channels_max;
-
-	if (src->buffer_bytes_max) {
-		dst->buffer_bytes_max = src->buffer_bytes_max;
-		dst->period_bytes_max = src->buffer_bytes_max /
-			src->periods_min;
-		dst->periods_max = dst->buffer_bytes_max /
-			dst->period_bytes_min;
-	}
-}
 
 struct ALSA_SNDIF_SAMPLE_FORMAT {
 	uint8_t sndif;
@@ -457,11 +374,12 @@ static int snd_drv_be_stream_open(struct snd_pcm_substream *substream,
 	req->op.open.pcm_format = (uint8_t)ret;
 	req->op.open.pcm_channels = runtime->channels;
 	req->op.open.pcm_rate = runtime->rate;
-	req->op.open.buffer_sz = runtime->buffer_size;
+	req->op.open.buffer_sz = snd_pcm_lib_buffer_bytes(substream);
+	req->op.open.period_sz = snd_pcm_lib_period_bytes(substream);
 	req->op.open.gref_directory = sh_buf_get_dir_start(&stream->sh_buf);
 
-	printk("buffer_size %lu stream->sh_buf.vbuffer_sz %zu\n", runtime->buffer_size, stream->sh_buf.vbuffer_sz);
-	printk("period_size %lu\n", runtime->period_size);
+	printk("buffer_size %u stream->sh_buf.vbuffer_sz %zu\n", req->op.open.buffer_sz, stream->sh_buf.vbuffer_sz);
+	printk("period_size %u\n", req->op.open.period_sz);
 
 
 	ret = snd_drv_be_stream_do_io(evt_chnl);
@@ -502,41 +420,10 @@ static int snd_drv_be_stream_close(struct snd_pcm_substream *substream,
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
-static int snd_drv_be_stream_get_hw_params(struct snd_pcm_substream *substream,
-	struct pcm_stream_info *stream, struct xensnd_get_hw_resp *hw)
-{
-	struct pcm_instance_info *pcm_instance =
-		snd_pcm_substream_chip(substream);
-	struct drv_info *drv_info;
-	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
-	unsigned long flags;
-	int ret;
-
-	drv_info = pcm_instance->card_info->drv_info;
-
-	spin_lock_irqsave(&drv_info->io_lock, flags);
-	evt_chnl = &stream->evt_pair->req;
-	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_GET_HW_PARAMS);
-
-	ret = snd_drv_be_stream_do_io(evt_chnl);
-	spin_unlock_irqrestore(&drv_info->io_lock, flags);
-
-	if (ret < 0)
-		return ret;
-
-	ret = snd_drv_be_stream_wait_io(evt_chnl);
-
-	if (ret < 0)
-		return ret;
-
-	*hw = evt_chnl->u.req.pcm_hw;
-	return 0;
-}
-
 static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
 	struct pcm_stream_info *stream, int type)
 {
+#if 0
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct drv_info *drv_info;
@@ -555,10 +442,10 @@ static int snd_drv_be_stream_trigger(struct snd_pcm_substream *substream,
 	ret = snd_drv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 
-	if (ret < 0)
-		return ret;
-
-	return snd_drv_be_stream_wait_io(evt_chnl);
+	return ret;
+#else
+	return 0;
+#endif
 }
 
 static struct pcm_stream_info *stream_get(
@@ -582,17 +469,14 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	struct pcm_stream_info *stream = stream_get(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
-	struct xensnd_get_hw_resp backend_hw;
 	unsigned long flags;
-	int ret;
 
 	printk("%s %d index %d\n", __FUNCTION__, __LINE__, stream->index);
 	/*
 	 * return our HW properties: override defaults with those configured
 	 * via XenStore
 	 */
-	snd_drv_copy_pcm_hw(&runtime->hw, &stream->pcm_hw,
-		&pcm_instance->pcm_hw);
+	runtime->hw = stream->pcm_hw;
 	runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_MMAP_VALID |
 		SNDRV_PCM_INFO_DOUBLE |
@@ -613,17 +497,6 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 	printk("%s %d substream %p\n", __FUNCTION__, __LINE__, stream->evt_pair->evt.u.evt.substream);
 	printk("%s %d channel %p\n", __FUNCTION__, __LINE__, &stream->evt_pair->evt);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
-
-	/* now get HW parameters from the backend */
-	ret = snd_drv_be_stream_get_hw_params(substream, stream, &backend_hw);
-	if (ret < 0)
-		return ret;
-
-	runtime->hw.period_bytes_min = backend_hw.period_sz_min;
-	runtime->hw.period_bytes_max = backend_hw.period_sz_max;
-	runtime->hw.buffer_bytes_max = backend_hw.buffer_sz_max;
-	runtime->hw.periods_max = backend_hw.buffer_sz_max /
-		backend_hw.period_sz_min;
 	return 0;
 }
 
@@ -651,15 +524,11 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	struct pcm_instance_info *pcm_instance =
 		snd_pcm_substream_chip(substream);
 	struct pcm_stream_info *stream = stream_get(substream);
-	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct drv_info *drv_info;
 	unsigned int buffer_size;
 	int ret;
 
 	printk("%s %d\n", __FUNCTION__, __LINE__);
-
-	printk("buffer_size %lu\n", runtime->buffer_size);
-	printk("period_size %lu\n", runtime->period_size);
 
 	/*
 	 * this callback may be called multiple times,
@@ -671,6 +540,7 @@ static int snd_drv_alsa_hw_params(struct snd_pcm_substream *substream,
 	buffer_size = params_buffer_bytes(params);
 
 	printk("buffer_size %u, bytes\n", buffer_size);
+	printk("channels %u\n", params_channels(params));
 
 	ret = sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf, buffer_size);
 	if (ret < 0)
@@ -713,21 +583,26 @@ static int snd_drv_alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		type = XENSND_OP_TRIGGER_START;
+		printk("%s SNDRV_PCM_TRIGGER_START\n", __FUNCTION__);
 		break;
+
 	case SNDRV_PCM_TRIGGER_RESUME:
 		type = XENSND_OP_TRIGGER_RESUME;
+		printk("%s SNDRV_PCM_TRIGGER_RESUME\n", __FUNCTION__);
 		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
 		type = XENSND_OP_TRIGGER_STOP;
+		printk("%s SNDRV_PCM_TRIGGER_STOP\n", __FUNCTION__);
 		break;
 
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 		type = XENSND_OP_TRIGGER_PAUSE;
+		printk("%s SNDRV_PCM_TRIGGER_SUSPEND\n", __FUNCTION__);
 		break;
 
 	default:
-		return 0;
+		return -EINVAL;
 	}
 
 	return snd_drv_be_stream_trigger(substream,
@@ -989,7 +864,7 @@ static struct snd_pcm_ops snd_drv_alsa_capture_ops = {
 };
 
 static int snd_drv_new_pcm(struct card_info *card_info,
-	struct cfg_pcm_instance *instance_config,
+	struct cfg_pcm_instance *instance_cfg,
 	struct pcm_instance_info *pcm_instance_info)
 {
 	struct snd_pcm *pcm;
@@ -997,30 +872,29 @@ static int snd_drv_new_pcm(struct card_info *card_info,
 
 	dev_dbg(&card_info->drv_info->xb_dev->dev,
 		"New PCM device \"%s\" with id %d playback %d capture %d",
-		instance_config->name,
-		instance_config->device_id,
-		instance_config->num_streams_pb,
-		instance_config->num_streams_cap);
+		instance_cfg->name,
+		instance_cfg->device_id,
+		instance_cfg->num_streams_pb,
+		instance_cfg->num_streams_cap);
 
 	pcm_instance_info->card_info = card_info;
 
-	snd_drv_copy_pcm_hw(&pcm_instance_info->pcm_hw,
-		&instance_config->pcm_hw, &card_info->pcm_hw);
+	pcm_instance_info->pcm_hw = instance_cfg->pcm_hw;
 
-	if (instance_config->num_streams_pb) {
+	if (instance_cfg->num_streams_pb) {
 		pcm_instance_info->streams_pb = devm_kcalloc(
 			&card_info->card->card_dev,
-			instance_config->num_streams_pb,
+			instance_cfg->num_streams_pb,
 			sizeof(struct pcm_stream_info),
 			GFP_KERNEL);
 		if (!pcm_instance_info->streams_pb)
 			return -ENOMEM;
 	}
 
-	if (instance_config->num_streams_cap) {
+	if (instance_cfg->num_streams_cap) {
 		pcm_instance_info->streams_cap = devm_kcalloc(
 			&card_info->card->card_dev,
-			instance_config->num_streams_cap,
+			instance_cfg->num_streams_cap,
 			sizeof(struct pcm_stream_info),
 			GFP_KERNEL);
 		if (!pcm_instance_info->streams_cap)
@@ -1028,28 +902,28 @@ static int snd_drv_new_pcm(struct card_info *card_info,
 	}
 
 	pcm_instance_info->num_pcm_streams_pb =
-			instance_config->num_streams_pb;
+			instance_cfg->num_streams_pb;
 	pcm_instance_info->num_pcm_streams_cap =
-			instance_config->num_streams_cap;
+			instance_cfg->num_streams_cap;
 
 	for (i = 0; i < pcm_instance_info->num_pcm_streams_pb; i++) {
 		pcm_instance_info->streams_pb[i].pcm_hw =
-			instance_config->streams_pb[i].pcm_hw;
+			instance_cfg->streams_pb[i].pcm_hw;
 		pcm_instance_info->streams_pb[i].index =
-			instance_config->streams_pb[i].index;
+			instance_cfg->streams_pb[i].index;
 	}
 
 	for (i = 0; i < pcm_instance_info->num_pcm_streams_cap; i++) {
 		pcm_instance_info->streams_cap[i].pcm_hw =
-			instance_config->streams_cap[i].pcm_hw;
+			instance_cfg->streams_cap[i].pcm_hw;
 		pcm_instance_info->streams_cap[i].index =
-			instance_config->streams_cap[i].index;
+			instance_cfg->streams_cap[i].index;
 	}
 
-	ret = snd_pcm_new(card_info->card, instance_config->name,
-			instance_config->device_id,
-			instance_config->num_streams_pb,
-			instance_config->num_streams_cap,
+	ret = snd_pcm_new(card_info->card, instance_cfg->name,
+			instance_cfg->device_id,
+			instance_cfg->num_streams_pb,
+			instance_cfg->num_streams_cap,
 			&pcm);
 	if (ret < 0)
 		return ret;
@@ -1058,11 +932,11 @@ static int snd_drv_new_pcm(struct card_info *card_info,
 	pcm->info_flags = 0;
 	strncpy(pcm->name, "Virtual card PCM", sizeof(pcm->name));
 
-	if (instance_config->num_streams_pb)
+	if (instance_cfg->num_streams_pb)
 		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
 				&snd_drv_alsa_playback_ops);
 
-	if (instance_config->num_streams_cap)
+	if (instance_cfg->num_streams_cap)
 		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE,
 				&snd_drv_alsa_capture_ops);
 
@@ -1224,10 +1098,8 @@ again:
 			complete(&channel->u.req.completion);
 			break;
 
-		case XENSND_OP_GET_HW_PARAMS:
-			channel->u.req.resp_status = resp->status;
-			channel->u.req.pcm_hw = resp->op.hw;
-			complete(&channel->u.req.completion);
+		case XENSND_OP_TRIGGER:
+			/* this is the response for asynchronous command */
 			break;
 
 		default:
@@ -1802,7 +1674,40 @@ static void cfg_formats(char *list, unsigned int len,
 		pcm_hw->formats = formats;
 }
 
-static void cfg_pcm_hw(const char *path,
+#define MAX_BUFFER_SIZE		(64 * 1024)
+#define MIN_PERIOD_SIZE		64
+#define MAX_PERIOD_SIZE		MAX_BUFFER_SIZE
+#define USE_FORMATS		(SNDRV_PCM_FMTBIT_U8 | \
+				 SNDRV_PCM_FMTBIT_S16_LE)
+#define USE_RATE		(SNDRV_PCM_RATE_CONTINUOUS | \
+				 SNDRV_PCM_RATE_8000_48000)
+#define USE_RATE_MIN		5512
+#define USE_RATE_MAX		48000
+#define USE_CHANNELS_MIN	1
+#define USE_CHANNELS_MAX	2
+#define USE_PERIODS_MIN		2
+#define USE_PERIODS_MAX		(MAX_BUFFER_SIZE / MIN_PERIOD_SIZE)
+
+static struct snd_pcm_hardware SND_DRV_PCM_HW_DEFAULT = {
+	.info = (SNDRV_PCM_INFO_MMAP |
+		 SNDRV_PCM_INFO_INTERLEAVED |
+		 SNDRV_PCM_INFO_RESUME |
+		 SNDRV_PCM_INFO_MMAP_VALID),
+	.formats = USE_FORMATS,
+	.rates = USE_RATE,
+	.rate_min = USE_RATE_MIN,
+	.rate_max = USE_RATE_MAX,
+	.channels_min = USE_CHANNELS_MIN,
+	.channels_max = USE_CHANNELS_MAX,
+	.buffer_bytes_max = MAX_BUFFER_SIZE,
+	.period_bytes_min = MIN_PERIOD_SIZE,
+	.period_bytes_max = MAX_PERIOD_SIZE,
+	.periods_min = USE_PERIODS_MIN,
+	.periods_max = USE_PERIODS_MAX,
+	.fifo_size = 0,
+};
+
+static void cfg_read_pcm_hw(const char *path,
 	struct snd_pcm_hardware *parent_pcm_hw,
 	struct snd_pcm_hardware *pcm_hw)
 {
@@ -1811,7 +1716,10 @@ static void cfg_pcm_hw(const char *path,
 	size_t buf_sz;
 	unsigned int len;
 
-	/* inherit parent's PCM HW and read overrides if any */
+	if (!parent_pcm_hw)
+		parent_pcm_hw = &SND_DRV_PCM_HW_DEFAULT;
+
+	/* inherit parent's PCM HW and read overrides from XenStore */
 	*pcm_hw = *parent_pcm_hw;
 
 	val = xenbus_read_unsigned(path, XENSND_FIELD_CHANNELS_MIN, 0);
@@ -1837,6 +1745,17 @@ static void cfg_pcm_hw(const char *path,
 	buf_sz = xenbus_read_unsigned(path, XENSND_FIELD_BUFFER_SIZE, 0);
 	if (buf_sz)
 		pcm_hw->buffer_bytes_max = buf_sz;
+
+	/* now validate all */
+	if (pcm_hw->channels_min > pcm_hw->channels_max)
+		pcm_hw->channels_min = pcm_hw->channels_max;
+	if (pcm_hw->rate_min > pcm_hw->rate_max)
+		pcm_hw->rate_min = pcm_hw->rate_max;
+
+	/* update configuration to match new values */
+	pcm_hw->period_bytes_max = pcm_hw->buffer_bytes_max;
+	pcm_hw->periods_max = pcm_hw->period_bytes_max /
+		pcm_hw->period_bytes_min;
 }
 
 static int cfg_get_stream_type(const char *path, int index,
@@ -1920,7 +1839,7 @@ static int cfg_stream(struct drv_info *drv_info,
 	 * and update if so, e.g. we inherit all values from device's PCM HW,
 	 * but can still override some of the values for the stream
 	 */
-	cfg_pcm_hw(stream->xenstore_path,
+	cfg_read_pcm_hw(stream->xenstore_path,
 		&pcm_instance->pcm_hw, &stream->pcm_hw);
 	ret = 0;
 
@@ -1958,7 +1877,7 @@ static int cfg_device(struct drv_info *drv_info,
 	 * and update if so, e.g. we inherit all values from card's PCM HW,
 	 * but can still override some of the values for the device
 	 */
-	cfg_pcm_hw(device_path, parent_pcm_hw, &pcm_instance->pcm_hw);
+	cfg_read_pcm_hw(device_path, parent_pcm_hw, &pcm_instance->pcm_hw);
 
 	/*
 	 * find out how many streams were configured in Xen store:
@@ -2048,8 +1967,7 @@ static int cfg_card(struct drv_info *drv_info,
 	}
 
 	/* start from default PCM HW configuration for the card */
-	cfg_pcm_hw(xb_dev->nodename, &snd_drv_pcm_hw_default,
-		&plat_data->cfg_card.pcm_hw);
+	cfg_read_pcm_hw(xb_dev->nodename, NULL, &plat_data->cfg_card.pcm_hw);
 
 	plat_data->cfg_card.pcm_instances = devm_kcalloc(
 		&drv_info->xb_dev->dev, num_devices,

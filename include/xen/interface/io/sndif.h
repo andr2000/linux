@@ -464,7 +464,6 @@
 #define XENSND_OP_TRIGGER_STOP		2
 #define XENSND_OP_TRIGGER_RESUME	3
 
-
 /*
  ******************************************************************************
  *                                 EVENT CODES
@@ -878,9 +877,7 @@ struct xensnd_resp {
 	uint8_t operation;
 	uint8_t reserved;
 	int32_t status;
-	union {
-		uint8_t reserved1[24];
-	} op;
+	uint8_t reserved1[24];
 };
 
 struct xensnd_evt {

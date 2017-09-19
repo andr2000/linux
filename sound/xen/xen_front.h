@@ -19,10 +19,13 @@
 #ifndef __XEN_FRONT_H
 #define __XEN_FRONT_H
 
+#include "xen_front_cfg.h"
+
 struct drv_info {
 	struct xenbus_device *xb_dev;
 	spinlock_t io_lock;
 	struct mutex mutex;
+	struct xen_front_cfg_card_plat_data cfg_plat_data;
 };
 
 #endif /* __XEN_FRONT_H */

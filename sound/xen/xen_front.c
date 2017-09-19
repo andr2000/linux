@@ -26,6 +26,12 @@
 
 #include <xen/interface/io/sndif.h>
 
+#include "xen_front.h"
+
+static void xenbus_drv_remove_internal(struct drv_info *drv_info)
+{
+}
+
 static void xenbus_drv_be_on_changed(struct xenbus_device *xb_dev,
 	enum xenbus_state backend_state)
 {
@@ -34,11 +40,28 @@ static void xenbus_drv_be_on_changed(struct xenbus_device *xb_dev,
 static int xenbus_drv_probe(struct xenbus_device *xb_dev,
 	const struct xenbus_device_id *id)
 {
+	struct drv_info *drv_info;
+
+	drv_info = devm_kzalloc(&xb_dev->dev, sizeof(*drv_info), GFP_KERNEL);
+	if (!drv_info) {
+		xenbus_dev_fatal(xb_dev, -ENOMEM, "allocating device memory");
+		return -ENOMEM;
+	}
+
+	drv_info->xb_dev = xb_dev;
+	spin_lock_init(&drv_info->io_lock);
+	mutex_init(&drv_info->mutex);
+	dev_set_drvdata(&xb_dev->dev, drv_info);
 	return 0;
 }
 
 static int xenbus_drv_remove(struct xenbus_device *dev)
 {
+	struct drv_info *drv_info = dev_get_drvdata(&dev->dev);
+
+	mutex_lock(&drv_info->mutex);
+	xenbus_drv_remove_internal(drv_info);
+	mutex_unlock(&drv_info->mutex);
 	return 0;
 }
 

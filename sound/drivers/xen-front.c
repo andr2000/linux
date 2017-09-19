@@ -21,6 +21,7 @@
 #include <linux/atomic.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/delay.h>
 #include <linux/version.h>
 
 #include <sound/core.h>
@@ -2237,8 +2238,29 @@ static int xenbus_drv_probe(struct xenbus_device *xb_dev,
 static int xenbus_drv_remove(struct xenbus_device *dev)
 {
 	struct drv_info *drv_info = dev_get_drvdata(&dev->dev);
+	int to = 10;
 
-	xenbus_switch_state(dev, XenbusStateClosed);
+	/*
+	 * FIXME: on driver removal it is disconnected from XenBus,
+	 * so no backend state change events come in via .otherend_changed
+	 * callback. This prevents us from exiting gracefully, e.g.
+	 * signaling the backend to free event channels, waiting for its
+	 * state change to closed and cleaning at our end.
+	 * Workaround: read backend's state manually until it goes into
+	 * XenbusStateInitWait state
+	 */
+	xenbus_switch_state(dev, XenbusStateClosing);
+	while ((xenbus_read_unsigned(drv_info->xb_dev->otherend,
+		"state", XenbusStateUnknown) != XenbusStateInitWait) && to--)
+		msleep(100);
+
+	if (!to)
+		dev_warn(&dev->dev,
+			"Backend state is %s while removing the driver\n",
+			xenbus_strstate(xenbus_read_unsigned(
+				drv_info->xb_dev->otherend,
+				"state", XenbusStateUnknown)));
+
 	mutex_lock(&drv_info->mutex);
 	xenbus_drv_remove_internal(drv_info);
 	mutex_unlock(&drv_info->mutex);

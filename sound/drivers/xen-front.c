@@ -338,9 +338,9 @@ static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evt_chnl)
 {
 	if (wait_for_completion_timeout(
 			&evt_chnl->u.req.completion,
-			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
+			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0)
 		return -ETIMEDOUT;
-	}
+
 	return evt_chnl->u.req.resp_status;
 }
 
@@ -384,12 +384,10 @@ static int snd_drv_be_stream_open(struct pcm_stream_info *stream,
 
 static int snd_drv_be_stream_close(struct pcm_stream_info *stream)
 {
+	struct evtchnl_info *evt_chnl = &stream->evt_pair->req;
 	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	evt_chnl = &stream->evt_pair->req;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	stream->is_open = false;
@@ -404,16 +402,13 @@ static int snd_drv_be_stream_close(struct pcm_stream_info *stream)
 	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
-
 static int snd_drv_be_stream_write(struct pcm_stream_info *stream,
 	unsigned long pos, unsigned long count)
 {
+	struct evtchnl_info *evt_chnl = &stream->evt_pair->req;
 	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	evt_chnl = &stream->evt_pair->req;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
@@ -432,12 +427,10 @@ static int snd_drv_be_stream_write(struct pcm_stream_info *stream,
 static int snd_drv_be_stream_read(struct pcm_stream_info *stream,
 	unsigned long pos, unsigned long count)
 {
+	struct evtchnl_info *evt_chnl = &stream->evt_pair->req;
 	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	evt_chnl = &stream->evt_pair->req;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
@@ -455,12 +448,10 @@ static int snd_drv_be_stream_read(struct pcm_stream_info *stream,
 
 static int snd_drv_be_stream_trigger(struct pcm_stream_info *stream, int type)
 {
+	struct evtchnl_info *evt_chnl = &stream->evt_pair->req;
 	struct xensnd_req *req;
-	struct evtchnl_info *evt_chnl;
 	unsigned long flags;
 	int ret;
-
-	evt_chnl = &stream->evt_pair->req;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
@@ -514,10 +505,10 @@ static int snd_drv_alsa_open(struct snd_pcm_substream *substream)
 
 	spin_lock_irqsave(&drv_info->io_lock, flags);
 	stream->evt_pair = &drv_info->evt_pairs[stream->index];
-	snd_drv_stream_clear(stream);
 	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.state = EVTCHNL_STATE_CONNECTED;
 	stream->evt_pair->evt.u.evt.substream = substream;
+	snd_drv_stream_clear(stream);
 	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }
@@ -1153,7 +1144,7 @@ static void evtchnl_free(struct drv_info *drv_info,
 	if (channel->port)
 		xenbus_free_evtchn(drv_info->xb_dev, channel->port);
 
-	/* End access and free the pages */
+	/* end access and free the page */
 	if (channel->gref != GRANT_INVALID_REF)
 		gnttab_end_foreign_access(channel->gref, 0, page);
 

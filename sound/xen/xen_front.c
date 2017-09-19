@@ -34,6 +34,16 @@ static void xenbus_drv_remove_internal(struct drv_info *drv_info)
 
 static int xenbus_drv_be_on_initwait(struct drv_info *drv_info)
 {
+	int num_streams;
+	int ret;
+
+	drv_info->cfg_plat_data.drv_info = drv_info;
+	num_streams = 0;
+	ret = xen_front_cfg_card(drv_info, &drv_info->cfg_plat_data,
+		&num_streams);
+	if (ret < 0)
+		return ret;
+
 	return 0;
 }
 

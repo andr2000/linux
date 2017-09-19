@@ -74,11 +74,6 @@ struct evtchnl_info {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
-			/*
-			 * set if we are waiting for asynchronous
-			 * command to finish, e.g. before sending other request
-			 */
-			atomic_t wait_async;
 		} req;
 		struct {
 			struct xensnd_event_page *page;
@@ -307,7 +302,6 @@ static void snd_drv_stream_clear(struct pcm_stream_info *stream)
 	atomic_set(&stream->hw_ptr, 0);
 	stream->evt_pair->req.evt_next_id = 0;
 	stream->evt_pair->evt.evt_next_id = 0;
-	atomic_set(&stream->evt_pair->req.u.req.wait_async, 0);
 	sh_buf_clear(&stream->sh_buf);
 }
 
@@ -350,19 +344,6 @@ static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evt_chnl)
 	return evt_chnl->u.req.resp_status;
 }
 
-static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evt_chnl)
-{
-	if (!atomic_cmpxchg(&evt_chnl->u.req.wait_async, 1, 0))
-		return 0;
-
-	if (wait_for_completion_timeout(
-			&evt_chnl->u.req.completion,
-			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
-		return -ETIMEDOUT;
-	}
-	return evt_chnl->u.req.resp_status;
-}
-
 static int snd_drv_be_stream_open(struct pcm_stream_info *stream,
 	snd_pcm_format_t format, unsigned int channels, unsigned int rate,
 	uint32_t buffer_sz, uint32_t period_sz)
@@ -379,10 +360,6 @@ static int snd_drv_be_stream_open(struct pcm_stream_info *stream,
 			"Unsupported sample format: %d\n", format);
 		return sndif_format;
 	}
-
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	stream->is_open = false;
@@ -414,10 +391,6 @@ static int snd_drv_be_stream_close(struct pcm_stream_info *stream)
 
 	evt_chnl = &stream->evt_pair->req;
 
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
-
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	stream->is_open = false;
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_CLOSE);
@@ -441,10 +414,6 @@ static int snd_drv_be_stream_write(struct pcm_stream_info *stream,
 	int ret;
 
 	evt_chnl = &stream->evt_pair->req;
-
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
 
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
@@ -470,10 +439,6 @@ static int snd_drv_be_stream_read(struct pcm_stream_info *stream,
 
 	evt_chnl = &stream->evt_pair->req;
 
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
-
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
 	req->op.rw.length = count;
@@ -497,20 +462,17 @@ static int snd_drv_be_stream_trigger(struct pcm_stream_info *stream, int type)
 
 	evt_chnl = &stream->evt_pair->req;
 
-	ret = snd_drv_be_stream_wait_async_io(evt_chnl);
-	if (ret < 0)
-		return ret;
-
 	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
 	req = snd_drv_be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
 	req->op.trigger.type = type;
 
-	atomic_set(&evt_chnl->u.req.wait_async, 1);
-
 	ret = snd_drv_be_stream_do_io(evt_chnl);
 	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
 
-	return ret;
+	if (ret < 0)
+		return ret;
+
+	return snd_drv_be_stream_wait_io(evt_chnl);
 }
 
 static struct pcm_stream_info *stream_get(
@@ -917,6 +879,8 @@ static int snd_drv_new_pcm(struct card_info *card_info,
 
 	pcm->private_data = pcm_instance_info;
 	pcm->info_flags = 0;
+	/* we want to handle all PCM operations in non-atomic context */
+	pcm->nonatomic = true;
 	strncpy(pcm->name, "Virtual card PCM", sizeof(pcm->name));
 
 	if (instance_cfg->num_streams_pb)
@@ -1223,6 +1187,7 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 	unsigned long page;
 	grant_ref_t gref;
 	irq_handler_t handler;
+	char *handler_name = NULL;
 	int ret;
 
 	memset(channel, 0, sizeof(*channel));
@@ -1233,6 +1198,14 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 	channel->gref = GRANT_INVALID_REF;
 	page = get_zeroed_page(GFP_NOIO | __GFP_HIGH);
 	if (!page) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	handler_name = kasprintf(GFP_KERNEL, "%s-%s", XENSND_DRIVER_NAME,
+		type == EVTCHNL_TYPE_REQ ? XENSND_FIELD_REQ_RING_REF :
+			XENSND_FIELD_EVT_RING_REF);
+	if (!handler_name) {
 		ret = -ENOMEM;
 		goto fail;
 	}
@@ -1265,16 +1238,29 @@ static int evtchnl_alloc(struct drv_info *drv_info, int index,
 	if (ret < 0)
 		goto fail;
 
-	ret = bind_evtchn_to_irqhandler(channel->port,
-		handler, 0, xb_dev->devicetype, channel);
-	if (ret < 0)
+	ret = bind_evtchn_to_irq(channel->port);
+	if (ret < 0) {
+		dev_err(&xb_dev->dev,
+			"Failed to bind IRQ for domid %d port %d: %d\n",
+			drv_info->xb_dev->otherend_id, channel->port, ret);
 		goto fail;
+	}
 
 	channel->irq = ret;
 
+	ret = request_threaded_irq(channel->irq, NULL, handler,
+		IRQF_ONESHOT, handler_name, channel);
+	if (ret < 0) {
+		dev_err(&xb_dev->dev, "Failed to request IRQ %d: %d\n",
+			channel->irq, ret);
+		goto fail;
+	}
+
+	kfree(handler_name);
 	return 0;
 
 fail:
+	kfree(handler_name);
 	dev_err(&xb_dev->dev, "Failed to allocate ring: %d\n", ret);
 	return ret;
 }

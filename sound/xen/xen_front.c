@@ -27,9 +27,11 @@
 #include <xen/interface/io/sndif.h>
 
 #include "xen_front.h"
+#include "xen_front_evtchnl.h"
 
 static void xenbus_drv_remove_internal(struct drv_info *drv_info)
 {
+	xen_front_evtchnl_free_all(drv_info);
 }
 
 static int xenbus_drv_be_on_initwait(struct drv_info *drv_info)
@@ -44,7 +46,12 @@ static int xenbus_drv_be_on_initwait(struct drv_info *drv_info)
 	if (ret < 0)
 		return ret;
 
-	return 0;
+	/* create event channels for all streams and publish */
+	ret = xen_front_evtchnl_create_all(drv_info, num_streams);
+	if (ret < 0)
+		return ret;
+
+	return xen_front_evtchnl_publish_all(drv_info);
 }
 
 static int xenbus_drv_be_on_connected(struct drv_info *drv_info)

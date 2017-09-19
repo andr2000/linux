@@ -38,6 +38,13 @@
 
 /*
  ******************************************************************************
+ *                           Protocol version
+ ******************************************************************************
+ */
+#define XENDISPL_PROTOCOL_VERSION	"2"
+
+/*
+ ******************************************************************************
  *                  Feature and Parameter Negotiation
  ******************************************************************************
  *
@@ -281,13 +288,13 @@
  *
  *-------------------- Stream Request Transport Parameters --------------------
  *
- * event-channel
+ * req-event-channel
  *      Values:         <uint32_t>
  *
  *      The identifier of the Xen event channel used to signal activity
  *      in the ring buffer.
  *
- * ring-ref
+ * req-ring-ref
  *      Values:         <uint32_t>
  *
  *      The Xen grant reference granting permission for the backend to map
@@ -599,9 +606,7 @@
  * +----------------+----------------+----------------+----------------+
  * |                           gref_directory                          | 24
  * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 28
- * +----------------+----------------+----------------+----------------+
- * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * |                             period_sz                             | 28
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 32
  * +----------------+----------------+----------------+----------------+
@@ -611,6 +616,14 @@
  * pcm_channels - uint8_t, number of channels of this stream,
  *   [channels-min; channels-max]
  * buffer_sz - uint32_t, buffer size to be allocated, octets
+ * period_sz - uint32_t, recommended event period size, octets
+ *   This is the recommended (hint) value of the period at which frontend would
+ *   like to receive XENSND_EVT_CUR_POS notifications from the backend when
+ *   stream position advances during playback/capture.
+ *   It shows how many octets are expected to be played/captured before
+ *   sending such an event.
+ *   If set to 0 no XENSND_EVT_CUR_POS events are sent by the backend.
+ *
  * gref_directory - grant_ref_t, a reference to the first shared page
  *   describing shared buffer references. At least one page exists. If shared
  *   buffer size  (buffer_sz) exceeds what can be addressed by this single page,
@@ -830,17 +843,17 @@ struct xensnd_rw_req {
  * type - uint8_t, type of the event
  *
  *
- * Current stream position advanced - event from back to front
- *   when stream's playback/capture position has changed:
+ * Current stream position - event from back to front when stream's
+ *   playback/capture position has advanced:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
  * |               id                |   _EVT_CUR_POS |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
- * |                        cur_frame low 32-bit                       | 12
+ * |                         position low 32-bit                       | 12
  * +----------------+----------------+----------------+----------------+
- * |                        cur_frame high 32-bit                      | 16
+ * |                         position high 32-bit                      | 16
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 20
  * +----------------+----------------+----------------+----------------+
@@ -849,11 +862,8 @@ struct xensnd_rw_req {
  * |                             reserved                              | 32
  * +----------------+----------------+----------------+----------------+
  *
- * cur_frame - current playback/stream position, frames
+ * position - current value of stream's playback/capture position, octets
  *
- * Frame is defined as
- *   1 frame == XENSND_OP_OPEN.pcm_channels *
- *              sample_size_in_bytes(XENSND_OP_OPEN.pcm_format)
  */
 
 struct xensnd_cur_pos_evt {

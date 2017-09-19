@@ -21,10 +21,14 @@
 
 #include "xen_front_cfg.h"
 
+struct xen_front_evtchnl_pair_info;
+
 struct drv_info {
 	struct xenbus_device *xb_dev;
 	spinlock_t io_lock;
 	struct mutex mutex;
+	int num_evt_pairs;
+	struct xen_front_evtchnl_pair_info *evt_pairs;
 	struct xen_front_cfg_card_plat_data cfg_plat_data;
 };
 

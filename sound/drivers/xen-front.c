@@ -312,15 +312,15 @@ static void snd_drv_stream_clear(struct pcm_stream_info *stream)
 }
 
 static struct xensnd_req *snd_drv_be_stream_prepare_req(
-	struct evtchnl_info *evtchnl, uint8_t operation)
+	struct evtchnl_info *evt_chnl, uint8_t operation)
 {
 	struct xensnd_req *req;
 
-	req = RING_GET_REQUEST(&evtchnl->u.req.ring,
-		evtchnl->u.req.ring.req_prod_pvt);
+	req = RING_GET_REQUEST(&evt_chnl->u.req.ring,
+		evt_chnl->u.req.ring.req_prod_pvt);
 	req->operation = operation;
-	req->id = evtchnl->evt_next_id++;
-	evtchnl->evt_id = req->id;
+	req->id = evt_chnl->evt_next_id++;
+	evt_chnl->evt_id = req->id;
 	return req;
 }
 
@@ -330,37 +330,37 @@ static void snd_drv_be_stream_free(struct pcm_stream_info *stream)
 	snd_drv_stream_clear(stream);
 }
 
-static int snd_drv_be_stream_do_io(struct evtchnl_info *evtchnl)
+static int snd_drv_be_stream_do_io(struct evtchnl_info *evt_chnl)
 {
-	if (unlikely(evtchnl->state != EVTCHNL_STATE_CONNECTED))
+	if (unlikely(evt_chnl->state != EVTCHNL_STATE_CONNECTED))
 		return -EIO;
 
-	reinit_completion(&evtchnl->u.req.completion);
-	evtchnl_flush(evtchnl);
+	reinit_completion(&evt_chnl->u.req.completion);
+	evtchnl_flush(evt_chnl);
 	return 0;
 }
 
-static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evtchnl)
+static inline int snd_drv_be_stream_wait_io(struct evtchnl_info *evt_chnl)
 {
 	if (wait_for_completion_timeout(
-			&evtchnl->u.req.completion,
+			&evt_chnl->u.req.completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
 		return -ETIMEDOUT;
 	}
-	return evtchnl->u.req.resp_status;
+	return evt_chnl->u.req.resp_status;
 }
 
-static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evtchnl)
+static inline int snd_drv_be_stream_wait_async_io(struct evtchnl_info *evt_chnl)
 {
-	if (!atomic_cmpxchg(&evtchnl->u.req.wait_async, 1, 0))
+	if (!atomic_cmpxchg(&evt_chnl->u.req.wait_async, 1, 0))
 		return 0;
 
 	if (wait_for_completion_timeout(
-			&evtchnl->u.req.completion,
+			&evt_chnl->u.req.completion,
 			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0) {
 		return -ETIMEDOUT;
 	}
-	return evtchnl->u.req.resp_status;
+	return evt_chnl->u.req.resp_status;
 }
 
 static int snd_drv_be_stream_open(struct pcm_stream_info *stream,

@@ -16,22 +16,12 @@
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
 
-#ifndef __XEN_FRONT_H
-#define __XEN_FRONT_H
+#ifndef __XEN_FRONT_ALSA_H
+#define __XEN_FRONT_ALSA_H
 
-#include "xen_front_cfg.h"
+struct drv_info;
 
-struct xen_front_evtchnl_pair_info;
+int xen_front_alsa_init(struct drv_info *drv_info);
+void xen_front_alsa_cleanup(struct drv_info *drv_info);
 
-struct drv_info {
-	struct xenbus_device *xb_dev;
-	spinlock_t io_lock;
-	struct mutex mutex;
-	bool snd_drv_registered;
-	struct platform_device *snd_drv_pdev;
-	int num_evt_pairs;
-	struct xen_front_evtchnl_pair_info *evt_pairs;
-	struct xen_front_cfg_card_plat_data cfg_plat_data;
-};
-
-#endif /* __XEN_FRONT_H */
+#endif /* __XEN_FRONT_ALSA_H */

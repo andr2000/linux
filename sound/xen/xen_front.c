@@ -27,10 +27,12 @@
 #include <xen/interface/io/sndif.h>
 
 #include "xen_front.h"
+#include "xen_front_alsa.h"
 #include "xen_front_evtchnl.h"
 
 static void xenbus_drv_remove_internal(struct drv_info *drv_info)
 {
+	xen_front_alsa_cleanup(drv_info);
 	xen_front_evtchnl_free_all(drv_info);
 }
 
@@ -54,9 +56,9 @@ static int xenbus_drv_be_on_initwait(struct drv_info *drv_info)
 	return xen_front_evtchnl_publish_all(drv_info);
 }
 
-static int xenbus_drv_be_on_connected(struct drv_info *drv_info)
+static inline int xenbus_drv_be_on_connected(struct drv_info *drv_info)
 {
-	return 0;
+	return xen_front_alsa_init(drv_info);
 }
 
 static inline void xenbus_drv_be_on_disconnected(struct drv_info *drv_info)

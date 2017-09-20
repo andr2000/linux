@@ -22,6 +22,7 @@
 #include <xen/xenbus.h>
 
 #include "xen_front.h"
+#include "xen_front_alsa.h"
 #include "xen_front_cfg.h"
 #include "xen_front_evtchnl.h"
 
@@ -111,6 +112,10 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENSND_EVT_CUR_POS:
+			spin_unlock_irqrestore(&drv_info->io_lock, flags);
+			xen_front_alsa_handle_cur_pos(channel,
+				event->op.cur_pos.position);
+			spin_lock_irqsave(&drv_info->io_lock, flags);
 			break;
 		}
 	}

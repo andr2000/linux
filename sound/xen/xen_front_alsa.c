@@ -38,6 +38,13 @@ struct pcm_stream_info {
 	struct snd_pcm_hardware pcm_hw;
 	struct xen_front_evtchnl_pair_info *evt_pair;
 	struct xen_front_sh_buf_info sh_buf;
+
+	/* number of processed frames as reported by the backend */
+	snd_pcm_uframes_t be_cur_frame;
+	/* current HW pointer to be reported via .period callback */
+	atomic_t hw_ptr;
+	/* modulo of the number of processed frames - for period detection */
+	uint32_t out_frames;
 };
 
 struct pcm_instance_info {
@@ -179,6 +186,9 @@ static int alsa_to_sndif_format(snd_pcm_format_t format)
 static void stream_clear(struct pcm_stream_info *stream)
 {
 	stream->is_open = false;
+	stream->be_cur_frame = 0;
+	stream->out_frames = 0;
+	atomic_set(&stream->hw_ptr, 0);
 	stream->evt_pair->req.evt_next_id = 0;
 	stream->evt_pair->evt.evt_next_id = 0;
 	xen_front_sh_buf_clear(&stream->sh_buf);
@@ -492,9 +502,34 @@ static int alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 	return be_stream_trigger(stream_get(substream), type);
 }
 
+void xen_front_alsa_handle_cur_pos(struct xen_front_evtchnl_info *channel,
+	uint64_t pos_bytes)
+{
+	struct snd_pcm_substream *substream = channel->u.evt.substream;
+	struct pcm_stream_info *stream = stream_get(substream);
+	snd_pcm_uframes_t delta, new_hw_ptr, cur_frame;
+
+	cur_frame = bytes_to_frames(substream->runtime, pos_bytes);
+
+	delta = cur_frame - stream->be_cur_frame;
+	stream->be_cur_frame = cur_frame;
+
+	new_hw_ptr = (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
+	new_hw_ptr = (new_hw_ptr + delta) % substream->runtime->buffer_size;
+	atomic_set(&stream->hw_ptr, (int)new_hw_ptr);
+
+	stream->out_frames += delta;
+	if (stream->out_frames > substream->runtime->period_size) {
+		stream->out_frames %= substream->runtime->period_size;
+		snd_pcm_period_elapsed(substream);
+	}
+}
+
 static snd_pcm_uframes_t alsa_pointer(struct snd_pcm_substream *substream)
 {
-	return 0;
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
 static int alsa_pb_copy_user(struct snd_pcm_substream *substream,

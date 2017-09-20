@@ -16,7 +16,6 @@
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
 
-#include <linux/atomic.h>
 #include <linux/platform_device.h>
 
 #include <sound/core.h>
@@ -32,7 +31,8 @@
 #include "xen_front_cfg.h"
 
 struct pcm_stream_info {
-	int dummy;
+	int index;
+	struct snd_pcm_hardware pcm_hw;
 };
 
 struct pcm_instance_info {
@@ -53,10 +53,188 @@ struct card_info {
 	struct pcm_instance_info *pcm_instances;
 };
 
+static int alsa_open(struct snd_pcm_substream *substream)
+{
+	return 0;
+}
+
+static int alsa_close(struct snd_pcm_substream *substream)
+{
+	return 0;
+}
+
+static int alsa_hw_params(struct snd_pcm_substream *substream,
+	struct snd_pcm_hw_params *params)
+{
+	return 0;
+}
+
+static int alsa_hw_free(struct snd_pcm_substream *substream)
+{
+	return 0;
+}
+
+static int alsa_prepare(struct snd_pcm_substream *substream)
+{
+	return 0;
+}
+
+static int alsa_trigger(struct snd_pcm_substream *substream, int cmd)
+{
+	return 0;
+}
+
+static snd_pcm_uframes_t alsa_pointer(struct snd_pcm_substream *substream)
+{
+	return 0;
+}
+
+static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
+	int channel, unsigned long pos, void __user *src,
+	unsigned long count)
+{
+	return 0;
+}
+
+static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
+	int channel, unsigned long pos, void *src, unsigned long count)
+{
+	return 0;
+}
+
+static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
+	int channel, unsigned long pos, void __user *dst,
+	unsigned long count)
+{
+	return 0;
+}
+
+static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
+	int channel, unsigned long pos, void *dst, unsigned long count)
+{
+	return 0;
+}
+
+static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
+	int channel, unsigned long pos, unsigned long count)
+{
+	return 0;
+}
+
+/*
+ * FIXME: The mmaped data transfer is asynchronous and there is no
+ * ack signal from user-space when it is done. This is the
+ * reason it is not implemented in the PV driver as we do need
+ * to know when the buffer can be transferred to the backend.
+ */
+
+static struct snd_pcm_ops snd_drv_alsa_playback_ops = {
+	.open = alsa_open,
+	.close = alsa_close,
+	.ioctl = snd_pcm_lib_ioctl,
+	.hw_params = alsa_hw_params,
+	.hw_free = alsa_hw_free,
+	.prepare = alsa_prepare,
+	.trigger = alsa_trigger,
+	.pointer = alsa_pointer,
+	.copy_user = alsa_pb_copy_user,
+	.copy_kernel = alsa_pb_copy_kernel,
+	.fill_silence = alsa_pb_fill_silence,
+};
+
+static struct snd_pcm_ops snd_drv_alsa_capture_ops = {
+	.open = alsa_open,
+	.close = alsa_close,
+	.ioctl = snd_pcm_lib_ioctl,
+	.hw_params = alsa_hw_params,
+	.hw_free = alsa_hw_free,
+	.prepare = alsa_prepare,
+	.trigger = alsa_trigger,
+	.pointer = alsa_pointer,
+	.copy_user = alsa_cap_copy_user,
+	.copy_kernel = alsa_cap_copy_kernel,
+};
+
 static int new_pcm_instance(struct card_info *card_info,
 	struct xen_front_cfg_pcm_instance *instance_cfg,
 	struct pcm_instance_info *pcm_instance_info)
 {
+	struct snd_pcm *pcm;
+	int ret, i;
+
+	dev_dbg(&card_info->drv_info->xb_dev->dev,
+		"New PCM device \"%s\" with id %d playback %d capture %d",
+		instance_cfg->name,
+		instance_cfg->device_id,
+		instance_cfg->num_streams_pb,
+		instance_cfg->num_streams_cap);
+
+	pcm_instance_info->card_info = card_info;
+
+	pcm_instance_info->pcm_hw = instance_cfg->pcm_hw;
+
+	if (instance_cfg->num_streams_pb) {
+		pcm_instance_info->streams_pb = devm_kcalloc(
+			&card_info->card->card_dev,
+			instance_cfg->num_streams_pb,
+			sizeof(struct pcm_stream_info),
+			GFP_KERNEL);
+		if (!pcm_instance_info->streams_pb)
+			return -ENOMEM;
+	}
+
+	if (instance_cfg->num_streams_cap) {
+		pcm_instance_info->streams_cap = devm_kcalloc(
+			&card_info->card->card_dev,
+			instance_cfg->num_streams_cap,
+			sizeof(struct pcm_stream_info),
+			GFP_KERNEL);
+		if (!pcm_instance_info->streams_cap)
+			return -ENOMEM;
+	}
+
+	pcm_instance_info->num_pcm_streams_pb =
+			instance_cfg->num_streams_pb;
+	pcm_instance_info->num_pcm_streams_cap =
+			instance_cfg->num_streams_cap;
+
+	for (i = 0; i < pcm_instance_info->num_pcm_streams_pb; i++) {
+		pcm_instance_info->streams_pb[i].pcm_hw =
+			instance_cfg->streams_pb[i].pcm_hw;
+		pcm_instance_info->streams_pb[i].index =
+			instance_cfg->streams_pb[i].index;
+	}
+
+	for (i = 0; i < pcm_instance_info->num_pcm_streams_cap; i++) {
+		pcm_instance_info->streams_cap[i].pcm_hw =
+			instance_cfg->streams_cap[i].pcm_hw;
+		pcm_instance_info->streams_cap[i].index =
+			instance_cfg->streams_cap[i].index;
+	}
+
+	ret = snd_pcm_new(card_info->card, instance_cfg->name,
+			instance_cfg->device_id,
+			instance_cfg->num_streams_pb,
+			instance_cfg->num_streams_cap,
+			&pcm);
+	if (ret < 0)
+		return ret;
+
+	pcm->private_data = pcm_instance_info;
+	pcm->info_flags = 0;
+	/* we want to handle all PCM operations in non-atomic context */
+	pcm->nonatomic = true;
+	strncpy(pcm->name, "Virtual card PCM", sizeof(pcm->name));
+
+	if (instance_cfg->num_streams_pb)
+		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
+				&snd_drv_alsa_playback_ops);
+
+	if (instance_cfg->num_streams_cap)
+		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE,
+				&snd_drv_alsa_capture_ops);
+
+	pcm_instance_info->pcm = pcm;
 	return 0;
 }
 

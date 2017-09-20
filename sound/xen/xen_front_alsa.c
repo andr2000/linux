@@ -33,6 +33,7 @@
 #include "xen_front_sh_buf.h"
 
 struct pcm_stream_info {
+	bool is_open;
 	int index;
 	struct snd_pcm_hardware pcm_hw;
 	struct xen_front_evtchnl_pair_info *evt_pair;
@@ -57,6 +58,294 @@ struct card_info {
 	struct pcm_instance_info *pcm_instances;
 };
 
+struct alsa_sndif_sample_format {
+	uint8_t sndif;
+	snd_pcm_format_t alsa;
+};
+
+static const struct alsa_sndif_sample_format ALSA_SNDIF_FORMATS[] = {
+	{
+		.sndif = XENSND_PCM_FORMAT_U8,
+		.alsa = SNDRV_PCM_FORMAT_U8
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S8,
+		.alsa = SNDRV_PCM_FORMAT_S8
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U16_LE,
+		.alsa = SNDRV_PCM_FORMAT_U16_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U16_BE,
+		.alsa = SNDRV_PCM_FORMAT_U16_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S16_LE,
+		.alsa = SNDRV_PCM_FORMAT_S16_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S16_BE,
+		.alsa = SNDRV_PCM_FORMAT_S16_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U24_LE,
+		.alsa = SNDRV_PCM_FORMAT_U24_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U24_BE,
+		.alsa = SNDRV_PCM_FORMAT_U24_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S24_LE,
+		.alsa = SNDRV_PCM_FORMAT_S24_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S24_BE,
+		.alsa = SNDRV_PCM_FORMAT_S24_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U32_LE,
+		.alsa = SNDRV_PCM_FORMAT_U32_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U32_BE,
+		.alsa = SNDRV_PCM_FORMAT_U32_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S32_LE,
+		.alsa = SNDRV_PCM_FORMAT_S32_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S32_BE,
+		.alsa = SNDRV_PCM_FORMAT_S32_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_A_LAW,
+		.alsa = SNDRV_PCM_FORMAT_A_LAW
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_MU_LAW,
+		.alsa = SNDRV_PCM_FORMAT_MU_LAW
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F32_LE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F32_BE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F64_LE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT64_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F64_BE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT64_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IEC958_SUBFRAME_LE,
+		.alsa = SNDRV_PCM_FORMAT_IEC958_SUBFRAME_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IEC958_SUBFRAME_BE,
+		.alsa = SNDRV_PCM_FORMAT_IEC958_SUBFRAME_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IMA_ADPCM,
+		.alsa = SNDRV_PCM_FORMAT_IMA_ADPCM
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_MPEG,
+		.alsa = SNDRV_PCM_FORMAT_MPEG
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_GSM,
+		.alsa = SNDRV_PCM_FORMAT_GSM
+	},
+};
+
+static int alsa_to_sndif_format(snd_pcm_format_t format)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ALSA_SNDIF_FORMATS); i++)
+		if (ALSA_SNDIF_FORMATS[i].alsa == format)
+			return ALSA_SNDIF_FORMATS[i].sndif;
+	return -EINVAL;
+}
+
+static void stream_clear(struct pcm_stream_info *stream)
+{
+	stream->is_open = false;
+	stream->evt_pair->req.evt_next_id = 0;
+	stream->evt_pair->evt.evt_next_id = 0;
+	xen_front_sh_buf_clear(&stream->sh_buf);
+}
+
+static struct xensnd_req *be_stream_prepare_req(
+	struct xen_front_evtchnl_info *evt_chnl, uint8_t operation)
+{
+	struct xensnd_req *req;
+
+	req = RING_GET_REQUEST(&evt_chnl->u.req.ring,
+		evt_chnl->u.req.ring.req_prod_pvt);
+	req->operation = operation;
+	req->id = evt_chnl->evt_next_id++;
+	evt_chnl->evt_id = req->id;
+	return req;
+}
+
+static void be_stream_free(struct pcm_stream_info *stream)
+{
+	xen_front_sh_buf_free(&stream->sh_buf);
+	stream_clear(stream);
+}
+
+static int be_stream_do_io(struct xen_front_evtchnl_info *evt_chnl)
+{
+	if (unlikely(evt_chnl->state != EVTCHNL_STATE_CONNECTED))
+		return -EIO;
+
+	reinit_completion(&evt_chnl->u.req.completion);
+	xen_front_evtchnl_flush(evt_chnl);
+	return 0;
+}
+
+static int be_stream_wait_io(struct xen_front_evtchnl_info *evt_chnl)
+{
+	if (wait_for_completion_timeout(
+			&evt_chnl->u.req.completion,
+			msecs_to_jiffies(VSND_WAIT_BACK_MS)) <= 0)
+		return -ETIMEDOUT;
+
+	return evt_chnl->u.req.resp_status;
+}
+
+static int be_stream_open(struct pcm_stream_info *stream,
+	snd_pcm_format_t format, unsigned int channels, unsigned int rate,
+	uint32_t buffer_sz, uint32_t period_sz)
+{
+	struct xen_front_evtchnl_info *evt_chnl = &stream->evt_pair->req;
+	struct xensnd_req *req;
+	uint8_t sndif_format;
+	unsigned long flags;
+	int ret;
+
+	sndif_format = alsa_to_sndif_format(format);
+	if (sndif_format < 0) {
+		dev_err(&evt_chnl->drv_info->xb_dev->dev,
+			"Unsupported sample format: %d\n", format);
+		return sndif_format;
+	}
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	stream->is_open = false;
+	req = be_stream_prepare_req(evt_chnl, XENSND_OP_OPEN);
+	req->op.open.pcm_format = sndif_format;
+	req->op.open.pcm_channels = channels;
+	req->op.open.pcm_rate = rate;
+	req->op.open.buffer_sz = buffer_sz;
+	req->op.open.period_sz = period_sz;
+	req->op.open.gref_directory = xen_front_sh_buf_get_dir_start(
+		&stream->sh_buf);
+
+	ret = be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	ret = be_stream_wait_io(evt_chnl);
+	stream->is_open = ret < 0 ? false : true;
+	return ret;
+}
+
+static int be_stream_close(struct pcm_stream_info *stream)
+{
+	struct xen_front_evtchnl_info *evt_chnl = &stream->evt_pair->req;
+	struct xensnd_req *req;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	stream->is_open = false;
+	req = be_stream_prepare_req(evt_chnl, XENSND_OP_CLOSE);
+
+	ret = be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return be_stream_wait_io(evt_chnl);
+}
+
+static int be_stream_write(struct pcm_stream_info *stream,
+	unsigned long pos, unsigned long count)
+{
+	struct xen_front_evtchnl_info *evt_chnl = &stream->evt_pair->req;
+	struct xensnd_req *req;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	req = be_stream_prepare_req(evt_chnl, XENSND_OP_WRITE);
+	req->op.rw.length = count;
+	req->op.rw.offset = pos;
+
+	ret = be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return be_stream_wait_io(evt_chnl);
+}
+
+static int be_stream_read(struct pcm_stream_info *stream,
+	unsigned long pos, unsigned long count)
+{
+	struct xen_front_evtchnl_info *evt_chnl = &stream->evt_pair->req;
+	struct xensnd_req *req;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	req = be_stream_prepare_req(evt_chnl, XENSND_OP_READ);
+	req->op.rw.length = count;
+	req->op.rw.offset = pos;
+
+	ret = be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return be_stream_wait_io(evt_chnl);
+}
+
+static int be_stream_trigger(struct pcm_stream_info *stream, int type)
+{
+	struct xen_front_evtchnl_info *evt_chnl = &stream->evt_pair->req;
+	struct xensnd_req *req;
+	unsigned long flags;
+	int ret;
+
+	spin_lock_irqsave(&evt_chnl->drv_info->io_lock, flags);
+	req = be_stream_prepare_req(evt_chnl, XENSND_OP_TRIGGER);
+	req->op.trigger.type = type;
+
+	ret = be_stream_do_io(evt_chnl);
+	spin_unlock_irqrestore(&evt_chnl->drv_info->io_lock, flags);
+
+	if (ret < 0)
+		return ret;
+
+	return be_stream_wait_io(evt_chnl);
+}
+
 static struct pcm_stream_info *stream_get(
 	struct snd_pcm_substream *substream)
 {
@@ -69,13 +358,6 @@ static struct pcm_stream_info *stream_get(
 	else
 		stream = &pcm_instance->streams_cap[substream->number];
 	return stream;
-}
-
-static void stream_clear(struct pcm_stream_info *stream)
-{
-	stream->evt_pair->req.evt_next_id = 0;
-	stream->evt_pair->evt.evt_next_id = 0;
-	xen_front_sh_buf_clear(&stream->sh_buf);
 }
 
 static int alsa_open(struct snd_pcm_substream *substream)
@@ -139,7 +421,7 @@ static int alsa_hw_params(struct snd_pcm_substream *substream,
 	 * this callback may be called multiple times,
 	 * so free the previously allocated shared buffer if any
 	 */
-	xen_front_sh_buf_free(&stream->sh_buf);
+	be_stream_free(stream);
 
 	ret = xen_front_sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf,
 		params_buffer_bytes(params));
@@ -149,7 +431,7 @@ static int alsa_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 
 fail:
-	xen_front_sh_buf_free(&stream->sh_buf);
+	be_stream_free(stream);
 	dev_err(&drv_info->xb_dev->dev,
 		"Failed to allocate buffers for stream idx %d\n",
 		stream->index);
@@ -159,37 +441,55 @@ fail:
 static int alsa_hw_free(struct snd_pcm_substream *substream)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
-	xen_front_sh_buf_free(&stream->sh_buf);
-	stream_clear(stream);
-	return 0;
+	ret = be_stream_close(stream);
+	be_stream_free(stream);
+	return ret;
 }
 
 static int alsa_prepare(struct snd_pcm_substream *substream)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (!stream->is_open) {
+		struct snd_pcm_runtime *runtime = substream->runtime;
+
+		return be_stream_open(stream, runtime->format,
+			runtime->channels, runtime->rate,
+			snd_pcm_lib_buffer_bytes(substream),
+			snd_pcm_lib_period_bytes(substream));
+	}
+
 	return 0;
 }
 
 static int alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	int type;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
+		type = XENSND_OP_TRIGGER_START;
 		break;
 
 	case SNDRV_PCM_TRIGGER_RESUME:
+		type = XENSND_OP_TRIGGER_RESUME;
 		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
+		type = XENSND_OP_TRIGGER_STOP;
 		break;
 
 	case SNDRV_PCM_TRIGGER_SUSPEND:
+		type = XENSND_OP_TRIGGER_PAUSE;
 		break;
 
 	default:
 		return -EINVAL;
 	}
 
-	return 0;
+	return be_stream_trigger(stream_get(substream), type);
 }
 
 static snd_pcm_uframes_t alsa_pointer(struct snd_pcm_substream *substream)
@@ -209,7 +509,7 @@ static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
 	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
 		return -EFAULT;
 
-	return 0;
+	return be_stream_write(stream, pos, count);
 }
 
 static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
@@ -221,7 +521,7 @@ static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
 		return -EINVAL;
 
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
-	return 0;
+	return be_stream_write(stream, pos, count);
 }
 
 static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
@@ -229,9 +529,14 @@ static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 	unsigned long count)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
+
+	ret = be_stream_read(stream, pos, count);
+	if (ret < 0)
+		return ret;
 
 	return copy_to_user(dst, stream->sh_buf.vbuffer + pos, count) ?
 		-EFAULT : 0;
@@ -241,9 +546,14 @@ static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *dst, unsigned long count)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
+
+	ret = be_stream_read(stream, pos, count);
+	if (ret < 0)
+		return ret;
 
 	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
@@ -258,7 +568,7 @@ static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
 		return -EINVAL;
 
 	memset(stream->sh_buf.vbuffer + pos, 0, count);
-	return 0;
+	return be_stream_write(stream, pos, count);
 }
 
 /*

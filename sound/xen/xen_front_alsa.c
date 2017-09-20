@@ -29,10 +29,14 @@
 #include "xen_front.h"
 #include "xen_front_alsa.h"
 #include "xen_front_cfg.h"
+#include "xen_front_evtchnl.h"
+#include "xen_front_sh_buf.h"
 
 struct pcm_stream_info {
 	int index;
 	struct snd_pcm_hardware pcm_hw;
+	struct xen_front_evtchnl_pair_info *evt_pair;
+	struct xen_front_sh_buf_info sh_buf;
 };
 
 struct pcm_instance_info {
@@ -53,24 +57,111 @@ struct card_info {
 	struct pcm_instance_info *pcm_instances;
 };
 
+static struct pcm_stream_info *stream_get(
+	struct snd_pcm_substream *substream)
+{
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct pcm_stream_info *stream;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		stream = &pcm_instance->streams_pb[substream->number];
+	else
+		stream = &pcm_instance->streams_cap[substream->number];
+	return stream;
+}
+
+static void stream_clear(struct pcm_stream_info *stream)
+{
+	stream->evt_pair->req.evt_next_id = 0;
+	stream->evt_pair->evt.evt_next_id = 0;
+	xen_front_sh_buf_clear(&stream->sh_buf);
+}
+
 static int alsa_open(struct snd_pcm_substream *substream)
 {
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct pcm_stream_info *stream = stream_get(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
+	unsigned long flags;
+
+	/*
+	 * return our HW properties: override defaults with those configured
+	 * via XenStore
+	 */
+	runtime->hw = stream->pcm_hw;
+	runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
+		SNDRV_PCM_INFO_MMAP_VALID |
+		SNDRV_PCM_INFO_DOUBLE |
+		SNDRV_PCM_INFO_BATCH |
+		SNDRV_PCM_INFO_NONINTERLEAVED |
+		SNDRV_PCM_INFO_RESUME |
+		SNDRV_PCM_INFO_PAUSE);
+	runtime->hw.info |= SNDRV_PCM_INFO_INTERLEAVED;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
+	stream->evt_pair = &drv_info->evt_pairs[stream->index];
+	stream->evt_pair->req.state = EVTCHNL_STATE_CONNECTED;
+	stream->evt_pair->evt.state = EVTCHNL_STATE_CONNECTED;
+	stream->evt_pair->evt.u.evt.substream = substream;
+	stream_clear(stream);
+	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }
 
 static int alsa_close(struct snd_pcm_substream *substream)
 {
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct pcm_stream_info *stream = stream_get(substream);
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
+	unsigned long flags;
+
+	spin_lock_irqsave(&drv_info->io_lock, flags);
+	stream->evt_pair->req.state = EVTCHNL_STATE_DISCONNECTED;
+	stream->evt_pair->evt.state = EVTCHNL_STATE_DISCONNECTED;
+	spin_unlock_irqrestore(&drv_info->io_lock, flags);
 	return 0;
 }
 
 static int alsa_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params)
 {
+	struct pcm_instance_info *pcm_instance =
+		snd_pcm_substream_chip(substream);
+	struct pcm_stream_info *stream = stream_get(substream);
+	struct drv_info *drv_info = pcm_instance->card_info->drv_info;
+	int ret;
+
+	/*
+	 * this callback may be called multiple times,
+	 * so free the previously allocated shared buffer if any
+	 */
+	xen_front_sh_buf_free(&stream->sh_buf);
+
+	ret = xen_front_sh_buf_alloc(drv_info->xb_dev, &stream->sh_buf,
+		params_buffer_bytes(params));
+	if (ret < 0)
+		goto fail;
+
 	return 0;
+
+fail:
+	xen_front_sh_buf_free(&stream->sh_buf);
+	dev_err(&drv_info->xb_dev->dev,
+		"Failed to allocate buffers for stream idx %d\n",
+		stream->index);
+	return ret;
 }
 
 static int alsa_hw_free(struct snd_pcm_substream *substream)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	xen_front_sh_buf_free(&stream->sh_buf);
+	stream_clear(stream);
 	return 0;
 }
 
@@ -81,6 +172,23 @@ static int alsa_prepare(struct snd_pcm_substream *substream)
 
 static int alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+		break;
+
+	case SNDRV_PCM_TRIGGER_RESUME:
+		break;
+
+	case SNDRV_PCM_TRIGGER_STOP:
+		break;
+
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
@@ -93,12 +201,26 @@ static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void __user *src,
 	unsigned long count)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
+		return -EFAULT;
+
 	return 0;
 }
 
 static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *src, unsigned long count)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	memcpy(stream->sh_buf.vbuffer + pos, src, count);
 	return 0;
 }
 
@@ -106,18 +228,36 @@ static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void __user *dst,
 	unsigned long count)
 {
-	return 0;
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	return copy_to_user(dst, stream->sh_buf.vbuffer + pos, count) ?
+		-EFAULT : 0;
 }
 
 static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *dst, unsigned long count)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
 }
 
 static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, unsigned long count)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
+		return -EINVAL;
+
+	memset(stream->sh_buf.vbuffer + pos, 0, count);
 	return 0;
 }
 

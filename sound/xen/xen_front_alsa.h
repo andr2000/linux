@@ -20,8 +20,12 @@
 #define __XEN_FRONT_ALSA_H
 
 struct drv_info;
+struct xen_front_evtchnl_info;
 
 int xen_front_alsa_init(struct drv_info *drv_info);
 void xen_front_alsa_cleanup(struct drv_info *drv_info);
+
+void xen_front_alsa_handle_cur_pos(struct xen_front_evtchnl_info *channel,
+	uint64_t pos_bytes);
 
 #endif /* __XEN_FRONT_ALSA_H */

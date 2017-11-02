@@ -17,6 +17,7 @@
  */
 
 #include <linux/platform_device.h>
+#include <linux/version.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -547,6 +548,7 @@ static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
 	return be_stream_write(stream, pos, count);
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *src, unsigned long count)
 {
@@ -558,6 +560,7 @@ static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
 	return be_stream_write(stream, pos, count);
 }
+#endif
 
 static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void __user *dst,
@@ -577,6 +580,7 @@ static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 		-EFAULT : 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *dst, unsigned long count)
 {
@@ -593,6 +597,7 @@ static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
 	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
 }
+#endif
 
 static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, unsigned long count)
@@ -622,9 +627,14 @@ static struct snd_pcm_ops snd_drv_alsa_playback_ops = {
 	.prepare = alsa_prepare,
 	.trigger = alsa_trigger,
 	.pointer = alsa_pointer,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 	.copy_user = alsa_pb_copy_user,
 	.copy_kernel = alsa_pb_copy_kernel,
 	.fill_silence = alsa_pb_fill_silence,
+#else
+	.copy = alsa_pb_copy_user,
+	.silence = alsa_pb_fill_silence,
+#endif
 };
 
 static struct snd_pcm_ops snd_drv_alsa_capture_ops = {
@@ -636,8 +646,12 @@ static struct snd_pcm_ops snd_drv_alsa_capture_ops = {
 	.prepare = alsa_prepare,
 	.trigger = alsa_trigger,
 	.pointer = alsa_pointer,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 13, 0)
 	.copy_user = alsa_cap_copy_user,
 	.copy_kernel = alsa_cap_copy_kernel,
+#else
+	.copy = alsa_cap_copy_user,
+#endif
 };
 
 static int new_pcm_instance(struct card_info *card_info,

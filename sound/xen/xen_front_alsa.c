@@ -539,6 +539,10 @@ static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+	count = frames_to_bytes(substream->runtime, count);
+	pos = frames_to_bytes(substream->runtime, pos);
+#endif
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -569,6 +573,10 @@ static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 	struct pcm_stream_info *stream = stream_get(substream);
 	int ret;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+	count = frames_to_bytes(substream->runtime, count);
+	pos = frames_to_bytes(substream->runtime, pos);
+#endif
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 
@@ -604,6 +612,10 @@ static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
 {
 	struct pcm_stream_info *stream = stream_get(substream);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0)
+	count = frames_to_bytes(substream->runtime, count);
+	pos = frames_to_bytes(substream->runtime, pos);
+#endif
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
 

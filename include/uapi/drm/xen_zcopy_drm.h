@@ -97,10 +97,24 @@ struct drm_xen_zcopy_dumb_to_refs {
 	uint32_t handle;
 };
 
+/*
+ * This will block until dumb buffer with the handle provided be freed:
+ * this is needed for synchronization between frontend and backend in case
+ * when frontend provides grant references of the buffer via
+ * DRM_XEN_ZCOPY_DUMB_FROM_REFS IOCTL.
+ */
+#define DRM_XEN_ZCOPY_DUMB_WAIT_FREE	0x02
+
+struct drm_xen_zcopy_dumb_wait_free {
+	uint32_t handle;
+};
+
 #define DRM_IOCTL_XEN_ZCOPY_DUMB_FROM_REFS DRM_IOWR(DRM_COMMAND_BASE + \
 	DRM_XEN_ZCOPY_DUMB_FROM_REFS, struct drm_xen_zcopy_dumb_from_refs)
 #define DRM_IOCTL_XEN_ZCOPY_DUMB_TO_REFS DRM_IOWR(DRM_COMMAND_BASE + \
 	DRM_XEN_ZCOPY_DUMB_TO_REFS, struct drm_xen_zcopy_dumb_to_refs)
+#define DRM_IOCTL_XEN_ZCOPY_DUMB_WAIT_FREE DRM_IOWR(DRM_COMMAND_BASE + \
+	DRM_XEN_ZCOPY_DUMB_WAIT_FREE, struct drm_xen_zcopy_dumb_wait_free)
 
 #if defined(__cplusplus)
 }

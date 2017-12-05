@@ -35,6 +35,7 @@
 #include <drm/xen_zcopy_drm.h>
 
 #define GRANT_INVALID_REF	0
+#define HANDLE_WAIT_TO_MS	2000
 
 struct xen_gem_object {
 	struct drm_gem_object base;
@@ -56,10 +57,105 @@ struct xen_gem_object {
 	grant_handle_t *map_handles;
 };
 
+struct xen_wait_obj {
+	struct list_head list;
+
+	uint32_t handle;
+	/* for the case we have to signal the buffer has been freed */
+	struct completion completion;
+};
+
+struct xen_drv_info {
+	struct drm_device *drm_dev;
+
+	/*
+	 * For buffers created from front's grant references synchronization
+	 * between backend and frontend is needed on buffer deletion as front
+	 * will wait for us to unmap these references.
+	 * In order to implement this so we can wait for a GEM object deletion
+	 * we manage list of current GEM object handles and corresponding
+	 * completions to wait on
+	 */
+	struct mutex mutex;
+	struct list_head dbuf_list;
+};
+
 static inline struct xen_gem_object *to_xen_gem_obj(
 	struct drm_gem_object *gem_obj)
 {
 	return container_of(gem_obj, struct xen_gem_object, base);
+}
+
+static struct xen_wait_obj *xen_wait_obj_new(struct xen_drv_info *drv_info,
+	uint32_t handle)
+{
+	struct xen_wait_obj *wait_obj;
+
+	wait_obj = kzalloc(sizeof(*wait_obj), GFP_KERNEL);
+	if (!wait_obj)
+		return ERR_PTR(-ENOMEM);
+
+	wait_obj->handle = handle;
+	init_completion(&wait_obj->completion);
+
+	mutex_lock(&drv_info->mutex);
+	list_add(&wait_obj->list, &drv_info->dbuf_list);
+	mutex_unlock(&drv_info->mutex);
+	return wait_obj;
+}
+
+static void xen_wait_obj_free(struct xen_drv_info *drv_info,
+	struct xen_wait_obj *wait_obj)
+{
+	struct xen_wait_obj *cur_wait_obj, *q;
+
+	mutex_lock(&drv_info->mutex);
+	list_for_each_entry_safe(cur_wait_obj, q, &drv_info->dbuf_list, list) {
+		if (cur_wait_obj == wait_obj) {
+			list_del(&wait_obj->list);
+			kfree(wait_obj);
+			break;
+		}
+	}
+	mutex_unlock(&drv_info->mutex);
+}
+
+static void xen_wait_obj_free_all(struct xen_drv_info *drv_info)
+{
+	struct xen_wait_obj *wait_obj, *q;
+
+	mutex_lock(&drv_info->mutex);
+	list_for_each_entry_safe(wait_obj, q, &drv_info->dbuf_list, list) {
+		complete_all(&wait_obj->completion);
+		list_del(&wait_obj->list);
+		kfree(wait_obj);
+	}
+	mutex_unlock(&drv_info->mutex);
+}
+
+static inline int xen_wait_obj_wait(struct xen_drv_info *drv_info,
+	struct xen_wait_obj *wait_obj)
+{
+	if (wait_for_completion_timeout(&wait_obj->completion,
+			msecs_to_jiffies(HANDLE_WAIT_TO_MS)) <= 0)
+		return -ETIMEDOUT;
+
+	return 0;
+}
+
+static void xen_wait_obj_done(struct xen_drv_info *drv_info,
+	uint32_t handle)
+{
+	struct xen_wait_obj *wait_obj, *q;
+
+	mutex_lock(&drv_info->mutex);
+	list_for_each_entry_safe(wait_obj, q, &drv_info->dbuf_list, list) {
+		if (wait_obj->handle == handle) {
+			complete_all(&wait_obj->completion);
+			break;
+		}
+	}
+	mutex_unlock(&drv_info->mutex);
 }
 
 #ifdef CONFIG_DRM_XEN_ZCOPY_CMA
@@ -428,6 +524,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 		}
 	}
 	drm_gem_object_release(gem_obj);
+	xen_wait_obj_done(gem_obj->dev->dev_private, xen_obj->dumb_handle);
 	kfree(xen_obj);
 }
 
@@ -516,6 +613,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 	xen_obj = kzalloc(sizeof(*xen_obj), GFP_KERNEL);
 	if (!xen_obj)
 		return -ENOMEM;
+
 	xen_obj->num_pages = req->num_grefs;
 	xen_obj->otherend_id = req->otherend_id;
 	xen_obj->grefs = kcalloc(xen_obj->num_pages, sizeof(grant_ref_t),
@@ -536,6 +634,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 		round_up(req->dumb.size, PAGE_SIZE));
 	if (ret < 0)
 		goto fail;
+
 	/* return handle */
 	req->dumb.handle = xen_obj->dumb_handle;
 	return 0;
@@ -643,12 +742,56 @@ fail:
 	return ret;
 }
 
+static int xen_ioctl_wait_free(struct drm_device *dev,
+	void *data, struct drm_file *file_priv)
+{
+	struct drm_gem_object *gem_obj;
+	struct drm_xen_zcopy_dumb_wait_free *req =
+		(struct drm_xen_zcopy_dumb_wait_free *)data;
+	struct xen_drv_info *drv_info = dev->dev_private;
+	struct xen_wait_obj *wait_obj;
+	int ret;
+
+	/*
+	 * try to find the handle: if not found means that either the handle
+	 * has already been freed by DRM core or wrong
+	 */
+	gem_obj = drm_gem_object_lookup(file_priv, req->handle);
+	if (!gem_obj)
+		return -ENOENT;
+	/*
+	 * handle is still in use and GEM object is ref count locked by us:
+	 * prepare to wait
+	 */
+	wait_obj = xen_wait_obj_new(drv_info, req->handle);
+	ret = PTR_ERR_OR_ZERO(wait_obj);
+	if (ret < 0) {
+		DRM_ERROR("Failed to setup wait object, ret %d\n", ret);
+		drm_gem_object_unreference_unlocked(gem_obj);
+		return ret;
+	}
+	drm_gem_object_unreference_unlocked(gem_obj);
+	ret = xen_wait_obj_wait(drv_info, wait_obj);
+	xen_wait_obj_free(drv_info, wait_obj);
+	return ret;
+}
+
+static void xen_lastclose(struct drm_device *dev)
+{
+	struct xen_drv_info *drv_info = dev->dev_private;
+
+	xen_wait_obj_free_all(drv_info);
+}
+
 static const struct drm_ioctl_desc xen_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_FROM_REFS,
 		xen_ioctl_from_refs,
 		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_TO_REFS,
 		xen_ioctl_to_refs,
+		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
+	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_WAIT_FREE,
+		xen_ioctl_wait_free,
 		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 };
 
@@ -661,6 +804,7 @@ static const struct file_operations xen_fops = {
 
 static struct drm_driver xen_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_PRIME,
+	.lastclose                 = xen_lastclose,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
 	.gem_prime_export          = drm_gem_prime_export,
 	.gem_prime_get_sg_table    = xen_gem_prime_get_sg_table,
@@ -680,42 +824,50 @@ static struct drm_driver xen_driver = {
 
 static int xen_remove(struct platform_device *pdev)
 {
-	struct drm_device *drm_dev = platform_get_drvdata(pdev);
+	struct xen_drv_info *xdrv_info = platform_get_drvdata(pdev);
 
-	if (drm_dev) {
-		drm_dev_unregister(drm_dev);
-		drm_dev_unref(drm_dev);
+	if (xdrv_info && xdrv_info->drm_dev) {
+		drm_dev_unregister(xdrv_info->drm_dev);
+		drm_dev_unref(xdrv_info->drm_dev);
 	}
 	return 0;
 }
 
 static int xen_probe(struct platform_device *pdev)
 {
-	struct drm_device *drm_dev;
+	struct xen_drv_info *drv_info;
 	int ret;
 
 	DRM_INFO("Creating %s\n", xen_driver.desc);
+	drv_info = kzalloc(sizeof(*drv_info), GFP_KERNEL);
+	if (!drv_info)
+		return -ENOMEM;
+
+	INIT_LIST_HEAD(&drv_info->dbuf_list);
+	mutex_init(&drv_info->mutex);
 #ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 	arch_setup_dma_ops(&pdev->dev, 0, 0, NULL, false);
 #endif
-	drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);
-	if (!drm_dev)
+	drv_info->drm_dev = drm_dev_alloc(&xen_driver, &pdev->dev);
+	if (!drv_info->drm_dev)
 		return -ENOMEM;
 
-	ret = drm_dev_register(drm_dev, 0);
+	ret = drm_dev_register(drv_info->drm_dev, 0);
 	if (ret < 0)
 		goto fail;
 
-	platform_set_drvdata(pdev, drm_dev);
+	drv_info->drm_dev->dev_private = drv_info;
+	platform_set_drvdata(pdev, drv_info);
 
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
 		xen_driver.name, xen_driver.major,
 		xen_driver.minor, xen_driver.patchlevel,
-		xen_driver.date, drm_dev->primary->index);
+		xen_driver.date, drv_info->drm_dev->primary->index);
 	return 0;
 
 fail:
-	drm_dev_unref(drm_dev);
+	drm_dev_unref(drv_info->drm_dev);
+	kfree(drv_info);
 	return ret;
 }
 

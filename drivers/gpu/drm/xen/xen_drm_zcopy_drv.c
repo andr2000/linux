@@ -149,8 +149,11 @@ static void xen_wait_obj_done(struct xen_drv_info *drv_info,
 	struct xen_wait_obj *wait_obj, *q;
 
 	mutex_lock(&drv_info->mutex);
+	printk("%s\n", __FUNCTION__);
 	list_for_each_entry_safe(wait_obj, q, &drv_info->dbuf_list, list) {
+		printk("Checking handle %d\n", wait_obj->handle);
 		if (wait_obj->handle == handle) {
+			printk("Found handle %d in the list, wake\n", handle);
 			complete_all(&wait_obj->completion);
 			break;
 		}
@@ -513,6 +516,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
+	printk("Freeing handle %d\n", xen_obj->dumb_handle);
 	if (xen_obj->grefs) {
 		if (xen_obj->sgt) {
 			if (xen_obj->base.import_attach)
@@ -752,6 +756,8 @@ static int xen_ioctl_wait_free(struct drm_device *dev,
 	struct xen_wait_obj *wait_obj;
 	int ret;
 
+	printk("Waiting for handle %u\n", req->handle);
+
 	/*
 	 * try to find the handle: if not found means that either the handle
 	 * has already been freed by DRM core or wrong
@@ -759,6 +765,7 @@ static int xen_ioctl_wait_free(struct drm_device *dev,
 	gem_obj = drm_gem_object_lookup(file_priv, req->handle);
 	if (!gem_obj)
 		return -ENOENT;
+
 	/*
 	 * handle is still in use and GEM object is ref count locked by us:
 	 * prepare to wait
@@ -771,8 +778,10 @@ static int xen_ioctl_wait_free(struct drm_device *dev,
 		return ret;
 	}
 	drm_gem_object_unreference_unlocked(gem_obj);
+	printk("Will wait for handle %u\n", req->handle);
 	ret = xen_wait_obj_wait(drv_info, wait_obj);
 	xen_wait_obj_free(drv_info, wait_obj);
+	printk("Done waiting for handle %u, ret %d\n", req->handle, ret);
 	return ret;
 }
 
@@ -802,9 +811,18 @@ static const struct file_operations xen_fops = {
 	.unlocked_ioctl = drm_ioctl,
 };
 
+static void xen_gem_close_object(struct drm_gem_object *gem_obj, struct drm_file *file_priv)
+{
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+
+	printk("Closing handle %d\n", xen_obj->dumb_handle);
+	printk("Ref count %d\n", atomic_read(&gem_obj->refcount.refcount));
+}
+
 static struct drm_driver xen_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_PRIME,
 	.lastclose                 = xen_lastclose,
+	.gem_close_object          = xen_gem_close_object,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
 	.gem_prime_export          = drm_gem_prime_export,
 	.gem_prime_get_sg_table    = xen_gem_prime_get_sg_table,

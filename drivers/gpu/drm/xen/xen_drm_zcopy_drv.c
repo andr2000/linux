@@ -55,13 +55,17 @@ struct xen_gem_object {
 	struct sg_table *sgt;
 	/* map grant handles */
 	grant_handle_t *map_handles;
+	/*
+	 * this is needed for synchronous object deletion, e.g.
+	 * when user-space wants to know that the grefs are unmapped
+	 */
+	struct kref refcount;
+	int wait_handle;
 };
 
 struct xen_wait_obj {
 	struct list_head list;
-
-	uint32_t handle;
-	/* for the case we have to signal the buffer has been freed */
+	struct xen_gem_object *xen_obj;
 	struct completion completion;
 };
 
@@ -72,12 +76,11 @@ struct xen_drv_info {
 	 * For buffers created from front's grant references synchronization
 	 * between backend and frontend is needed on buffer deletion as front
 	 * will wait for us to unmap these references.
-	 * In order to implement this so we can wait for a GEM object deletion
-	 * we manage list of current GEM object handles and corresponding
-	 * completions to wait on
 	 */
-	struct mutex mutex;
-	struct list_head dbuf_list;
+	struct list_head wait_obj_list;
+	struct idr idr;
+	/* this is used to protect idr and wait object list */
+	spinlock_t lock;
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
@@ -87,7 +90,7 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 }
 
 static struct xen_wait_obj *xen_wait_obj_new(struct xen_drv_info *drv_info,
-	uint32_t handle)
+	struct xen_gem_object *xen_obj)
 {
 	struct xen_wait_obj *wait_obj;
 
@@ -95,46 +98,45 @@ static struct xen_wait_obj *xen_wait_obj_new(struct xen_drv_info *drv_info,
 	if (!wait_obj)
 		return ERR_PTR(-ENOMEM);
 
-	wait_obj->handle = handle;
 	init_completion(&wait_obj->completion);
-
-	mutex_lock(&drv_info->mutex);
-	list_add(&wait_obj->list, &drv_info->dbuf_list);
-	mutex_unlock(&drv_info->mutex);
+	wait_obj->xen_obj = xen_obj;
+	spin_lock(&drv_info->lock);
+	list_add(&wait_obj->list, &drv_info->wait_obj_list);
+	spin_unlock(&drv_info->lock);
 	return wait_obj;
 }
 
-static void xen_wait_obj_free(struct xen_drv_info *drv_info,
+static inline void xen_wait_obj_free(struct xen_drv_info *drv_info,
 	struct xen_wait_obj *wait_obj)
 {
 	struct xen_wait_obj *cur_wait_obj, *q;
 
-	mutex_lock(&drv_info->mutex);
-	list_for_each_entry_safe(cur_wait_obj, q, &drv_info->dbuf_list, list) {
+	spin_lock(&drv_info->lock);
+	list_for_each_entry_safe(cur_wait_obj, q,
+			&drv_info->wait_obj_list, list) {
 		if (cur_wait_obj == wait_obj) {
 			list_del(&wait_obj->list);
 			kfree(wait_obj);
 			break;
 		}
 	}
-	mutex_unlock(&drv_info->mutex);
+	spin_unlock(&drv_info->lock);
 }
 
 static void xen_wait_obj_free_all(struct xen_drv_info *drv_info)
 {
 	struct xen_wait_obj *wait_obj, *q;
 
-	mutex_lock(&drv_info->mutex);
-	list_for_each_entry_safe(wait_obj, q, &drv_info->dbuf_list, list) {
+	spin_lock(&drv_info->lock);
+	list_for_each_entry_safe(wait_obj, q, &drv_info->wait_obj_list, list) {
 		complete_all(&wait_obj->completion);
 		list_del(&wait_obj->list);
 		kfree(wait_obj);
 	}
-	mutex_unlock(&drv_info->mutex);
+	spin_unlock(&drv_info->lock);
 }
 
-static inline int xen_wait_obj_wait(struct xen_drv_info *drv_info,
-	struct xen_wait_obj *wait_obj)
+static inline int xen_wait_obj_wait(struct xen_wait_obj *wait_obj)
 {
 	if (wait_for_completion_timeout(&wait_obj->completion,
 			msecs_to_jiffies(HANDLE_WAIT_TO_MS)) <= 0)
@@ -143,23 +145,57 @@ static inline int xen_wait_obj_wait(struct xen_drv_info *drv_info,
 	return 0;
 }
 
-static void xen_wait_obj_done(struct xen_drv_info *drv_info,
-	uint32_t handle)
+static void xen_wait_obj_signal(struct xen_drv_info *drv_info,
+	struct xen_gem_object *xen_obj)
 {
 	struct xen_wait_obj *wait_obj, *q;
 
-	mutex_lock(&drv_info->mutex);
+	spin_lock(&drv_info->lock);
 	printk("%s\n", __FUNCTION__);
-	list_for_each_entry_safe(wait_obj, q, &drv_info->dbuf_list, list) {
-		printk("Checking handle %d\n", wait_obj->handle);
-		if (wait_obj->handle == handle) {
-			printk("Found handle %d in the list, wake\n", handle);
+	list_for_each_entry_safe(wait_obj, q, &drv_info->wait_obj_list, list) {
+		if (wait_obj->xen_obj == xen_obj) {
+			printk("Found xen_obj in the list, wake\n");
 			complete_all(&wait_obj->completion);
-			break;
 		}
 	}
-	mutex_unlock(&drv_info->mutex);
+	spin_unlock(&drv_info->lock);
 }
+
+static int xen_wait_obj_handle_new(struct xen_drv_info *drv_info,
+	struct xen_gem_object *xen_obj)
+{
+	int ret;
+
+	idr_preload(GFP_KERNEL);
+	spin_lock(&drv_info->lock);
+	ret = idr_alloc(&drv_info->idr, xen_obj, 1, 0, GFP_NOWAIT);
+	spin_unlock(&drv_info->lock);
+	idr_preload_end();
+	return ret;
+}
+
+static void xen_wait_obj_handle_free(struct xen_drv_info *drv_info,
+	struct xen_gem_object *xen_obj)
+{
+	spin_lock(&drv_info->lock);
+	idr_remove(&drv_info->idr, xen_obj->wait_handle);
+	spin_unlock(&drv_info->lock);
+}
+
+static struct xen_gem_object *xen_get_obj_by_wait_handle(
+	struct xen_drv_info *drv_info, int wait_handle)
+{
+	struct xen_gem_object *xen_obj;
+
+	spin_lock(&drv_info->lock);
+	/* Check if we currently have a reference on the object */
+	xen_obj = idr_find(&drv_info->idr, wait_handle);
+	if (xen_obj)
+		kref_get(&xen_obj->refcount);
+	spin_unlock(&drv_info->lock);
+	return xen_obj;
+}
+
 
 #ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 static int xen_alloc_ballooned_pages(struct device *dev,
@@ -512,9 +548,20 @@ static int xen_gem_init_obj(struct xen_gem_object *xen_obj,
 	return 0;
 }
 
+static void xen_obj_release(struct kref *kref)
+{
+	struct xen_gem_object *xen_obj =
+		container_of(kref, struct xen_gem_object, refcount);
+	struct xen_drv_info *drv_info = xen_obj->base.dev->dev_private;
+
+	xen_wait_obj_signal(drv_info, xen_obj);
+	kfree(xen_obj);
+}
+
 static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 {
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+	struct xen_drv_info *drv_info = gem_obj->dev->dev_private;
 
 	printk("Freeing handle %d\n", xen_obj->dumb_handle);
 	if (xen_obj->grefs) {
@@ -528,8 +575,9 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 		}
 	}
 	drm_gem_object_release(gem_obj);
-	xen_wait_obj_done(gem_obj->dev->dev_private, xen_obj->dumb_handle);
-	kfree(xen_obj);
+
+	xen_wait_obj_handle_free(drv_info, xen_obj);
+	kref_put(&xen_obj->refcount, xen_obj_release);
 }
 
 #ifdef CONFIG_DRM_XEN_ZCOPY_WA_SWIOTLB
@@ -611,6 +659,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 	struct drm_xen_zcopy_dumb_from_refs *req,
 	struct drm_file *file_priv)
 {
+	struct xen_drv_info *drv_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
 	int ret;
 
@@ -618,6 +667,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 	if (!xen_obj)
 		return -ENOMEM;
 
+	kref_init(&xen_obj->refcount);
 	xen_obj->num_pages = req->num_grefs;
 	xen_obj->otherend_id = req->otherend_id;
 	xen_obj->grefs = kcalloc(xen_obj->num_pages, sizeof(grant_ref_t),
@@ -641,6 +691,19 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 
 	/* return handle */
 	req->dumb.handle = xen_obj->dumb_handle;
+
+	/*
+	 * get user-visible handle for this GEM object.
+	 * the wait object is not allocated at the moment,
+	 * but if need be it will be allocated at the time of
+	 * DRM_XEN_ZCOPY_DUMB_WAIT_FREE IOCTL
+	 */
+	ret = xen_wait_obj_handle_new(drv_info, xen_obj);
+	if (ret < 0)
+		goto fail;
+
+	req->wait_handle = ret;
+	xen_obj->wait_handle = ret;
 	return 0;
 
 fail:
@@ -749,39 +812,44 @@ fail:
 static int xen_ioctl_wait_free(struct drm_device *dev,
 	void *data, struct drm_file *file_priv)
 {
-	struct drm_gem_object *gem_obj;
 	struct drm_xen_zcopy_dumb_wait_free *req =
 		(struct drm_xen_zcopy_dumb_wait_free *)data;
 	struct xen_drv_info *drv_info = dev->dev_private;
+	struct xen_gem_object *xen_obj;
 	struct xen_wait_obj *wait_obj;
-	int ret;
+	int wait_handle, ret;
 
-	printk("Waiting for handle %u\n", req->handle);
+	wait_handle = req->wait_handle;
+
+	printk("Waiting for handle %u\n", wait_handle);
 
 	/*
 	 * try to find the handle: if not found means that either the handle
-	 * has already been freed by DRM core or wrong
+	 * has already been freed or wrong
 	 */
-	gem_obj = drm_gem_object_lookup(file_priv, req->handle);
-	if (!gem_obj)
+	xen_obj = xen_get_obj_by_wait_handle(drv_info, wait_handle);
+	if (!xen_obj) {
+		printk("Object with wait_handle %d not found\n", wait_handle);
 		return -ENOENT;
+	}
 
 	/*
-	 * handle is still in use and GEM object is ref count locked by us:
-	 * prepare to wait
+	 * xen_obj is still in use and is ref count locked by us now, so
+	 * prepare to wait: allocate wait object and add it to the wait list,
+	 * so we can find it on release
 	 */
-	wait_obj = xen_wait_obj_new(drv_info, req->handle);
+	wait_obj = xen_wait_obj_new(drv_info, xen_obj);
+	/* put our reference and wait for xen_obj release to fire */
+	kref_put(&xen_obj->refcount, xen_obj_release);
 	ret = PTR_ERR_OR_ZERO(wait_obj);
 	if (ret < 0) {
 		DRM_ERROR("Failed to setup wait object, ret %d\n", ret);
-		drm_gem_object_unreference_unlocked(gem_obj);
 		return ret;
 	}
-	drm_gem_object_unreference_unlocked(gem_obj);
-	printk("Will wait for handle %u\n", req->handle);
-	ret = xen_wait_obj_wait(drv_info, wait_obj);
+	printk("Will wait for handle %u\n", wait_handle);
+	ret = xen_wait_obj_wait(wait_obj);
 	xen_wait_obj_free(drv_info, wait_obj);
-	printk("Done waiting for handle %u, ret %d\n", req->handle, ret);
+	printk("Done waiting for handle %u, ret %d\n", wait_handle, ret);
 	return ret;
 }
 
@@ -842,11 +910,12 @@ static struct drm_driver xen_driver = {
 
 static int xen_remove(struct platform_device *pdev)
 {
-	struct xen_drv_info *xdrv_info = platform_get_drvdata(pdev);
+	struct xen_drv_info *drv_info = platform_get_drvdata(pdev);
 
-	if (xdrv_info && xdrv_info->drm_dev) {
-		drm_dev_unregister(xdrv_info->drm_dev);
-		drm_dev_unref(xdrv_info->drm_dev);
+	if (drv_info && drv_info->drm_dev) {
+		drm_dev_unregister(drv_info->drm_dev);
+		drm_dev_unref(drv_info->drm_dev);
+		idr_destroy(&drv_info->idr);
 	}
 	return 0;
 }
@@ -861,8 +930,9 @@ static int xen_probe(struct platform_device *pdev)
 	if (!drv_info)
 		return -ENOMEM;
 
-	INIT_LIST_HEAD(&drv_info->dbuf_list);
-	mutex_init(&drv_info->mutex);
+	idr_init(&drv_info->idr);
+	spin_lock_init(&drv_info->lock);
+	INIT_LIST_HEAD(&drv_info->wait_obj_list);
 #ifdef CONFIG_DRM_XEN_ZCOPY_CMA
 	arch_setup_dma_ops(&pdev->dev, 0, 0, NULL, false);
 #endif

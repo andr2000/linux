@@ -53,6 +53,8 @@ extern "C" {
  *      o closes real HW driver's handle with DRM_IOCTL_GEM_CLOSE
  *      o closes zero-copy driver's handle with DRM_IOCTL_GEM_CLOSE
  *      o closes file descriptor of the exported buffer
+ *      o may wait for the object actually freed via wait_handle
+ *        and DRM_XEN_ZCOPY_DUMB_WAIT_FREE
  */
 #define DRM_XEN_ZCOPY_DUMB_FROM_REFS	0x00
 
@@ -64,6 +66,7 @@ struct drm_xen_zcopy_dumb_from_refs {
 	uint32_t *grefs;
 	uint64_t otherend_id;
 	struct drm_mode_create_dumb dumb;
+	uint64_t wait_handle;
 };
 
 /*
@@ -106,7 +109,7 @@ struct drm_xen_zcopy_dumb_to_refs {
 #define DRM_XEN_ZCOPY_DUMB_WAIT_FREE	0x02
 
 struct drm_xen_zcopy_dumb_wait_free {
-	uint32_t handle;
+	uint64_t wait_handle;
 };
 
 #define DRM_IOCTL_XEN_ZCOPY_DUMB_FROM_REFS DRM_IOWR(DRM_COMMAND_BASE + \

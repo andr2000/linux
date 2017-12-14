@@ -22,19 +22,12 @@
 #include <linux/dma-buf.h>
 #include <linux/platform_device.h>
 
-#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
-#include <asm/xen/hypercall.h>
-#include <xen/interface/memory.h>
-#include <xen/page.h>
-#else
-#include <xen/balloon.h>
-#endif
 #include <xen/grant_table.h>
 #include <asm/xen/page.h>
 
 #include <drm/xen_zcopy_drm.h>
 
-#define GRANT_INVALID_REF	0
+#include "xen_drm_balloon.h"
 
 struct xen_gem_object {
 	struct drm_gem_object base;
@@ -46,10 +39,7 @@ struct xen_gem_object {
 	grant_ref_t *grefs;
 	/* these are pages from Xen balloon for allocated Xen GEM object */
 	struct page **pages;
-#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
-	void *vaddr;
-	dma_addr_t dev_bus_addr;
-#endif
+	struct xen_drm_balloon balloon;
 	/* this will be set if we have imported a GEM object */
 	struct sg_table *sgt;
 	/* map grant handles */
@@ -61,131 +51,6 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 {
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
-
-#ifdef CONFIG_DRM_XEN_ZCOPY_CMA
-static int xen_alloc_ballooned_pages(struct device *dev,
-	struct xen_gem_object *xen_obj)
-{
-	struct page **pages;
-	xen_pfn_t *frame_list;
-	int num_pages, i;
-	size_t size;
-	int ret;
-	dma_addr_t dev_addr, cpu_addr;
-	void *vaddr = NULL;
-	struct xen_memory_reservation reservation = {
-		.address_bits = 0,
-		.extent_order = 0,
-		.domid        = DOMID_SELF
-	};
-
-	num_pages = xen_obj->num_pages;
-	pages = xen_obj->pages;
-	size = num_pages * PAGE_SIZE;
-	DRM_DEBUG("Ballooning out %d pages, size %zu\n", num_pages, size);
-	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
-	if (!frame_list)
-		return -ENOMEM;
-	vaddr = dma_alloc_wc(dev, size, &dev_addr, GFP_KERNEL | __GFP_NOWARN);
-	if (!vaddr) {
-		DRM_ERROR("Failed to allocate DMA buffer with size %zu\n",
-			size);
-		ret = -ENOMEM;
-		goto fail;
-	}
-	cpu_addr = dev_addr;
-	for (i = 0; i < num_pages; i++) {
-		pages[i] = pfn_to_page(__phys_to_pfn(cpu_addr));
-		/* XENMEM_populate_physmap requires a PFN based on Xen
-		 * granularity.
-		 */
-		frame_list[i] = page_to_xen_pfn(pages[i]);
-		cpu_addr += PAGE_SIZE;
-	}
-	set_xen_guest_handle(reservation.extent_start, frame_list);
-	reservation.nr_extents = num_pages;
-	/* rc will hold number of pages processed */
-	ret = HYPERVISOR_memory_op(XENMEM_decrease_reservation, &reservation);
-	if (ret <= 0) {
-		DRM_ERROR("Failed to balloon out %d pages (%d), retrying\n",
-			num_pages, ret);
-		WARN_ON(ret != num_pages);
-		ret = -EFAULT;
-		goto fail;
-	}
-	xen_obj->vaddr = vaddr;
-	xen_obj->dev_bus_addr = dev_addr;
-	kfree(frame_list);
-	return 0;
-
-fail:
-	if (vaddr)
-		dma_free_wc(dev, size, vaddr, dev_addr);
-	kfree(frame_list);
-	return ret;
-}
-
-static void xen_free_ballooned_pages(struct device *dev,
-	struct xen_gem_object *xen_obj)
-{
-	struct page **pages;
-	xen_pfn_t *frame_list;
-	int num_pages, i;
-	int ret;
-	size_t size;
-	struct xen_memory_reservation reservation = {
-		.address_bits = 0,
-		.extent_order = 0,
-		.domid        = DOMID_SELF
-	};
-
-	num_pages = xen_obj->num_pages;
-	pages = xen_obj->pages;
-	if (!pages)
-		return;
-	if (!xen_obj->vaddr)
-		return;
-	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
-	if (!frame_list) {
-		DRM_ERROR("Failed to balloon in %d pages\n", num_pages);
-		return;
-	}
-	DRM_DEBUG("Ballooning in %d pages\n", num_pages);
-	size = num_pages * PAGE_SIZE;
-	for (i = 0; i < num_pages; i++) {
-		/*
-		 * XENMEM_populate_physmap requires a PFN based on Xen
-		 * granularity.
-		 */
-		frame_list[i] = page_to_xen_pfn(pages[i]);
-	}
-	set_xen_guest_handle(reservation.extent_start, frame_list);
-	reservation.nr_extents = num_pages;
-	/* rc will hold number of pages processed */
-	ret = HYPERVISOR_memory_op(XENMEM_populate_physmap, &reservation);
-	if (ret <= 0) {
-		DRM_ERROR("Failed to balloon in %d pages\n", num_pages);
-		WARN_ON(ret != num_pages);
-	}
-	if (xen_obj->vaddr)
-		dma_free_wc(dev, size, xen_obj->vaddr, xen_obj->dev_bus_addr);
-	xen_obj->vaddr = NULL;
-	xen_obj->dev_bus_addr = 0;
-	kfree(frame_list);
-}
-#else
-static inline int xen_alloc_ballooned_pages(struct device *dev,
-	struct xen_gem_object *xen_obj)
-{
-	return alloc_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
-}
-
-static inline void xen_free_ballooned_pages(struct device *dev,
-	struct xen_gem_object *xen_obj)
-{
-	free_xenballooned_pages(xen_obj->num_pages, xen_obj->pages);
-}
-#endif /* CONFIG_DRM_XEN_ZCOPY_CMA */
 
 #define xen_page_to_vaddr(page) \
 	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
@@ -216,7 +81,8 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 		ret = -ENOMEM;
 		goto fail;
 	}
-	ret = xen_alloc_ballooned_pages(dev, xen_obj);
+	ret = xen_drm_ballooned_pages_alloc(dev, &xen_obj->balloon,
+		xen_obj->num_pages, xen_obj->pages);
 	if (ret < 0) {
 		DRM_ERROR("Cannot allocate %d ballooned pages: %d\n",
 			xen_obj->num_pages, ret);
@@ -296,7 +162,8 @@ static int xen_from_refs_unmap(struct device *dev,
 			DRM_ERROR("Failed to unmap page %d with ref %d: %d\n",
 				i, xen_obj->grefs[i], unmap_ops[i].status);
 	}
-	xen_free_ballooned_pages(dev, xen_obj);
+	xen_drm_ballooned_pages_free(dev, &xen_obj->balloon,
+		xen_obj->num_pages, xen_obj->pages);
 	kfree(xen_obj->pages);
 	xen_obj->pages = NULL;
 	kfree(xen_obj->map_handles);
@@ -553,17 +420,6 @@ static int xen_ioctl_from_refs(struct drm_device *dev,
 		(struct drm_xen_zcopy_dumb_from_refs *)data;
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
-
-	/*
-	 * FIXME: this kind of mapping will need extra care on platforms where
-	 * XENFEAT_auto_translated_physmap == 0 and user-space needs
-	 * to access these pages (see gntdev driver).
-	 * As we only use the pages to feed the real display HW
-	 * (no mmap) ignoring XENFEAT_auto_translated_physmap is ok
-	 */
-	if (!xen_feature(XENFEAT_auto_translated_physmap))
-		DRM_DEBUG("Buffer must not be accessed by user-space:"\
-			"platform has no XENFEAT_auto_translated_physmap\n");
 
 	if (!req->num_grefs || !req->grefs)
 		return -EINVAL;

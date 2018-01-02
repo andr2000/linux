@@ -1,0 +1,2 @@
+git send-email --to xen-devel@lists.xenproject.org --to linux-kernel@vger.kernel.org --to linux-input@vger.kernel.org --to dmitry.torokhov@gmail.com --cc=andr2000@gmail.com community/kbd/fix_pressure
+

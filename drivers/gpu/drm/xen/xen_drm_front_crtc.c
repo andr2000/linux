@@ -410,6 +410,12 @@ static void crtc_disable(struct drm_crtc *crtc,
 	drm_crtc_vblank_off(crtc);
 }
 
+static void crtc_enable(struct drm_crtc *crtc,
+	struct drm_crtc_state *old_crtc_state)
+{
+	drm_crtc_vblank_on(crtc);
+}
+
 static void crtc_atomic_flush(struct drm_crtc *crtc,
 	struct drm_crtc_state *old_crtc_state)
 {
@@ -443,7 +449,7 @@ static void crtc_atomic_flush(struct drm_crtc *crtc,
 
 static const struct drm_crtc_helper_funcs xen_drm_crtc_helper_funcs = {
 	.atomic_flush = crtc_atomic_flush,
-	.enable = drm_crtc_vblank_on,
+	.atomic_enable = crtc_enable,
 	.atomic_disable = crtc_disable,
 };
 

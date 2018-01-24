@@ -286,7 +286,7 @@ static struct xen_fb *gem_fb_alloc(struct drm_device *dev,
 	if (!xen_fb)
 		return ERR_PTR(-ENOMEM);
 
-	drm_helper_mode_fill_fb_struct(&xen_fb->fb, mode_cmd);
+	drm_helper_mode_fill_fb_struct(dev, &xen_fb->fb, mode_cmd);
 	xen_fb->xen_obj = xen_obj;
 	ret = drm_framebuffer_init(dev, &xen_fb->fb, funcs);
 	if (ret < 0) {

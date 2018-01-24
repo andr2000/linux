@@ -369,7 +369,8 @@ void xen_drm_front_crtc_on_page_flip_done(struct xen_drm_front_crtc *xen_crtc,
 		crtc_ntfy_page_flip_completed(xen_crtc);
 }
 
-static int crtc_set_config(struct drm_mode_set *set)
+static int crtc_set_config(struct drm_mode_set *set,
+	struct drm_modeset_acquire_ctx *ctx)
 {
 	struct drm_crtc *crtc = set->crtc;
 	struct xen_drm_front_crtc *xen_crtc = to_xendrm_crtc(crtc);
@@ -392,7 +393,7 @@ static int crtc_set_config(struct drm_mode_set *set)
 			DRM_ERROR("Failed to set mode to back: %d\n", ret);
 		/* fall through - at least try to set mode locally */
 	}
-	return drm_atomic_helper_set_config(set);
+	return drm_atomic_helper_set_config(set, ctx);
 }
 
 static void crtc_disable(struct drm_crtc *crtc,

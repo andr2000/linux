@@ -47,10 +47,10 @@ static void disable_vblank(struct drm_device *dev, unsigned int pipe)
 	drm_info->vblank_enabled[pipe] = false;
 }
 
-static void emulate_vblank_interrupt(unsigned long data)
+static void emulate_vblank_interrupt(struct timer_list *t)
 {
 	struct xen_drm_front_drm_info *drm_info =
-		(struct xen_drm_front_drm_info *)data;
+		from_timer(drm_info, t, vblank_timer);
 	int i;
 
 	/*
@@ -296,8 +296,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 		goto fail_modeset;
 	}
 
-	setup_timer(&drm_info->vblank_timer, emulate_vblank_interrupt,
-		(unsigned long)drm_info);
+	timer_setup(&drm_info->vblank_timer, emulate_vblank_interrupt, 0);
 	rearm_vblank_timer(drm_info);
 
 	ddev->irq_enabled = 1;

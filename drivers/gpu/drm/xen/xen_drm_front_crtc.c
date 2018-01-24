@@ -380,7 +380,8 @@ static int crtc_set_config(struct drm_mode_set *set)
 	if (set->mode) {
 		ret = drm_info->front_ops->mode_set(xen_crtc, set->x, set->y,
 			set->fb->width, set->fb->height,
-			set->fb->bits_per_pixel, xen_drm_front_fb_to_cookie(set->fb));
+			set->fb->format->cpp[0] * 8,
+			xen_drm_front_fb_to_cookie(set->fb));
 		if (ret < 0) {
 			DRM_ERROR("Failed to set mode to back: %d\n", ret);
 			return ret;

@@ -23,6 +23,7 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_drv.h"
@@ -34,7 +35,7 @@ static void kms_fb_destroy(struct drm_framebuffer *fb)
 
 	drm_info->front_ops->fb_detach(drm_info->front_info,
 		xen_drm_front_fb_to_cookie(fb));
-	drm_info->gem_ops->fb_destroy(fb);
+	drm_gem_fb_destroy(fb);
 }
 
 static struct drm_framebuffer_funcs xen_drm_fb_funcs = {
@@ -50,7 +51,7 @@ kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	struct drm_gem_object *gem_obj;
 	int ret;
 
-	fb = drm_info->gem_ops->fb_create_with_funcs(dev, file_priv,
+	fb = drm_gem_fb_create_with_funcs(dev, file_priv,
 		mode_cmd, &xen_drm_fb_funcs);
 	if (IS_ERR(fb))
 		return fb;
@@ -77,7 +78,7 @@ kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	return fb;
 
 fail:
-	drm_info->gem_ops->fb_destroy(fb);
+	drm_gem_fb_destroy(fb);
 	return ERR_PTR(ret);
 }
 

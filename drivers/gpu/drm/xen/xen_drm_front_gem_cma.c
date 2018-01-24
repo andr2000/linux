@@ -68,9 +68,6 @@ static const struct xen_drm_front_gem_ops xen_drm_front_gem_cma_ops = {
 
 	.dumb_create           = drm_gem_cma_dumb_create,
 
-	.fb_create_with_funcs  = drm_fb_cma_create_with_funcs,
-	.fb_destroy            = drm_fb_cma_destroy,
-
 	.mmap                  = drm_gem_cma_mmap,
 
 	.get_pages             = gem_get_pages,

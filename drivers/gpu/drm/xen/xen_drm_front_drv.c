@@ -227,10 +227,8 @@ struct drm_driver xendrm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
 	.lastclose                 = lastclose,
-	.get_vblank_counter        = drm_vblank_no_hw_counter,
 	.enable_vblank             = enable_vblank,
 	.disable_vblank            = disable_vblank,
-	.get_vblank_counter        = drm_vblank_no_hw_counter,
 	.gem_free_object_unlocked  = free_object,
 	.gem_vm_ops                = &xendrm_vm_ops,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,

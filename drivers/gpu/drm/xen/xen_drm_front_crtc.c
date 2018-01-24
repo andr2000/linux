@@ -194,7 +194,7 @@ static int crtc_plane_atomic_check(struct drm_plane *plane,
 		return 0;
 
 	for (i = 0; i < ARRAY_SIZE(xen_drm_plane_formats); i++)
-		if (fb->pixel_format == xen_drm_plane_formats[i])
+		if (fb->format->format == xen_drm_plane_formats[i])
 			return 0;
 
 	return -EINVAL;

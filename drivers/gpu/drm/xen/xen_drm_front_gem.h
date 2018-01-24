@@ -37,12 +37,6 @@ struct xen_drm_front_gem_ops {
 	int (*dumb_create)(struct drm_file *file_priv, struct drm_device *dev,
 		struct drm_mode_create_dumb *args);
 
-	struct drm_framebuffer *(*fb_create_with_funcs)(struct drm_device *dev,
-		struct drm_file *file_priv,
-		const struct drm_mode_fb_cmd2 *mode_cmd,
-		const struct drm_framebuffer_funcs *funcs);
-	void (*fb_destroy)(struct drm_framebuffer *fb);
-
 	int (*mmap)(struct file *, struct vm_area_struct *);
 
 	struct page **(*get_pages)(struct drm_gem_object *gem_obj);

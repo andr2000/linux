@@ -67,14 +67,14 @@ static int gem_alloc_pages_array(struct xen_gem_object *xen_obj,
 	size_t buf_size)
 {
 	xen_obj->num_pages = DIV_ROUND_UP(buf_size, PAGE_SIZE);
-	xen_obj->pages = drm_malloc_ab(xen_obj->num_pages,
-		sizeof(struct page *));
+	xen_obj->pages = kvmalloc_array(xen_obj->num_pages,
+		sizeof(struct page *), GFP_KERNEL);
 	return xen_obj->pages == NULL ? -ENOMEM : 0;
 }
 
 static void gem_free_pages_array(struct xen_gem_object *xen_obj)
 {
-	drm_free_large(xen_obj->pages);
+	kvfree(xen_obj->pages);
 	xen_obj->pages = NULL;
 }
 

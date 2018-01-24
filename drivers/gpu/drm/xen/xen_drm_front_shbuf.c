@@ -193,7 +193,7 @@ static void shbuf_free(struct xen_drm_front_shbuf *buf)
 	kfree(buf->vdirectory);
 	if (buf->sgt) {
 		sg_free_table(buf->sgt);
-		drm_free_large(buf->pages);
+		kvfree(buf->pages);
 	}
 	kfree(buf);
 }
@@ -317,8 +317,8 @@ static int shbuf_alloc_storage(struct xen_drm_front_shbuf *buf,
 	int num_pages_dir)
 {
 	if (buf->sgt) {
-		buf->pages = drm_malloc_ab(buf->num_pages,
-			sizeof(struct page *));
+		buf->pages = kvmalloc_array(buf->num_pages,
+			sizeof(struct page *), GFP_KERNEL);
 		if (!buf->pages)
 			return -ENOMEM;
 

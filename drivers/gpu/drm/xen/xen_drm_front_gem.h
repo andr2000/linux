@@ -36,10 +36,6 @@ struct xen_drm_front_gem_ops {
 
 	int (*dumb_create)(struct drm_file *file_priv, struct drm_device *dev,
 		struct drm_mode_create_dumb *args);
-	int (*dumb_map_offset)(struct drm_file *file_priv,
-		struct drm_device *dev, uint32_t handle, uint64_t *offset);
-	int (*dumb_destroy)(struct drm_file *file_priv, struct drm_device *dev,
-		uint32_t handle);
 
 	struct drm_framebuffer *(*fb_create_with_funcs)(struct drm_device *dev,
 		struct drm_file *file_priv,

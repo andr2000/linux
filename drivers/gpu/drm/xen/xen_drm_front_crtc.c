@@ -262,7 +262,7 @@ static inline bool crtc_page_flip_pending(
 
 static int crtc_do_page_flip(struct drm_crtc *crtc,
 	struct drm_framebuffer *fb, struct drm_pending_vblank_event *event,
-	uint32_t drm_flags)
+	uint32_t drm_flags, struct drm_modeset_acquire_ctx *ctx)
 {
 	struct xen_drm_front_crtc *xen_crtc = to_xendrm_crtc(crtc);
 	struct drm_device *dev = xen_crtc->crtc.dev;
@@ -303,7 +303,7 @@ static int crtc_do_page_flip(struct drm_crtc *crtc,
 	/* at this stage back was armed and will send page flip event,
 	 * so if we now fail then we have to drop incoming event
 	 */
-	ret = drm_atomic_helper_page_flip(crtc, fb, event, drm_flags);
+	ret = drm_atomic_helper_page_flip(crtc, fb, event, drm_flags, ctx);
 	if (unlikely(ret < 0)) {
 		xen_crtc->fb_cookie = -1;
 		goto fail;

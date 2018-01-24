@@ -68,7 +68,7 @@ kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
 	ret = drm_info->front_ops->fb_attach(
 		drm_info->front_info, xen_drm_front_dbuf_to_cookie(gem_obj),
 		xen_drm_front_fb_to_cookie(fb), fb->width, fb->height,
-		fb->pixel_format);
+		fb->format->format);
 	if (ret < 0) {
 		DRM_ERROR("Back failed to attach FB %p: %d\n", fb, ret);
 		goto fail;

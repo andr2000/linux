@@ -137,7 +137,6 @@ static const struct drm_connector_funcs xen_drm_connector_funcs = {
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 	.destroy = drm_connector_cleanup,
 	.detect = crtc_connector_detect,
-	.dpms = drm_atomic_helper_connector_dpms,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.reset = drm_atomic_helper_connector_reset,
 };

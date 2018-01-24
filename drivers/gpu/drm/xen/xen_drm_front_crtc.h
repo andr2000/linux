@@ -21,6 +21,7 @@
 
 #include <drm/drmP.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_encoder.h>
 
 #include <linux/wait.h>
 

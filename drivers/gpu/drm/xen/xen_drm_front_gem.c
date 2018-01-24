@@ -360,35 +360,6 @@ static void gem_fb_destroy(struct drm_framebuffer *fb)
 	kfree(xen_fb);
 }
 
-static int gem_dumb_map_offset(struct drm_file *file_priv,
-	struct drm_device *dev, uint32_t handle, uint64_t *offset)
-{
-	struct drm_gem_object *gem_obj;
-	struct xen_gem_object *xen_obj;
-	int ret = 0;
-
-	gem_obj = drm_gem_object_lookup(file_priv, handle);
-	if (!gem_obj) {
-		DRM_ERROR("Failed to lookup GEM object\n");
-		return -ENOENT;
-	}
-
-	xen_obj = to_xen_gem_obj(gem_obj);
-	/* do not allow mapping of the imported buffers */
-	if (xen_obj->base.import_attach) {
-		ret = -EINVAL;
-	} else {
-		ret = drm_gem_create_mmap_offset(gem_obj);
-		if (ret < 0)
-			*offset = 0;
-		else
-			*offset = drm_vma_node_offset_addr(&gem_obj->vma_node);
-	}
-
-	drm_gem_object_unreference_unlocked(gem_obj);
-	return ret;
-}
-
 static inline void gem_mmap_obj(struct xen_gem_object *xen_obj,
 	struct vm_area_struct *vma)
 {
@@ -481,7 +452,6 @@ static const struct xen_drm_front_gem_ops xen_drm_gem_ops = {
 	.prime_mmap            = gem_prime_mmap,
 
 	.dumb_create           = gem_dumb_create,
-	.dumb_map_offset       = gem_dumb_map_offset,
 
 	.fb_create_with_funcs  = gem_fb_create_with_funcs,
 	.fb_destroy            = gem_fb_destroy,

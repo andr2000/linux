@@ -67,7 +67,6 @@ static const struct xen_drm_front_gem_ops xen_drm_front_gem_cma_ops = {
 	.prime_mmap            = drm_gem_cma_prime_mmap,
 
 	.dumb_create           = drm_gem_cma_dumb_create,
-	.dumb_map_offset       = drm_gem_cma_dumb_map_offset,
 
 	.fb_create_with_funcs  = drm_fb_cma_create_with_funcs,
 	.fb_destroy            = drm_fb_cma_destroy,

@@ -285,7 +285,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 
 	ret = drm_vblank_init(ddev, drm_info->num_crtcs);
 	if (ret < 0)
-		goto fail_vblank;
+		return ret;
 
 	/* DRM/KMS objects */
 	ret = xen_drm_front_kms_init(drm_info);
@@ -321,8 +321,6 @@ fail_register:
 	drm_dev_unregister(ddev);
 fail_modeset:
 	drm_mode_config_cleanup(ddev);
-fail_vblank:
-	drm_vblank_cleanup(ddev);
 	return ret;
 }
 
@@ -333,7 +331,6 @@ int xen_drm_front_drv_remove(struct platform_device *pdev)
 
 	del_timer_sync(&drm_info->vblank_timer);
 	drm_dev_unregister(drm_dev);
-	drm_vblank_cleanup(drm_dev);
 	drm_mode_config_cleanup(drm_dev);
 	drm_dev_unref(drm_dev);
 	return 0;

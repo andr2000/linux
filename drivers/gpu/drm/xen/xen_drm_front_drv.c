@@ -194,16 +194,6 @@ static int prime_mmap(struct drm_gem_object *obj,
 	return drm_info->gem_ops->prime_mmap(obj, vma);
 }
 
-static int dumb_map_offset(struct drm_file *file_priv,
-	struct drm_device *dev, uint32_t handle, uint64_t *offset)
-{
-	struct xen_drm_front_drm_info *drm_info;
-
-	drm_info = dev->dev_private;
-	return drm_info->gem_ops->dumb_map_offset(file_priv, dev,
-		handle, offset);
-}
-
 static const struct file_operations xendrm_fops = {
 	.owner          = THIS_MODULE,
 	.open           = drm_open,
@@ -241,8 +231,6 @@ struct drm_driver xendrm_driver = {
 	.gem_prime_vunmap          = prime_vunmap,
 	.gem_prime_mmap            = prime_mmap,
 	.dumb_create               = dumb_create,
-	.dumb_map_offset           = dumb_map_offset,
-	.dumb_destroy              = drm_gem_dumb_destroy,
 	.fops                      = &xendrm_fops,
 	.name                      = "xendrm-du",
 	.desc                      = "Xen PV DRM Display Unit",

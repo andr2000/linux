@@ -342,9 +342,11 @@ static void crtc_ntfy_page_flip_completed(
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 	drm_crtc_vblank_put(&xen_crtc->crtc);
 }
-static void crtc_on_page_flip_to(unsigned long data)
+
+static void crtc_on_page_flip_to(struct timer_list *t)
 {
-	struct xen_drm_front_crtc *xen_crtc = (struct xen_drm_front_crtc *)data;
+	struct xen_drm_front_crtc *xen_crtc =
+		from_timer(xen_crtc, t, pg_flip_to_timer);
 
 	if (crtc_page_flip_pending(xen_crtc)) {
 		DRM_ERROR("Flip event timed-out, releasing\n");
@@ -482,8 +484,7 @@ int xen_drm_front_crtc_create(struct xen_drm_front_drm_info *drm_info,
 
 	drm_crtc_helper_add(&xen_crtc->crtc, &xen_drm_crtc_helper_funcs);
 
-	setup_timer(&xen_crtc->pg_flip_to_timer, crtc_on_page_flip_to,
-		(unsigned long)xen_crtc);
+	timer_setup(&xen_crtc->pg_flip_to_timer, crtc_on_page_flip_to, 0);
 
 	return 0;
 }

@@ -147,7 +147,6 @@ int xen_drm_front_crtc_connector_create(struct xen_drm_front_drm_info *drm_info,
 {
 	struct drm_encoder *encoder = &xen_crtc->encoder;
 	struct drm_connector *connector = &xen_crtc->connector.base;
-	struct drm_mode_config *mode_config = &drm_info->drm_dev->mode_config;
 	int ret;
 
 	xen_crtc->connector.width = cfg->width;
@@ -161,14 +160,8 @@ int xen_drm_front_crtc_connector_create(struct xen_drm_front_drm_info *drm_info,
 
 	ret = drm_mode_connector_attach_encoder(connector, encoder);
 	if (ret < 0)
-		goto fail;
+		drm_connector_cleanup(connector);
 
-	drm_object_property_set_value(&connector->base,
-		mode_config->dpms_property, DRM_MODE_DPMS_ON);
-	return 0;
-
-fail:
-	drm_connector_cleanup(connector);
 	return ret;
 }
 

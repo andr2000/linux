@@ -51,10 +51,6 @@ struct xen_drm_front_crtc {
 	struct timer_list pg_flip_to_timer;
 	/* current fb cookie */
 	uint64_t fb_cookie;
-
-	struct {
-		struct drm_property *alpha;
-	} props;
 };
 
 int xen_drm_front_crtc_create(struct xen_drm_front_drm_info *drm_info,

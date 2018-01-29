@@ -80,6 +80,9 @@ int xen_drm_front_crtc_encoder_create(struct xen_drm_front_drm_info *drm_info,
 static enum drm_connector_status crtc_connector_detect(
 	struct drm_connector *connector, bool force)
 {
+	if (drm_dev_is_unplugged(connector->dev))
+		return connector_status_disconnected;
+
 	return connector_status_connected;
 }
 

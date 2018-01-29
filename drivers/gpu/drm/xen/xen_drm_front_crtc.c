@@ -230,16 +230,6 @@ static struct drm_plane *crtc_create_primary(
 	return primary;
 }
 
-static int crtc_props_init(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc)
-{
-	xen_crtc->props.alpha = drm_property_create_range(drm_info->drm_dev,
-		0, "alpha", 0, 255);
-	if (!xen_crtc->props.alpha)
-		return -ENOMEM;
-	return 0;
-}
-
 static inline bool crtc_page_flip_pending(
 	struct xen_drm_front_crtc *xen_crtc)
 {
@@ -466,10 +456,6 @@ int xen_drm_front_crtc_create(struct xen_drm_front_drm_info *drm_info,
 	xen_crtc->drm_info = drm_info;
 	xen_crtc->index = index;
 	init_waitqueue_head(&xen_crtc->flip_wait);
-
-	ret = crtc_props_init(drm_info, xen_crtc);
-	if (ret < 0)
-		return ret;
 
 	primary = crtc_create_primary(drm_info, xen_crtc);
 	if (!primary)

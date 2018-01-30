@@ -101,7 +101,7 @@ static struct xen_gem_object *gem_create(struct drm_device *dev,
 	if (IS_ERR_OR_NULL(xen_obj))
 		return xen_obj;
 
-	if (drm_info->plat_data->be_alloc) {
+	if (drm_info->cfg->be_alloc) {
 		/*
 		 * backend will allocate space for this buffer, so
 		 * only allocate array of pointers to pages

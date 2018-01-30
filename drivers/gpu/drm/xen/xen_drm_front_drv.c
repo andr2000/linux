@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -69,20 +69,20 @@ static int dumb_create(struct drm_file *file_priv,
 	struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
-	struct drm_gem_object *gem_obj;
+	struct drm_gem_object *obj;
 	int ret;
 
 	ret = drm_info->gem_ops->dumb_create(file_priv, dev, args);
-	if (ret < 0)
+	if (ret)
 		goto fail;
 
-	gem_obj = drm_gem_object_lookup(file_priv, args->handle);
-	if (!gem_obj) {
-		ret = -EINVAL;
+	obj = drm_gem_object_lookup(file_priv, args->handle);
+	if (!obj) {
+		ret = -ENOENT;
 		goto fail_destroy;
 	}
 
-	drm_gem_object_unreference_unlocked(gem_obj);
+	drm_gem_object_unreference_unlocked(obj);
 
 	/*
 	 * in case of CONFIG_DRM_XEN_FRONTEND_CMA gem_obj is constructed
@@ -90,21 +90,21 @@ static int dumb_create(struct drm_file *file_priv,
 	 * (xendrm_gem_get_pages will return NULL), but instead can provide
 	 * sg table
 	 */
-	if (drm_info->gem_ops->get_pages(gem_obj))
+	if (drm_info->gem_ops->get_pages(obj))
 		ret = drm_info->front_ops->dbuf_create(
 				drm_info->front_info,
-				xen_drm_front_dbuf_to_cookie(gem_obj),
+				xen_drm_front_dbuf_to_cookie(obj),
 				args->width, args->height, args->bpp,
 				args->size,
-				drm_info->gem_ops->get_pages(gem_obj));
+				drm_info->gem_ops->get_pages(obj));
 	else
 		ret = drm_info->front_ops->dbuf_create_from_sgt(
 				drm_info->front_info,
-				xen_drm_front_dbuf_to_cookie(gem_obj),
+				xen_drm_front_dbuf_to_cookie(obj),
 				args->width, args->height, args->bpp,
 				args->size,
-				drm_info->gem_ops->prime_get_sg_table(gem_obj));
-	if (ret < 0)
+				drm_info->gem_ops->prime_get_sg_table(obj));
+	if (ret)
 		goto fail_destroy;
 
 	return 0;
@@ -116,13 +116,13 @@ fail:
 	return ret;
 }
 
-static void free_object(struct drm_gem_object *gem_obj)
+static void free_object(struct drm_gem_object *obj)
 {
-	struct xen_drm_front_drm_info *drm_info = gem_obj->dev->dev_private;
+	struct xen_drm_front_drm_info *drm_info = obj->dev->dev_private;
 
 	drm_info->front_ops->dbuf_destroy(drm_info->front_info,
-		xen_drm_front_dbuf_to_cookie(gem_obj));
-	drm_info->gem_ops->free_object_unlocked(gem_obj);
+		xen_drm_front_dbuf_to_cookie(obj));
+	drm_info->gem_ops->free_object_unlocked(obj);
 }
 
 static void on_page_flip(struct platform_device *pdev,
@@ -130,10 +130,11 @@ static void on_page_flip(struct platform_device *pdev,
 {
 	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
 
-	if (unlikely(conn_idx >= drm_info->num_crtcs))
+	if (unlikely(conn_idx >= drm_info->cfg->num_connectors))
 		return;
 
-	xen_drm_front_crtc_on_page_flip_done(&drm_info->crtcs[conn_idx], fb_cookie);
+	xen_drm_front_crtc_on_page_flip_done(&drm_info->crtcs[conn_idx],
+		fb_cookie);
 }
 
 static void lastclose(struct drm_device *dev)
@@ -185,8 +186,7 @@ static void prime_vunmap(struct drm_gem_object *obj, void *vaddr)
 	return drm_info->gem_ops->prime_vunmap(obj, vaddr);
 }
 
-static int prime_mmap(struct drm_gem_object *obj,
-	struct vm_area_struct *vma)
+static int prime_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma)
 {
 	struct xen_drm_front_drm_info *drm_info;
 
@@ -208,19 +208,19 @@ static const struct file_operations xendrm_fops = {
 	.mmap           = gem_mmap,
 };
 
-static const struct vm_operations_struct xendrm_vm_ops = {
+static const struct vm_operations_struct xen_drm_vm_ops = {
 	.open           = drm_gem_vm_open,
 	.close          = drm_gem_vm_close,
 };
 
-struct drm_driver xendrm_driver = {
+struct drm_driver xen_drm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
 	.lastclose                 = lastclose,
 	.enable_vblank             = enable_vblank,
 	.disable_vblank            = disable_vblank,
 	.gem_free_object_unlocked  = free_object,
-	.gem_vm_ops                = &xendrm_vm_ops,
+	.gem_vm_ops                = &xen_drm_vm_ops,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle        = drm_gem_prime_fd_to_handle,
 	.gem_prime_import          = drm_gem_prime_import,
@@ -240,104 +240,104 @@ struct drm_driver xendrm_driver = {
 };
 
 int xen_drm_front_drv_probe(struct platform_device *pdev,
-	struct xen_drm_front_ops *xendrm_front_funcs)
+	struct xen_drm_front_ops *front_ops)
 {
-	struct xen_drm_front_cfg_plat_data *platdata;
+	struct xen_drm_front_cfg_plat_data *cfg = dev_get_platdata(&pdev->dev);
 	struct xen_drm_front_drm_info *drm_info;
-	struct drm_device *ddev;
+	struct drm_device *dev;
 	int ret;
 
-	platdata = dev_get_platdata(&pdev->dev);
-	DRM_INFO("Creating %s\n", xendrm_driver.desc);
-	/* Allocate and initialize the DRM and xendrm device structures. */
+	DRM_INFO("Creating %s\n", xen_drm_driver.desc);
+
 	drm_info = devm_kzalloc(&pdev->dev, sizeof(*drm_info), GFP_KERNEL);
 	if (!drm_info)
 		return -ENOMEM;
 
-	drm_info->front_ops = xendrm_front_funcs;
+	drm_info->front_ops = front_ops;
 	drm_info->front_ops->on_page_flip = on_page_flip;
 	drm_info->gem_ops = xen_drm_front_gem_get_ops();
-	drm_info->front_info = platdata->front_info;
+	drm_info->front_info = cfg->front_info;
 
-	ddev = drm_dev_alloc(&xendrm_driver, &pdev->dev);
-	if (!ddev)
+	dev = drm_dev_alloc(&xen_drm_driver, &pdev->dev);
+	if (!dev)
 		return -ENOMEM;
 
-	drm_info->drm_dev = ddev;
+	drm_info->drm_dev = dev;
 
-	/* assume 1 CRTC and 1 Encoder per each connector */
-	drm_info->num_crtcs = platdata->num_connectors;
-	drm_info->plat_data = platdata;
-	ddev->dev_private = drm_info;
+	timer_setup(&drm_info->vblank_timer, emulate_vblank_interrupt, 0);
+
+	drm_info->cfg = cfg;
+	dev->dev_private = drm_info;
 	platform_set_drvdata(pdev, drm_info);
 
-	ret = drm_vblank_init(ddev, drm_info->num_crtcs);
-	if (ret < 0)
+	ret = drm_vblank_init(dev, cfg->num_connectors);
+	if (ret) {
+		DRM_ERROR("Failed to initialize vblank, ret %d\n", ret);
 		return ret;
+	}
 
-	/* DRM/KMS objects */
 	ret = xen_drm_front_kms_init(drm_info);
-	if (ret < 0) {
-		if (ret != -EPROBE_DEFER)
-			dev_err(&pdev->dev,
-				"failed to initialize DRM/KMS (%d)\n", ret);
+	if (ret) {
+		DRM_ERROR("Failed to initialize DRM/KMS, ret %d\n", ret);
 		goto fail_modeset;
 	}
 
-	timer_setup(&drm_info->vblank_timer, emulate_vblank_interrupt, 0);
-	rearm_vblank_timer(drm_info);
-
-	ddev->irq_enabled = 1;
+	dev->irq_enabled = 1;
 
 	/*
 	 * register the DRM device with the core and the connectors,
 	 * encoders, planes with sysfs
 	 */
-	ret = drm_dev_register(ddev, 0);
+	ret = drm_dev_register(dev, 0);
 	if (ret)
 		goto fail_register;
 
+	rearm_vblank_timer(drm_info);
+
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
-		xendrm_driver.name, xendrm_driver.major,
-		xendrm_driver.minor, xendrm_driver.patchlevel,
-		xendrm_driver.date, ddev->primary->index);
+		xen_drm_driver.name, xen_drm_driver.major,
+		xen_drm_driver.minor, xen_drm_driver.patchlevel,
+		xen_drm_driver.date, dev->primary->index);
 
 	return 0;
 
 fail_register:
-	del_timer_sync(&drm_info->vblank_timer);
-	drm_dev_unregister(ddev);
+	drm_dev_unregister(dev);
 fail_modeset:
-	drm_mode_config_cleanup(ddev);
+	drm_mode_config_cleanup(dev);
 	return ret;
 }
 
 int xen_drm_front_drv_remove(struct platform_device *pdev)
 {
 	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
-	struct drm_device *drm_dev = drm_info->drm_dev;
+	struct drm_device *dev = drm_info->drm_dev;
 
-	del_timer_sync(&drm_info->vblank_timer);
-	drm_dev_unregister(drm_dev);
-	drm_mode_config_cleanup(drm_dev);
-	drm_dev_unref(drm_dev);
+	if (dev) {
+		del_timer_sync(&drm_info->vblank_timer);
+		drm_dev_unregister(dev);
+		drm_mode_config_cleanup(dev);
+		drm_dev_unref(dev);
+	}
 	return 0;
 }
 
 bool xen_drm_front_drv_is_used(struct platform_device *pdev)
 {
 	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
-	struct drm_device *drm_dev;
+	struct drm_device *dev;
 
 	if (!drm_info)
 		return false;
-	drm_dev = drm_info->drm_dev;
-	if (!drm_dev)
+
+	dev = drm_info->drm_dev;
+	if (!dev)
 		return false;
 
-	/* FIXME: the code below must be protected by drm_global_mutex,
-	 * but it is not accessible to us and anyways there is a
-	 * race condition.
+	/*
+	 * FIXME: the code below must be protected by drm_global_mutex,
+	 * but it is not accessible to us. Anyways there is a race condition,
+	 * but we will re-try.
 	 */
-	return drm_dev->open_count != 0;
+	return dev->open_count != 0;
 }

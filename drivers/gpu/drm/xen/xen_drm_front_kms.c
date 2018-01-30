@@ -98,9 +98,9 @@ int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
 	dev->mode_config.max_height = 2047;
 	dev->mode_config.funcs = &mode_config_funcs;
 
-	for (i = 0; i < drm_info->num_crtcs; i++) {
+	for (i = 0; i < drm_info->cfg->num_connectors; i++) {
 		struct xen_drm_front_cfg_connector *cfg =
-			&drm_info->plat_data->connectors[i];
+			&drm_info->cfg->connectors[i];
 
 		ret = xen_drm_front_crtc_init(drm_info, &drm_info->crtcs[i], i,
 			cfg->width, cfg->height);

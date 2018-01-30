@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -29,7 +29,7 @@
 #include "xen_drm_front_drv.h"
 #include "xen_drm_front_gem.h"
 
-static void kms_fb_destroy(struct drm_framebuffer *fb)
+static void fb_destroy(struct drm_framebuffer *fb)
 {
 	struct xen_drm_front_drm_info *drm_info = fb->dev->dev_private;
 
@@ -38,26 +38,23 @@ static void kms_fb_destroy(struct drm_framebuffer *fb)
 	drm_gem_fb_destroy(fb);
 }
 
-static struct drm_framebuffer_funcs xen_drm_fb_funcs = {
-	.destroy = kms_fb_destroy,
+static struct drm_framebuffer_funcs fb_funcs = {
+	.destroy = fb_destroy,
 };
 
-static struct drm_framebuffer *
-kms_fb_create(struct drm_device *dev, struct drm_file *file_priv,
-	const struct drm_mode_fb_cmd2 *mode_cmd)
+static struct drm_framebuffer *fb_create(struct drm_device *dev,
+	struct drm_file *file_priv, const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	static struct drm_framebuffer *fb;
 	struct drm_gem_object *gem_obj;
 	int ret;
 
-	fb = drm_gem_fb_create_with_funcs(dev, file_priv,
-		mode_cmd, &xen_drm_fb_funcs);
+	fb = drm_gem_fb_create_with_funcs(dev, file_priv, mode_cmd, &fb_funcs);
 	if (IS_ERR(fb))
 		return fb;
 
-	gem_obj = drm_gem_object_lookup(file_priv,
-		mode_cmd->handles[0]);
+	gem_obj = drm_gem_object_lookup(file_priv, mode_cmd->handles[0]);
 	if (!gem_obj) {
 		DRM_ERROR("Failed to lookup GEM object\n");
 		ret = -ENOENT;
@@ -82,24 +79,24 @@ fail:
 	return ERR_PTR(ret);
 }
 
-static const struct drm_mode_config_funcs xen_drm_kms_config_funcs = {
-	.fb_create = kms_fb_create,
+static const struct drm_mode_config_funcs mode_config_funcs = {
+	.fb_create = fb_create,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
 int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
 {
-	struct drm_device *drm_dev = drm_info->drm_dev;
+	struct drm_device *dev = drm_info->drm_dev;
 	int i, ret;
 
-	drm_mode_config_init(drm_dev);
+	drm_mode_config_init(dev);
 
-	drm_dev->mode_config.min_width = 0;
-	drm_dev->mode_config.min_height = 0;
-	drm_dev->mode_config.max_width = 4095;
-	drm_dev->mode_config.max_height = 2047;
-	drm_dev->mode_config.funcs = &xen_drm_kms_config_funcs;
+	dev->mode_config.min_width = 0;
+	dev->mode_config.min_height = 0;
+	dev->mode_config.max_width = 4095;
+	dev->mode_config.max_height = 2047;
+	dev->mode_config.funcs = &mode_config_funcs;
 
 	for (i = 0; i < drm_info->num_crtcs; i++) {
 		struct xen_drm_front_cfg_connector *cfg =
@@ -111,10 +108,10 @@ int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
 			goto fail;
 	}
 
-	drm_mode_config_reset(drm_dev);
+	drm_mode_config_reset(dev);
 	return 0;
 
 fail:
-	drm_mode_config_cleanup(drm_dev);
+	drm_mode_config_cleanup(dev);
 	return ret;
 }

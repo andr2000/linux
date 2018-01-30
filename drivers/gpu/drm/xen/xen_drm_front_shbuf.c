@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -31,13 +31,39 @@
 #include "xen_drm_balloon.h"
 #include "xen_drm_front_drv.h"
 
-grant_ref_t xen_drm_front_shbuf_get_dir_start(
-	struct xen_drm_front_shbuf *buf)
+struct xen_drm_front_shbuf_ops {
+	/*
+	 * calculate number of grefs required to handle this buffer,
+	 * e.g. if grefs are required for page directory only or the buffer
+	 * pages as well
+	 */
+	void (*calc_num_grefs)(struct xen_drm_front_shbuf *buf);
+	/* fill page directory according to para-virtual display protocol */
+	void (*fill_page_dir)(struct xen_drm_front_shbuf *buf);
+	/* claim grant references for the pages of the buffer */
+	int (*grant_refs_for_buffer)(struct xen_drm_front_shbuf *buf,
+		grant_ref_t *priv_gref_head, int gref_idx);
+	/* map grant references of the buffer */
+	int (*map)(struct xen_drm_front_shbuf *buf);
+	/* unmap grant references of the buffer */
+	int (*unmap)(struct xen_drm_front_shbuf *buf);
+};
+
+grant_ref_t xen_drm_front_shbuf_get_dir_start(struct xen_drm_front_shbuf *buf)
 {
 	if (!buf->grefs)
 		return GRANT_INVALID_REF;
 
 	return buf->grefs[0];
+}
+
+int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf)
+{
+	if (buf->ops->map)
+		return buf->ops->map(buf);
+
+	/* no need to map guest grant references, those are local */
+	return 0;
 }
 
 struct xen_drm_front_shbuf *xen_drm_front_shbuf_get_by_dbuf_cookie(
@@ -65,19 +91,39 @@ void xen_drm_front_shbuf_flush_fb(struct list_head *dbuf_list,
 #endif
 }
 
-#define xen_page_to_vaddr(page) \
-	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
-
 /*
  * number of grefs a page can hold with respect to the
  * struct xendispl_page_directory header
  */
-#define XEN_DRM_NUM_GREFS_PER_PAGE ((XEN_PAGE_SIZE - \
+#define XEN_DRM_NUM_GREFS_PER_PAGE ((PAGE_SIZE - \
 	offsetof(struct xendispl_page_directory, gref)) / \
 	sizeof(grant_ref_t))
 
-int xen_drm_front_shbuf_be_alloc_map(
-	struct xen_drm_front_shbuf *buf)
+static int get_num_pages_dir(struct xen_drm_front_shbuf *buf)
+{
+	/* number of pages the page directory consumes itself */
+	return DIV_ROUND_UP(buf->num_pages, XEN_DRM_NUM_GREFS_PER_PAGE);
+}
+
+static void backend_calc_num_grefs(struct xen_drm_front_shbuf *buf)
+{
+	/* only for pages the page directory consumes itself */
+	buf->num_grefs = get_num_pages_dir(buf);
+}
+
+static void guest_calc_num_grefs(struct xen_drm_front_shbuf *buf)
+{
+	/*
+	 * number of pages the page directory consumes itself
+	 * plus grefs for the buffer pages
+	 */
+	buf->num_grefs = get_num_pages_dir(buf) + buf->num_pages;
+}
+
+#define xen_page_to_vaddr(page) \
+	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
+
+static int backend_map(struct xen_drm_front_shbuf *buf)
 {
 	struct gnttab_map_grant_ref *map_ops = NULL;
 	unsigned char *ptr;
@@ -87,9 +133,9 @@ int xen_drm_front_shbuf_be_alloc_map(
 	if (!map_ops)
 		return -ENOMEM;
 
-	buf->be_alloc_map_handles = kcalloc(buf->num_pages,
-		sizeof(*buf->be_alloc_map_handles), GFP_KERNEL);
-	if (!buf->be_alloc_map_handles) {
+	buf->backend_map_handles = kcalloc(buf->num_pages,
+		sizeof(*buf->backend_map_handles), GFP_KERNEL);
+	if (!buf->backend_map_handles) {
 		kfree(map_ops);
 		return -ENOMEM;
 	}
@@ -99,7 +145,7 @@ int xen_drm_front_shbuf_be_alloc_map(
 	 * buffer we only allocate buf->grefs for the page directory,
 	 * so buf->num_grefs has number of pages in the page directory itself
 	 */
-	ptr = buf->vdirectory;
+	ptr = buf->directory;
 	grefs_left = buf->num_pages;
 	cur_page = 0;
 	for (cur_dir_page = 0; cur_dir_page < buf->num_grefs; cur_dir_page++) {
@@ -121,14 +167,14 @@ int xen_drm_front_shbuf_be_alloc_map(
 		}
 
 		grefs_left -= to_copy;
-		ptr += XEN_PAGE_SIZE;
+		ptr += PAGE_SIZE;
 	}
 	ret = gnttab_map_refs(map_ops, NULL, buf->pages, buf->num_pages);
 	BUG_ON(ret);
 
 	/* save handles so we can unmap on free */
 	for (cur_page = 0; cur_page < buf->num_pages; cur_page++) {
-		buf->be_alloc_map_handles[cur_page] = map_ops[cur_page].handle;
+		buf->backend_map_handles[cur_page] = map_ops[cur_page].handle;
 		if (unlikely(map_ops[cur_page].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d: %d\n",
 				cur_page, map_ops[cur_page].status);
@@ -138,12 +184,12 @@ int xen_drm_front_shbuf_be_alloc_map(
 	return 0;
 }
 
-static int shbuf_be_alloc_unmap(struct xen_drm_front_shbuf *buf)
+static int backend_unmap(struct xen_drm_front_shbuf *buf)
 {
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
 
-	if (!buf->pages || !buf->be_alloc_map_handles)
+	if (!buf->pages || !buf->backend_map_handles)
 		return 0;
 
 	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops),
@@ -158,7 +204,7 @@ static int shbuf_be_alloc_unmap(struct xen_drm_front_shbuf *buf)
 
 		addr = xen_page_to_vaddr(buf->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr, GNTMAP_host_map,
-			buf->be_alloc_map_handles[i]);
+			buf->backend_map_handles[i]);
 	}
 
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, buf->pages,
@@ -171,8 +217,8 @@ static int shbuf_be_alloc_unmap(struct xen_drm_front_shbuf *buf)
 	}
 
 	kfree(unmap_ops);
-	kfree(buf->be_alloc_map_handles);
-	buf->be_alloc_map_handles = NULL;
+	kfree(buf->backend_map_handles);
+	buf->backend_map_handles = NULL;
 	return 0;
 }
 
@@ -181,8 +227,8 @@ static void shbuf_free(struct xen_drm_front_shbuf *buf)
 	int i;
 
 	if (buf->grefs) {
-		if (buf->be_alloc)
-			shbuf_be_alloc_unmap(buf);
+		if (buf->ops->unmap)
+			buf->ops->unmap(buf);
 
 		for (i = 0; i < buf->num_grefs; i++)
 			if (buf->grefs[i] != GRANT_INVALID_REF)
@@ -190,7 +236,7 @@ static void shbuf_free(struct xen_drm_front_shbuf *buf)
 					0, 0UL);
 	}
 	kfree(buf->grefs);
-	kfree(buf->vdirectory);
+	kfree(buf->directory);
 	if (buf->sgt) {
 		sg_free_table(buf->sgt);
 		kvfree(buf->pages);
@@ -222,34 +268,34 @@ void xen_drm_front_shbuf_free_all(struct list_head *dbuf_list)
 	}
 }
 
-static void shbuf_fill_page_dir_be_alloc(
-	struct xen_drm_front_shbuf *buf, int num_pages_dir)
+static void backend_fill_page_dir(struct xen_drm_front_shbuf *buf)
 {
 	struct xendispl_page_directory *page_dir;
 	unsigned char *ptr;
-	int i;
+	int i, num_pages_dir;
 
-	ptr = buf->vdirectory;
+	ptr = buf->directory;
+	num_pages_dir = get_num_pages_dir(buf);
 
 	/* fill only grefs for the page directory itself */
 	for (i = 0; i < num_pages_dir - 1; i++) {
 		page_dir = (struct xendispl_page_directory *)ptr;
 
 		page_dir->gref_dir_next_page = buf->grefs[i + 1];
-		ptr += XEN_PAGE_SIZE;
+		ptr += PAGE_SIZE;
 	}
 	/* last page must say there is no more pages */
 	page_dir = (struct xendispl_page_directory *)ptr;
 	page_dir->gref_dir_next_page = GRANT_INVALID_REF;
 }
 
-static void shbuf_fill_page_dir(struct xen_drm_front_shbuf *buf,
-	int num_pages_dir)
+static void guest_fill_page_dir(struct xen_drm_front_shbuf *buf)
 {
 	unsigned char *ptr;
-	int cur_gref, grefs_left, to_copy, i;
+	int cur_gref, grefs_left, to_copy, i, num_pages_dir;
 
-	ptr = buf->vdirectory;
+	ptr = buf->directory;
+	num_pages_dir = get_num_pages_dir(buf);
 
 	/*
 	 * while copying, skip grefs at start, they are for pages
@@ -270,18 +316,34 @@ static void shbuf_fill_page_dir(struct xen_drm_front_shbuf *buf,
 		}
 		memcpy(&page_dir->gref, &buf->grefs[cur_gref],
 			to_copy * sizeof(grant_ref_t));
-		ptr += XEN_PAGE_SIZE;
+		ptr += PAGE_SIZE;
 		grefs_left -= to_copy;
 		cur_gref += to_copy;
 	}
 }
 
-static int shbuf_grant_refs(struct xen_drm_front_shbuf *buf,
-	int num_pages_dir)
+static int guest_grant_refs_for_buffer(struct xen_drm_front_shbuf *buf,
+	grant_ref_t *priv_gref_head, int gref_idx)
+{
+	int i, cur_ref, otherend_id;
+
+	otherend_id = buf->xb_dev->otherend_id;
+	for (i = 0; i < buf->num_pages; i++) {
+		cur_ref = gnttab_claim_grant_reference(priv_gref_head);
+		if (cur_ref < 0)
+			return cur_ref;
+		gnttab_grant_foreign_access_ref(cur_ref,
+			otherend_id, xen_page_to_gfn(buf->pages[i]), 0);
+		buf->grefs[gref_idx++] = cur_ref;
+	}
+	return 0;
+}
+
+static int grant_references(struct xen_drm_front_shbuf *buf)
 {
 	grant_ref_t priv_gref_head;
 	int ret, i, j, cur_ref;
-	int otherend_id;
+	int otherend_id, num_pages_dir;
 
 	ret = gnttab_alloc_grant_references(buf->num_grefs, &priv_gref_head);
 	if (ret < 0) {
@@ -290,31 +352,32 @@ static int shbuf_grant_refs(struct xen_drm_front_shbuf *buf,
 	}
 	otherend_id = buf->xb_dev->otherend_id;
 	j = 0;
+	num_pages_dir = get_num_pages_dir(buf);
 	for (i = 0; i < num_pages_dir; i++) {
+		unsigned long frame;
+
 		cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
 		if (cur_ref < 0)
 			return cur_ref;
+
+		frame = xen_page_to_gfn(virt_to_page(buf->directory +
+			PAGE_SIZE * i));
 		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
-			xen_page_to_gfn(virt_to_page(buf->vdirectory +
-				XEN_PAGE_SIZE * i)), 0);
+			frame, 0);
 		buf->grefs[j++] = cur_ref;
 	}
-	if (!buf->be_alloc)
-		/* also claim grant references for the pages of the buffer */
-		for (i = 0; i < buf->num_pages; i++) {
-			cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
-			if (cur_ref < 0)
-				return cur_ref;
-			gnttab_grant_foreign_access_ref(cur_ref,
-				otherend_id, xen_page_to_gfn(buf->pages[i]), 0);
-			buf->grefs[j++] = cur_ref;
-		}
+
+	if (buf->ops->grant_refs_for_buffer) {
+		ret = buf->ops->grant_refs_for_buffer(buf, &priv_gref_head, j);
+		if (ret)
+			return ret;
+	}
+
 	gnttab_free_grant_references(priv_gref_head);
 	return 0;
 }
 
-static int shbuf_alloc_storage(struct xen_drm_front_shbuf *buf,
-	int num_pages_dir)
+static int alloc_storage(struct xen_drm_front_shbuf *buf)
 {
 	if (buf->sgt) {
 		buf->pages = kvmalloc_array(buf->num_pages,
@@ -331,57 +394,75 @@ static int shbuf_alloc_storage(struct xen_drm_front_shbuf *buf,
 	if (!buf->grefs)
 		return -ENOMEM;
 
-	buf->vdirectory = kcalloc(num_pages_dir, XEN_PAGE_SIZE, GFP_KERNEL);
-	if (!buf->vdirectory)
+	buf->directory = kcalloc(get_num_pages_dir(buf), PAGE_SIZE, GFP_KERNEL);
+	if (!buf->directory)
 		return -ENOMEM;
 
 	return 0;
 }
 
+/*
+ * for be allocated buffers we don't need grant_refs_for_buffer as those
+ * grant references are allocated at backend side
+ */
+static const struct xen_drm_front_shbuf_ops backend_ops = {
+	.calc_num_grefs = backend_calc_num_grefs,
+	.fill_page_dir = backend_fill_page_dir,
+	.map = backend_map,
+	.unmap = backend_unmap
+};
+
+/* for locally granted references we do not need to map/unmap the references */
+static const struct xen_drm_front_shbuf_ops local_ops = {
+	.calc_num_grefs = guest_calc_num_grefs,
+	.fill_page_dir = guest_fill_page_dir,
+	.grant_refs_for_buffer = guest_grant_refs_for_buffer,
+};
+
 struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
-	struct xen_drm_front_shbuf_alloc *info)
+	struct xen_drm_front_shbuf_cfg *cfg)
 {
 	struct xen_drm_front_shbuf *buf;
-	int num_pages_dir;
+	int ret;
+
+	;
 
 	/* either pages or sgt, not both */
-	BUG_ON(info->pages && info->sgt);
+	BUG_ON(cfg->pages && cfg->sgt);
 
 	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return NULL;
 
-	buf->xb_dev = info->xb_dev;
-	buf->dbuf_cookie = info->dbuf_cookie;
-	buf->be_alloc = info->be_alloc;
-	buf->num_pages = DIV_ROUND_UP(info->size, PAGE_SIZE);
-	buf->sgt = info->sgt;
-	buf->pages = info->pages;
-
-	/* number of pages the page directory consumes itself */
-	num_pages_dir = DIV_ROUND_UP(buf->num_pages,
-		XEN_DRM_NUM_GREFS_PER_PAGE);
-
-	if (buf->be_alloc)
-		buf->num_grefs = num_pages_dir;
+	if (cfg->be_alloc)
+		buf->ops = &backend_ops;
 	else
-		buf->num_grefs = num_pages_dir + buf->num_pages;
+		buf->ops = &local_ops;
 
-	if (shbuf_alloc_storage(buf, num_pages_dir) < 0)
+	buf->xb_dev = cfg->xb_dev;
+	buf->dbuf_cookie = cfg->dbuf_cookie;
+	/* at the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
+	buf->num_pages = DIV_ROUND_UP(cfg->size,
+		PAGE_SIZE + BUILD_BUG_ON_ZERO(XEN_PAGE_SIZE != PAGE_SIZE));
+	buf->sgt = cfg->sgt;
+	buf->pages = cfg->pages;
+
+	buf->ops->calc_num_grefs(buf);
+
+	ret = alloc_storage(buf);
+	if (ret)
 		goto fail;
 
-	if (shbuf_grant_refs(buf, num_pages_dir) < 0)
+	ret = grant_references(buf);
+	if (ret)
 		goto fail;
 
-	if (buf->be_alloc)
-		shbuf_fill_page_dir_be_alloc(buf, num_pages_dir);
-	else
-		shbuf_fill_page_dir(buf, num_pages_dir);
+	buf->ops->fill_page_dir(buf);
 
-	list_add(&buf->list, info->dbuf_list);
+	list_add(&buf->list, cfg->dbuf_list);
 	return buf;
 
 fail:
 	shbuf_free(buf);
-	return NULL;
+	return ERR_PTR(ret);
 }

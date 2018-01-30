@@ -29,7 +29,7 @@
 static void rearm_vblank_timer(struct xen_drm_front_drm_info *drm_info)
 {
 	mod_timer(&drm_info->vblank_timer,
-		jiffies + msecs_to_jiffies(1000 / XENDRM_CRTC_VREFRESH_HZ));
+		jiffies + msecs_to_jiffies(1000 / XEN_DRM_CRTC_VREFRESH_HZ));
 }
 
 static int enable_vblank(struct drm_device *dev, unsigned int pipe)

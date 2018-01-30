@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -25,7 +25,7 @@
 
 #include <linux/wait.h>
 
-#define XENDRM_CRTC_VREFRESH_HZ	60
+#define XEN_DRM_CRTC_VREFRESH_HZ	60
 
 struct xen_drm_front_drm_info;
 struct xen_drm_front_cfg_connector;
@@ -42,7 +42,7 @@ struct xen_drm_front_crtc {
 	struct drm_plane primary;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
-	struct xen_drm_front_connector connector;
+	struct xen_drm_front_connector xen_connector;
 
 	/* vblank and flip handling */
 	atomic_t pg_flip_source_cnt;

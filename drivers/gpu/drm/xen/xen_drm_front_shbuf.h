@@ -25,9 +25,6 @@
 #include <xen/grant_table.h>
 
 struct xen_drm_front_shbuf {
-	struct list_head list;
-	uint64_t dbuf_cookie;
-	uint64_t fb_cookie;
 	/*
 	 * number of references granted for the backend use:
 	 *  - for allocated/imported dma-buf's this holds number of grant
@@ -61,15 +58,9 @@ struct xen_drm_front_shbuf {
 
 struct xen_drm_front_shbuf_cfg {
 	struct xenbus_device *xb_dev;
-
-	struct list_head *dbuf_list;
-	uint64_t dbuf_cookie;
-
 	size_t size;
-
 	struct page **pages;
 	struct sg_table *sgt;
-
 	bool be_alloc;
 };
 
@@ -80,15 +71,10 @@ grant_ref_t xen_drm_front_shbuf_get_dir_start(struct xen_drm_front_shbuf *buf);
 
 int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf);
 
-struct xen_drm_front_shbuf *xen_drm_front_shbuf_get_by_dbuf_cookie(
-	struct list_head *dbuf_list, uint64_t dbuf_cookie);
+int xen_drm_front_shbuf_unmap(struct xen_drm_front_shbuf *buf);
 
-void xen_drm_front_shbuf_flush_fb(struct list_head *dbuf_list,
-	uint64_t fb_cookie);
+void xen_drm_front_shbuf_flush(struct xen_drm_front_shbuf *buf);
 
-void xen_drm_front_shbuf_free_by_dbuf_cookie(struct list_head *dbuf_list,
-	uint64_t dbuf_cookie);
-
-void xen_drm_front_shbuf_free_all(struct list_head *dbuf_list);
+void xen_drm_front_shbuf_free(struct xen_drm_front_shbuf *buf);
 
 #endif /* __XEN_DRM_FRONT_SHBUF_H_ */

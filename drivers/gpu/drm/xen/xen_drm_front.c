@@ -33,6 +33,75 @@
 #include "xen_drm_front_evtchnl.h"
 #include "xen_drm_front_shbuf.h"
 
+struct xen_drm_front_dbuf {
+	struct list_head list;
+	uint64_t dbuf_cookie;
+	uint64_t fb_cookie;
+	struct xen_drm_front_shbuf *shbuf;
+};
+
+static int dbuf_add_to_list(struct xen_drm_front_info *front_info,
+	struct xen_drm_front_shbuf *shbuf, uint64_t dbuf_cookie)
+{
+	struct xen_drm_front_dbuf *dbuf;
+
+	dbuf = kzalloc(sizeof(*dbuf), GFP_KERNEL);
+	if (!dbuf)
+		return -ENOMEM;
+
+	dbuf->dbuf_cookie = dbuf_cookie;
+	dbuf->shbuf = shbuf;
+	list_add(&dbuf->list, &front_info->dbuf_list);
+	return 0;
+}
+
+static struct xen_drm_front_dbuf *dbuf_get(struct list_head *dbuf_list,
+	uint64_t dbuf_cookie)
+{
+	struct xen_drm_front_dbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, dbuf_list, list) {
+		if (buf->dbuf_cookie == dbuf_cookie)
+			return buf;
+	}
+	return NULL;
+}
+
+static void dbuf_flush_fb(struct list_head *dbuf_list, uint64_t fb_cookie)
+{
+	struct xen_drm_front_dbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, dbuf_list, list)
+		if (buf->fb_cookie == fb_cookie)
+			xen_drm_front_shbuf_flush(buf->shbuf);
+}
+
+static void dbuf_free(struct list_head *dbuf_list, uint64_t dbuf_cookie)
+{
+	struct xen_drm_front_dbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, dbuf_list, list)
+		if (buf->dbuf_cookie == dbuf_cookie) {
+			list_del(&buf->list);
+			xen_drm_front_shbuf_unmap(buf->shbuf);
+			xen_drm_front_shbuf_free(buf->shbuf);
+			kfree(buf);
+			break;
+		}
+}
+
+static void dbuf_free_all(struct list_head *dbuf_list)
+{
+	struct xen_drm_front_dbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, dbuf_list, list) {
+		list_del(&buf->list);
+		xen_drm_front_shbuf_unmap(buf->shbuf);
+		xen_drm_front_shbuf_free(buf->shbuf);
+		kfree(buf);
+	}
+}
+
 static struct xendispl_req *be_prepare_req(
 	struct xen_drm_front_evtchnl *evtchnl, uint8_t operation)
 {
@@ -107,7 +176,7 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	struct sg_table *sgt)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
-	struct xen_drm_front_shbuf *buf;
+	struct xen_drm_front_shbuf *shbuf;
 	struct xendispl_req *req;
 	struct xen_drm_front_shbuf_cfg buf_cfg;
 	unsigned long flags;
@@ -119,20 +188,25 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 
 	memset(&buf_cfg, 0, sizeof(buf_cfg));
 	buf_cfg.xb_dev = front_info->xb_dev;
-	buf_cfg.dbuf_list = &front_info->dbuf_list;
-	buf_cfg.dbuf_cookie = dbuf_cookie;
 	buf_cfg.pages = pages;
 	buf_cfg.size = size;
 	buf_cfg.sgt = sgt;
 	buf_cfg.be_alloc = front_info->cfg_plat_data.be_alloc;
-	buf = xen_drm_front_shbuf_alloc(&buf_cfg);
-	if (!buf)
+
+	shbuf = xen_drm_front_shbuf_alloc(&buf_cfg);
+	if (!shbuf)
 		return -ENOMEM;
+
+	ret = dbuf_add_to_list(front_info, shbuf, dbuf_cookie);
+	if (ret < 0) {
+		xen_drm_front_shbuf_free(shbuf);
+		return ret;
+	}
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory =
-		xen_drm_front_shbuf_get_dir_start(buf);
+		xen_drm_front_shbuf_get_dir_start(shbuf);
 	req->op.dbuf_create.buffer_sz = size;
 	req->op.dbuf_create.dbuf_cookie = dbuf_cookie;
 	req->op.dbuf_create.width = width;
@@ -151,14 +225,14 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	if (ret < 0)
 		goto fail;
 
-	ret = xen_drm_front_shbuf_map(buf);
+	ret = xen_drm_front_shbuf_map(shbuf);
 	if (ret < 0)
 		goto fail;
 
 	return 0;
 
 fail:
-	xen_drm_front_shbuf_free_by_dbuf_cookie(&front_info->dbuf_list, dbuf_cookie);
+	dbuf_free(&front_info->dbuf_list, dbuf_cookie);
 	return ret;
 }
 
@@ -194,7 +268,7 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	be_alloc = front_info->cfg_plat_data.be_alloc;
 
 	if (be_alloc)
-		xen_drm_front_shbuf_free_by_dbuf_cookie(&front_info->dbuf_list,
+		dbuf_free(&front_info->dbuf_list,
 			dbuf_cookie);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
@@ -212,7 +286,7 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	 * if we cannot remove remote resources remove what we can locally
 	 */
 	if (!be_alloc)
-		xen_drm_front_shbuf_free_by_dbuf_cookie(&front_info->dbuf_list,
+		dbuf_free(&front_info->dbuf_list,
 			dbuf_cookie);
 	return ret;
 }
@@ -222,7 +296,7 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 	uint32_t height, uint32_t pixel_format)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
-	struct xen_drm_front_shbuf *buf;
+	struct xen_drm_front_dbuf *buf;
 	struct xendispl_req *req;
 	unsigned long flags;
 	int ret;
@@ -231,7 +305,7 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
-	buf = xen_drm_front_shbuf_get_by_dbuf_cookie(&front_info->dbuf_list,
+	buf = dbuf_get(&front_info->dbuf_list,
 		dbuf_cookie);
 	if (!buf)
 		return -EINVAL;
@@ -291,7 +365,7 @@ static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
 	if (unlikely(conn_idx >= front_info->num_evt_pairs))
 		return -EINVAL;
 
-	xen_drm_front_shbuf_flush_fb(&front_info->dbuf_list, fb_cookie);
+	dbuf_flush_fb(&front_info->dbuf_list, fb_cookie);
 	evtchnl = &front_info->evt_pairs[conn_idx].req;
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_PG_FLIP);
@@ -403,7 +477,7 @@ static void remove_internal(struct xen_drm_front_info *front_info)
 {
 	drm_drv_deinit(front_info);
 	xen_drm_front_evtchnl_free_all(front_info);
-	xen_drm_front_shbuf_free_all(&front_info->dbuf_list);
+	dbuf_free_all(&front_info->dbuf_list);
 }
 
 static int be_on_initwait(struct xen_drm_front_info *front_info)

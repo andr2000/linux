@@ -66,29 +66,40 @@ int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf)
 	return 0;
 }
 
-struct xen_drm_front_shbuf *xen_drm_front_shbuf_get_by_dbuf_cookie(
-	struct list_head *dbuf_list, uint64_t dbuf_cookie)
+int xen_drm_front_shbuf_unmap(struct xen_drm_front_shbuf *buf)
 {
-	struct xen_drm_front_shbuf *buf, *q;
+	if (buf->ops->unmap)
+		if (buf->grefs)
+			return buf->ops->unmap(buf);
 
-	list_for_each_entry_safe(buf, q, dbuf_list, list) {
-		if (buf->dbuf_cookie == dbuf_cookie)
-			return buf;
-	}
-	return NULL;
+	/* no need to unmap guest grant references, those are local */
+	return 0;
 }
 
-void xen_drm_front_shbuf_flush_fb(struct list_head *dbuf_list,
-	uint64_t fb_cookie)
+void xen_drm_front_shbuf_flush(struct xen_drm_front_shbuf *buf)
 {
 #if defined(CONFIG_X86)
-	struct xen_drm_front_shbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, dbuf_list, list) {
-		if (buf->fb_cookie == fb_cookie)
-			drm_clflush_pages(buf->pages, buf->num_pages);
-	}
+	drm_clflush_pages(buf->pages, buf->num_pages);
 #endif
+}
+
+void xen_drm_front_shbuf_free(struct xen_drm_front_shbuf *buf)
+{
+	if (buf->grefs) {
+		int i;
+
+		for (i = 0; i < buf->num_grefs; i++)
+			if (buf->grefs[i] != GRANT_INVALID_REF)
+				gnttab_end_foreign_access(buf->grefs[i],
+					0, 0UL);
+	}
+	kfree(buf->grefs);
+	kfree(buf->directory);
+	if (buf->sgt) {
+		sg_free_table(buf->sgt);
+		kvfree(buf->pages);
+	}
+	kfree(buf);
 }
 
 /*
@@ -220,52 +231,6 @@ static int backend_unmap(struct xen_drm_front_shbuf *buf)
 	kfree(buf->backend_map_handles);
 	buf->backend_map_handles = NULL;
 	return 0;
-}
-
-static void shbuf_free(struct xen_drm_front_shbuf *buf)
-{
-	int i;
-
-	if (buf->grefs) {
-		if (buf->ops->unmap)
-			buf->ops->unmap(buf);
-
-		for (i = 0; i < buf->num_grefs; i++)
-			if (buf->grefs[i] != GRANT_INVALID_REF)
-				gnttab_end_foreign_access(buf->grefs[i],
-					0, 0UL);
-	}
-	kfree(buf->grefs);
-	kfree(buf->directory);
-	if (buf->sgt) {
-		sg_free_table(buf->sgt);
-		kvfree(buf->pages);
-	}
-	kfree(buf);
-}
-
-void xen_drm_front_shbuf_free_by_dbuf_cookie(struct list_head *dbuf_list,
-	uint64_t dbuf_cookie)
-{
-	struct xen_drm_front_shbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, dbuf_list, list) {
-		if (buf->dbuf_cookie == dbuf_cookie) {
-			list_del(&buf->list);
-			shbuf_free(buf);
-			break;
-		}
-	}
-}
-
-void xen_drm_front_shbuf_free_all(struct list_head *dbuf_list)
-{
-	struct xen_drm_front_shbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, dbuf_list, list) {
-		list_del(&buf->list);
-		shbuf_free(buf);
-	}
 }
 
 static void backend_fill_page_dir(struct xen_drm_front_shbuf *buf)
@@ -425,8 +390,6 @@ struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
 	struct xen_drm_front_shbuf *buf;
 	int ret;
 
-	;
-
 	/* either pages or sgt, not both */
 	BUG_ON(cfg->pages && cfg->sgt);
 
@@ -440,7 +403,6 @@ struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
 		buf->ops = &local_ops;
 
 	buf->xb_dev = cfg->xb_dev;
-	buf->dbuf_cookie = cfg->dbuf_cookie;
 	/* at the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
 	buf->num_pages = DIV_ROUND_UP(cfg->size,
 		PAGE_SIZE + BUILD_BUG_ON_ZERO(XEN_PAGE_SIZE != PAGE_SIZE));
@@ -459,10 +421,9 @@ struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
 
 	buf->ops->fill_page_dir(buf);
 
-	list_add(&buf->list, cfg->dbuf_list);
 	return buf;
 
 fail:
-	shbuf_free(buf);
+	xen_drm_front_shbuf_free(buf);
 	return ERR_PTR(ret);
 }

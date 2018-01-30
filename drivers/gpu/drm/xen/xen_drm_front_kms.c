@@ -102,24 +102,16 @@ int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
 	drm_dev->mode_config.funcs = &xen_drm_kms_config_funcs;
 
 	for (i = 0; i < drm_info->num_crtcs; i++) {
-		struct xen_drm_front_crtc *crtc;
+		struct xen_drm_front_cfg_connector *cfg =
+			&drm_info->plat_data->connectors[i];
 
-		crtc = &drm_info->crtcs[i];
-		ret = xen_drm_front_crtc_create(drm_info, crtc, i);
-		if (ret < 0)
-			goto fail;
-
-		ret = xen_drm_front_crtc_encoder_create(drm_info, crtc);
-		if (ret)
-			goto fail;
-
-		ret = xen_drm_front_crtc_connector_create(drm_info, crtc,
-			&drm_info->plat_data->connectors[i]);
+		ret = xen_drm_front_crtc_init(drm_info, &drm_info->crtcs[i], i,
+			cfg->width, cfg->height);
 		if (ret)
 			goto fail;
 	}
-	drm_mode_config_reset(drm_dev);
 
+	drm_mode_config_reset(drm_dev);
 	return 0;
 
 fail:

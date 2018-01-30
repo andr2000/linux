@@ -32,6 +32,7 @@ struct xen_drm_front_cfg_connector;
 
 struct xen_drm_front_connector {
 	struct drm_connector base;
+	/* these are only for mode checking */
 	int width, height;
 };
 
@@ -53,13 +54,8 @@ struct xen_drm_front_crtc {
 	uint64_t fb_cookie;
 };
 
-int xen_drm_front_crtc_create(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc, unsigned int index);
-int xen_drm_front_crtc_encoder_create(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc);
-int xen_drm_front_crtc_connector_create(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc,
-	struct xen_drm_front_cfg_connector *cfg);
+int xen_drm_front_crtc_init(struct xen_drm_front_drm_info *drm_info,
+	struct xen_drm_front_crtc *xen_crtc, int index, int width, int height);
 
 void xen_drm_front_crtc_on_page_flip_done(struct xen_drm_front_crtc *xen_crtc,
 	uint64_t fb_cookie);

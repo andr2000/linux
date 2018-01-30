@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -30,8 +30,7 @@ struct xen_drm_front_drm_info {
 	struct xen_drm_front_ops *front_ops;
 	const struct xen_drm_front_gem_ops *gem_ops;
 	struct drm_device *drm_dev;
-	int num_crtcs;
-	struct xen_drm_front_cfg_plat_data *plat_data;
+	struct xen_drm_front_cfg_plat_data *cfg;
 	struct xen_drm_front_crtc crtcs[XEN_DRM_FRONT_MAX_CRTCS];
 
 	/* vblank emulation timer */
@@ -51,7 +50,7 @@ static inline uint64_t xen_drm_front_dbuf_to_cookie(
 }
 
 int xen_drm_front_drv_probe(struct platform_device *pdev,
-	struct xen_drm_front_ops *xendrm_front_funcs);
+	struct xen_drm_front_ops *front_ops);
 int xen_drm_front_drv_remove(struct platform_device *pdev);
 
 bool xen_drm_front_drv_is_used(struct platform_device *pdev);

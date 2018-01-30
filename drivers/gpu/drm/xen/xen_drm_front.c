@@ -109,38 +109,36 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xen_drm_front_shbuf *buf;
 	struct xendispl_req *req;
-	struct xen_drm_front_shbuf_alloc alloc_info;
+	struct xen_drm_front_shbuf_cfg buf_cfg;
 	unsigned long flags;
-	bool be_alloc;
 	int ret;
 
 	evtchnl = &front_info->evt_pairs[GENERIC_OP_EVT_CHNL].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 
-	be_alloc = front_info->cfg_plat_data.be_alloc;
-
-	memset(&alloc_info, 0, sizeof(alloc_info));
-	alloc_info.xb_dev = front_info->xb_dev;
-	alloc_info.dbuf_list = &front_info->dbuf_list;
-	alloc_info.dbuf_cookie = dbuf_cookie;
-	alloc_info.pages = pages;
-	alloc_info.size = size;
-	alloc_info.sgt = sgt;
-	alloc_info.be_alloc = be_alloc;
-	buf = xen_drm_front_shbuf_alloc(&alloc_info);
+	memset(&buf_cfg, 0, sizeof(buf_cfg));
+	buf_cfg.xb_dev = front_info->xb_dev;
+	buf_cfg.dbuf_list = &front_info->dbuf_list;
+	buf_cfg.dbuf_cookie = dbuf_cookie;
+	buf_cfg.pages = pages;
+	buf_cfg.size = size;
+	buf_cfg.sgt = sgt;
+	buf_cfg.be_alloc = front_info->cfg_plat_data.be_alloc;
+	buf = xen_drm_front_shbuf_alloc(&buf_cfg);
 	if (!buf)
 		return -ENOMEM;
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
-	req->op.dbuf_create.gref_directory = xen_drm_front_shbuf_get_dir_start(buf);
+	req->op.dbuf_create.gref_directory =
+		xen_drm_front_shbuf_get_dir_start(buf);
 	req->op.dbuf_create.buffer_sz = size;
 	req->op.dbuf_create.dbuf_cookie = dbuf_cookie;
 	req->op.dbuf_create.width = width;
 	req->op.dbuf_create.height = height;
 	req->op.dbuf_create.bpp = bpp;
-	if (be_alloc)
+	if (buf_cfg.be_alloc)
 		req->op.dbuf_create.flags |= XENDISPL_DBUF_FLG_REQ_ALLOC;
 
 	ret = be_stream_do_io(evtchnl, req);
@@ -153,11 +151,9 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	if (ret < 0)
 		goto fail;
 
-	if (be_alloc) {
-		ret = xen_drm_front_shbuf_be_alloc_map(buf);
-		if (ret < 0)
-			goto fail;
-	}
+	ret = xen_drm_front_shbuf_map(buf);
+	if (ret < 0)
+		goto fail;
 
 	return 0;
 

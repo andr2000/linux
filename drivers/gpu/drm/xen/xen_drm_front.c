@@ -678,8 +678,6 @@ static struct xenbus_driver xen_driver = {
 
 static int __init xen_drv_init(void)
 {
-	BUILD_BUG_ON(XEN_PAGE_SIZE > PAGE_SIZE);
-
 	if (!xen_domain())
 		return -ENODEV;
 

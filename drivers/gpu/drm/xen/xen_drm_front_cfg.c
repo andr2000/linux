@@ -1,3 +1,21 @@
+/*
+ *  Xen para-virtual DRM device
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
+ *
+ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+ */
+
 #include <drm/drmP.h>
 
 #include <linux/device.h>
@@ -13,7 +31,6 @@ static int cfg_connector(struct xen_drm_front_info *front_info,
 	const char *path, int index)
 {
 	char *connector_path;
-	int ret;
 
 	connector_path = devm_kasprintf(&front_info->xb_dev->dev,
 		GFP_KERNEL, "%s/%d", path, index);
@@ -27,40 +44,36 @@ static int cfg_connector(struct xen_drm_front_info *front_info,
 		/* either no entry configured or wrong resolution set */
 		connector->width = 0;
 		connector->height = 0;
-		ret = -EINVAL;
-		goto fail;
+		return -EINVAL;
 	}
 
 	DRM_INFO("Connector %s: resolution %dx%d\n",
 		connector_path, connector->width, connector->height);
-	ret = 0;
-
-fail:
-	return ret;
+	return 0;
 }
 
 int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_cfg_plat_data *plat_data)
+	struct xen_drm_front_cfg *cfg)
 {
 	struct xenbus_device *xb_dev = front_info->xb_dev;
 	int ret, i;
 
 	if (xenbus_read_unsigned(front_info->xb_dev->nodename,
 			XENDISPL_FIELD_BE_ALLOC, 0)) {
-		DRM_INFO("Backend can provide dumb buffers\n");
-		plat_data->be_alloc = true;
+		DRM_INFO("Backend can provide display buffers\n");
+		cfg->be_alloc = true;
 	}
 
-	plat_data->num_connectors = 0;
-	for (i = 0; i < ARRAY_SIZE(plat_data->connectors); i++) {
+	cfg->num_connectors = 0;
+	for (i = 0; i < ARRAY_SIZE(cfg->connectors); i++) {
 		ret = cfg_connector(front_info,
-			&plat_data->connectors[i], xb_dev->nodename, i);
+			&cfg->connectors[i], xb_dev->nodename, i);
 		if (ret < 0)
 			break;
-		plat_data->num_connectors++;
+		cfg->num_connectors++;
 	}
 
-	if (!plat_data->num_connectors) {
+	if (!cfg->num_connectors) {
 		DRM_ERROR("No connector(s) configured at %s\n",
 			xb_dev->nodename);
 		return -ENODEV;

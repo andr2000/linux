@@ -91,7 +91,7 @@ static int dumb_create(struct drm_file *file_priv,
 	 * sg table
 	 */
 	if (drm_info->gem_ops->get_pages(obj))
-		ret = drm_info->front_ops->dbuf_create(
+		ret = drm_info->front_ops->dbuf_create_from_pages(
 				drm_info->front_info,
 				xen_drm_front_dbuf_to_cookie(obj),
 				args->width, args->height, args->bpp,

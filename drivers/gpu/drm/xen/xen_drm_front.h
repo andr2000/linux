@@ -67,7 +67,7 @@ struct xen_drm_front_info {
 
 	int num_evt_pairs;
 	struct xen_drm_front_evtchnl_pair *evt_pairs;
-	struct xen_drm_front_cfg_plat_data cfg_plat_data;
+	struct xen_drm_front_cfg cfg;
 
 	/* display buffers */
 	struct list_head dbuf_list;

@@ -191,7 +191,7 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	buf_cfg.pages = pages;
 	buf_cfg.size = size;
 	buf_cfg.sgt = sgt;
-	buf_cfg.be_alloc = front_info->cfg_plat_data.be_alloc;
+	buf_cfg.be_alloc = front_info->cfg.be_alloc;
 
 	shbuf = xen_drm_front_shbuf_alloc(&buf_cfg);
 	if (!shbuf)
@@ -265,7 +265,7 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
-	be_alloc = front_info->cfg_plat_data.be_alloc;
+	be_alloc = front_info->cfg.be_alloc;
 
 	/*
 	 * for the backend allocated buffer release references now, so backend
@@ -448,7 +448,6 @@ static void xen_drm_drv_deinit(struct xen_drm_front_info *front_info)
 
 static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
 {
-	struct xen_drm_front_cfg_plat_data *platdata;
 	int ret;
 
 	ret = platform_driver_register(&xen_drm_front_front_info);
@@ -456,10 +455,9 @@ static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
 		return ret;
 
 	front_info->drm_pdrv_registered = true;
-	platdata = &front_info->cfg_plat_data;
 	/* pass card configuration via platform data */
-	xen_drm_front_platform_info.data = platdata;
-	xen_drm_front_platform_info.size_data = sizeof(*platdata);
+	xen_drm_front_platform_info.data = &front_info->cfg;
+	xen_drm_front_platform_info.size_data = sizeof(front_info->cfg);
 	front_info->drm_pdev = platform_device_register_full(
 		&xen_drm_front_platform_info);
 	if (IS_ERR(front_info->drm_pdev)) {
@@ -484,16 +482,15 @@ static void remove_internal(struct xen_drm_front_info *front_info)
 
 static int be_on_initwait(struct xen_drm_front_info *front_info)
 {
-	struct xen_drm_front_cfg_plat_data *cfg_plat_data;
+	struct xen_drm_front_cfg *cfg = &front_info->cfg;
 	int ret;
 
-	cfg_plat_data = &front_info->cfg_plat_data;
-	cfg_plat_data->front_info = front_info;
-	ret = xen_drm_front_cfg_card(front_info, cfg_plat_data);
+	cfg->front_info = front_info;
+	ret = xen_drm_front_cfg_card(front_info, cfg);
 	if (ret < 0)
 		return ret;
 
-	DRM_INFO("Have %d conector(s)\n", cfg_plat_data->num_connectors);
+	DRM_INFO("Have %d conector(s)\n", cfg->num_connectors);
 	/* create event channels for all streams and publish */
 	ret = xen_drm_front_evtchnl_create_all(front_info, &front_ops);
 	if (ret < 0)

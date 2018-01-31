@@ -242,7 +242,7 @@ struct drm_driver xen_drm_driver = {
 int xen_drm_front_drv_probe(struct platform_device *pdev,
 	struct xen_drm_front_ops *front_ops)
 {
-	struct xen_drm_front_cfg_plat_data *cfg = dev_get_platdata(&pdev->dev);
+	struct xen_drm_front_cfg *cfg = dev_get_platdata(&pdev->dev);
 	struct xen_drm_front_drm_info *drm_info;
 	struct drm_device *dev;
 	int ret;

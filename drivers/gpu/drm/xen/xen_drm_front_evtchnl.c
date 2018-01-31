@@ -238,20 +238,20 @@ fail:
 int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 	struct xen_drm_front_ops *front_ops)
 {
-	struct xen_drm_front_cfg_plat_data *plat_data;
+	struct xen_drm_front_cfg *cfg;
 	int ret, conn;
 
-	plat_data = &front_info->cfg_plat_data;
+	cfg = &front_info->cfg;
 
 	front_info->evt_pairs = devm_kcalloc(&front_info->xb_dev->dev,
-		plat_data->num_connectors,
+		cfg->num_connectors,
 		sizeof(struct xen_drm_front_evtchnl_pair), GFP_KERNEL);
 	if (!front_info->evt_pairs) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 
-	for (conn = 0; conn < plat_data->num_connectors; conn++) {
+	for (conn = 0; conn < cfg->num_connectors; conn++) {
 		ret = evtchnl_alloc(front_info, conn,
 			&front_info->evt_pairs[conn].req, EVTCHNL_TYPE_REQ);
 		if (ret < 0) {
@@ -267,7 +267,7 @@ int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 		}
 		front_info->evt_pairs[conn].evt.u.evt.front_ops = front_ops;
 	}
-	front_info->num_evt_pairs = plat_data->num_connectors;
+	front_info->num_evt_pairs = cfg->num_connectors;
 	return 0;
 
 fail:
@@ -302,10 +302,10 @@ static int evtchnl_publish(struct xenbus_transaction xbt,
 int xen_drm_front_evtchnl_publish_all(struct xen_drm_front_info *front_info)
 {
 	struct xenbus_transaction xbt;
-	struct xen_drm_front_cfg_plat_data *plat_data;
+	struct xen_drm_front_cfg *plat_data;
 	int ret, conn;
 
-	plat_data = &front_info->cfg_plat_data;
+	plat_data = &front_info->cfg;
 
 again:
 	ret = xenbus_transaction_start(&xbt);

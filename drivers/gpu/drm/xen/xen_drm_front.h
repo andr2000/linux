@@ -60,7 +60,6 @@ struct xen_drm_front_ops {
 struct xen_drm_front_info {
 	struct xenbus_device *xb_dev;
 	spinlock_t io_lock;
-	struct mutex mutex;
 	bool drm_pdrv_registered;
 	/* virtual DRM platform device */
 	struct platform_device *drm_pdev;

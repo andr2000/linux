@@ -123,12 +123,6 @@ static int connector_mode_valid(struct drm_connector *connector,
 	return MODE_OK;
 }
 
-static void connector_destroy(struct drm_connector *connector)
-{
-	drm_connector_unregister(connector);
-	drm_connector_cleanup(connector);
-}
-
 static const struct drm_connector_helper_funcs connector_helper_funcs = {
 	.get_modes = connector_get_modes,
 	.mode_valid = connector_mode_valid,
@@ -137,7 +131,7 @@ static const struct drm_connector_helper_funcs connector_helper_funcs = {
 static const struct drm_connector_funcs connector_funcs = {
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
-	.destroy = connector_destroy,
+	.destroy = drm_connector_cleanup,
 	.detect = connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.reset = drm_atomic_helper_connector_reset,
@@ -156,10 +150,6 @@ static int connector_init(struct xen_drm_front_drm_info *drm_info,
 	drm_connector_helper_add(connector, &connector_helper_funcs);
 	ret = drm_connector_init(drm_info->drm_dev, connector,
 		&connector_funcs, DRM_MODE_CONNECTOR_VIRTUAL);
-	if (ret)
-		return ret;
-
-	ret = drm_connector_register(connector);
 	if (ret)
 		return ret;
 

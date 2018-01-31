@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -79,18 +79,15 @@ static struct xen_gem_object *gem_create_obj(struct drm_device *dev,
 		return ERR_PTR(-ENOMEM);
 
 	ret = drm_gem_object_init(dev, &xen_obj->base, size);
-	if (ret < 0)
-		goto fail;
+	if (ret < 0) {
+		kfree(xen_obj);
+		return ERR_PTR(ret);
+	}
 
 	return xen_obj;
-
-fail:
-	kfree(xen_obj);
-	return ERR_PTR(ret);
 }
 
-static struct xen_gem_object *gem_create(struct drm_device *dev,
-	size_t size)
+static struct xen_gem_object *gem_create(struct drm_device *dev, size_t size)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
@@ -142,9 +139,8 @@ fail:
 	return ERR_PTR(ret);
 }
 
-static struct xen_gem_object *gem_create_with_handle(
-	struct drm_file *file_priv, struct drm_device *dev,
-	size_t size, uint32_t *handle)
+static struct xen_gem_object *gem_create_with_handle(struct drm_file *filp,
+	struct drm_device *dev, size_t size, uint32_t *handle)
 {
 	struct xen_gem_object *xen_obj;
 	struct drm_gem_object *gem_obj;
@@ -155,7 +151,7 @@ static struct xen_gem_object *gem_create_with_handle(
 		return xen_obj;
 
 	gem_obj = &xen_obj->base;
-	ret = drm_gem_handle_create(file_priv, gem_obj, handle);
+	ret = drm_gem_handle_create(filp, gem_obj, handle);
 	/* handle holds the reference */
 	drm_gem_object_unreference_unlocked(gem_obj);
 	if (ret < 0)
@@ -164,7 +160,7 @@ static struct xen_gem_object *gem_create_with_handle(
 	return xen_obj;
 }
 
-static int gem_dumb_create(struct drm_file *file_priv,
+static int gem_dumb_create(struct drm_file *filp,
 	struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
 	struct xen_gem_object *xen_obj;
@@ -172,8 +168,7 @@ static int gem_dumb_create(struct drm_file *file_priv,
 	args->pitch = DIV_ROUND_UP(args->width * args->bpp, 8);
 	args->size = args->pitch * args->height;
 
-	xen_obj = gem_create_with_handle(file_priv, dev, args->size,
-		&args->handle);
+	xen_obj = gem_create_with_handle(filp, dev, args->size, &args->handle);
 	if (IS_ERR_OR_NULL(xen_obj))
 		return xen_obj == NULL ? -ENOMEM : PTR_ERR(xen_obj);
 
@@ -186,8 +181,7 @@ static void gem_free_object(struct drm_gem_object *gem_obj)
 
 	if (xen_obj->base.import_attach) {
 		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
-		if (xen_obj->pages)
-			gem_free_pages_array(xen_obj);
+		gem_free_pages_array(xen_obj);
 	} else {
 		if (xen_obj->pages) {
 			if (xen_obj->be_alloc) {
@@ -248,7 +242,7 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 
 	/*
 	 * N.B. Although we have an API to create display buffer from sgt
-	 * we use pages API, because we still need these for GEM handling,
+	 * we use pages API, because we still need those for GEM handling,
 	 * e.g. for mapping etc.
 	 */
 	ret = drm_info->front_ops->dbuf_create_from_pages(
@@ -275,7 +269,7 @@ static inline void gem_mmap_obj(struct xen_gem_object *xen_obj,
 	vma->vm_flags &= ~VM_PFNMAP;
 	vma->vm_flags |= VM_MIXEDMAP;
 	vma->vm_pgoff = 0;
-	/* this is the only way we can map in unprivileged domain */
+	/* this is the only way we can map in unprivileged Xen domain */
 	vma->vm_page_prot = PAGE_SHARED;
 }
 

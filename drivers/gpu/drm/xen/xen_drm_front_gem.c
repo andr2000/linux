@@ -251,7 +251,7 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 	 * we use pages API, because we still need these for GEM handling,
 	 * e.g. for mapping etc.
 	 */
-	ret = drm_info->front_ops->dbuf_create(
+	ret = drm_info->front_ops->dbuf_create_from_pages(
 		drm_info->front_info,
 		xen_drm_front_dbuf_to_cookie(&xen_obj->base),
 		0, 0, 0, size, xen_obj->pages);

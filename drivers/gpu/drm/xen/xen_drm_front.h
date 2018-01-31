@@ -36,7 +36,7 @@ struct xen_drm_front_ops {
 	int (*mode_set)(struct xen_drm_front_crtc *xen_crtc,
 		uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 		uint32_t bpp, uint64_t fb_cookie);
-	int (*dbuf_create)(struct xen_drm_front_info *front_info,
+	int (*dbuf_create_from_pages)(struct xen_drm_front_info *front_info,
 		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
 		uint32_t bpp, uint64_t size, struct page **pages);
 	int (*dbuf_create_from_sgt)(struct xen_drm_front_info *front_info,

@@ -240,16 +240,16 @@ static int be_dbuf_create_from_sgt(struct xen_drm_front_info *front_info,
 	uint64_t dbuf_cookie, uint32_t width, uint32_t height,
 	uint32_t bpp, uint64_t size, struct sg_table *sgt)
 {
-	return be_dbuf_create_int(front_info,
-		dbuf_cookie, width, height, bpp, size, NULL, sgt);
+	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
+		bpp, size, NULL, sgt);
 }
 
-static int be_dbuf_create(struct xen_drm_front_info *front_info,
+static int be_dbuf_create_from_pages(struct xen_drm_front_info *front_info,
 	uint64_t dbuf_cookie, uint32_t width, uint32_t height,
 	uint32_t bpp, uint64_t size, struct page **pages)
 {
-	return be_dbuf_create_int(front_info,
-		dbuf_cookie, width, height, bpp, size, pages, NULL);
+	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
+		bpp, size, pages, NULL);
 }
 
 static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
@@ -267,9 +267,12 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 
 	be_alloc = front_info->cfg_plat_data.be_alloc;
 
+	/*
+	 * for the backend allocated buffer release references now, so backend
+	 * can free the buffer
+	 */
 	if (be_alloc)
-		dbuf_free(&front_info->dbuf_list,
-			dbuf_cookie);
+		dbuf_free(&front_info->dbuf_list, dbuf_cookie);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_DESTROY);
@@ -286,8 +289,8 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	 * if we cannot remove remote resources remove what we can locally
 	 */
 	if (!be_alloc)
-		dbuf_free(&front_info->dbuf_list,
-			dbuf_cookie);
+		dbuf_free(&front_info->dbuf_list, dbuf_cookie);
+
 	return ret;
 }
 
@@ -305,8 +308,7 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
-	buf = dbuf_get(&front_info->dbuf_list,
-		dbuf_cookie);
+	buf = dbuf_get(&front_info->dbuf_list, dbuf_cookie);
 	if (!buf)
 		return -EINVAL;
 
@@ -380,27 +382,27 @@ static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
 	return be_stream_wait_io(evtchnl);
 }
 
-static void drm_drv_unload(struct xen_drm_front_info *front_info)
+static void xen_drm_drv_unload(struct xen_drm_front_info *front_info)
 {
 	if (front_info->xb_dev->state != XenbusStateReconfiguring)
 		return;
 
-	DRM_INFO("Can try removing driver now\n");
+	DRM_DEBUG("Can try removing driver now\n");
 	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
 }
 
-static struct xen_drm_front_ops xen_drm_backend_ops = {
+static struct xen_drm_front_ops front_ops = {
 	.mode_set = be_mode_set,
-	.dbuf_create = be_dbuf_create,
+	.dbuf_create_from_pages = be_dbuf_create_from_pages,
 	.dbuf_create_from_sgt = be_dbuf_create_from_sgt,
 	.dbuf_destroy = be_dbuf_destroy,
 	.fb_attach = be_fb_attach,
 	.fb_detach = be_fb_detach,
 	.page_flip = be_page_flip,
-	.drm_last_close = drm_drv_unload,
+	.drm_last_close = xen_drm_drv_unload,
 };
 
-static int drm_drv_probe(struct platform_device *pdev)
+static int xen_drm_drv_probe(struct platform_device *pdev)
 {
 #ifdef CONFIG_DRM_XEN_FRONTEND_CMA
 	struct device *dev = &pdev->dev;
@@ -408,10 +410,10 @@ static int drm_drv_probe(struct platform_device *pdev)
 	/* make sure we have DMA ops set up, so no dummy ops are in use */
 	arch_setup_dma_ops(dev, 0, *dev->dma_mask, NULL, false);
 #endif
-	return xen_drm_front_drv_probe(pdev, &xen_drm_backend_ops);
+	return xen_drm_front_drv_probe(pdev, &front_ops);
 }
 
-static int drm_drv_remove(struct platform_device *pdev)
+static int xen_drm_drv_remove(struct platform_device *pdev)
 {
 	return xen_drm_front_drv_remove(pdev);
 }
@@ -424,14 +426,14 @@ struct platform_device_info xen_drm_front_platform_info = {
 };
 
 static struct platform_driver xen_drm_front_front_info = {
-	.probe		= drm_drv_probe,
-	.remove		= drm_drv_remove,
+	.probe		= xen_drm_drv_probe,
+	.remove		= xen_drm_drv_remove,
 	.driver		= {
 		.name	= XENDISPL_DRIVER_NAME,
 	},
 };
 
-static void drm_drv_deinit(struct xen_drm_front_info *front_info)
+static void xen_drm_drv_deinit(struct xen_drm_front_info *front_info)
 {
 	if (!front_info->drm_pdrv_registered)
 		return;
@@ -444,7 +446,7 @@ static void drm_drv_deinit(struct xen_drm_front_info *front_info)
 	front_info->drm_pdev = NULL;
 }
 
-static int drm_drv_init(struct xen_drm_front_info *front_info)
+static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
 {
 	struct xen_drm_front_cfg_plat_data *platdata;
 	int ret;
@@ -469,13 +471,13 @@ static int drm_drv_init(struct xen_drm_front_info *front_info)
 
 fail:
 	DRM_ERROR("Failed to register DRM driver\n");
-	drm_drv_deinit(front_info);
+	xen_drm_drv_deinit(front_info);
 	return -ENODEV;
 }
 
 static void remove_internal(struct xen_drm_front_info *front_info)
 {
-	drm_drv_deinit(front_info);
+	xen_drm_drv_deinit(front_info);
 	xen_drm_front_evtchnl_free_all(front_info);
 	dbuf_free_all(&front_info->dbuf_list);
 }
@@ -493,7 +495,7 @@ static int be_on_initwait(struct xen_drm_front_info *front_info)
 
 	DRM_INFO("Have %d conector(s)\n", cfg_plat_data->num_connectors);
 	/* create event channels for all streams and publish */
-	ret = xen_drm_front_evtchnl_create_all(front_info, &xen_drm_backend_ops);
+	ret = xen_drm_front_evtchnl_create_all(front_info, &front_ops);
 	if (ret < 0)
 		return ret;
 
@@ -503,7 +505,7 @@ static int be_on_initwait(struct xen_drm_front_info *front_info)
 static int be_on_connected(struct xen_drm_front_info *front_info)
 {
 	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_CONNECTED);
-	return drm_drv_init(front_info);
+	return xen_drm_drv_init(front_info);
 }
 
 static void be_on_disconnected(struct xen_drm_front_info *front_info)

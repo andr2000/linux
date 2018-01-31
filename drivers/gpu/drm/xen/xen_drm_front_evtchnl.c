@@ -1,3 +1,21 @@
+/*
+ *  Xen para-virtual DRM device
+ *
+ *   This program is free software; you can redistribute it and/or modify
+ *   it under the terms of the GNU General Public License as published by
+ *   the Free Software Foundation; either version 2 of the License, or
+ *   (at your option) any later version.
+ *
+ *   This program is distributed in the hope that it will be useful,
+ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *   GNU General Public License for more details.
+ *
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
+ *
+ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+ */
+
 #include <drm/drmP.h>
 
 #include <linux/errno.h>
@@ -26,8 +44,9 @@ static irqreturn_t evtchnl_interrupt_ctrl(int irq, void *dev_id)
 
 again:
 	rp = evtchnl->u.req.ring.sring->rsp_prod;
-	/* ensure we see queued responses up to 'rp'. */
+	/* ensure we see queued responses up to rp */
 	virt_rmb();
+
 	for (i = evtchnl->u.req.ring.rsp_cons; i != rp; i++) {
 		resp = RING_GET_RESPONSE(&evtchnl->u.req.ring, i);
 		if (unlikely(resp->id != evtchnl->evt_id))
@@ -124,6 +143,7 @@ static void evtchnl_free(struct xen_drm_front_info *front_info,
 		return;
 
 	evtchnl->state = EVTCHNL_STATE_DISCONNECTED;
+
 	if (evtchnl->type == EVTCHNL_TYPE_REQ) {
 		/* release all who still waits for response if any */
 		evtchnl->u.req.resp_status = -EIO;
@@ -136,7 +156,7 @@ static void evtchnl_free(struct xen_drm_front_info *front_info,
 	if (evtchnl->port)
 		xenbus_free_evtchn(front_info->xb_dev, evtchnl->port);
 
-	/* end access and free the pages */
+	/* end access and free the page */
 	if (evtchnl->gref != GRANT_INVALID_REF)
 		gnttab_end_foreign_access(evtchnl->gref, 0, page);
 
@@ -215,37 +235,6 @@ fail:
 	return ret;
 }
 
-static int evtchnl_publish(struct xenbus_transaction xbt,
-	struct xen_drm_front_evtchnl *evtchnl,
-	const char *path, const char *node_ring,
-	const char *node_chnl)
-{
-	const char *message;
-	int ret;
-
-	/* write control channel ring reference */
-	ret = xenbus_printf(xbt, path, node_ring, "%u",
-			evtchnl->gref);
-	if (ret < 0) {
-		message = "writing ring-ref";
-		goto fail;
-	}
-
-	/* write event channel ring reference */
-	ret = xenbus_printf(xbt, path, node_chnl, "%u",
-		evtchnl->port);
-	if (ret < 0) {
-		message = "writing event channel";
-		goto fail;
-	}
-
-	return 0;
-
-fail:
-	DRM_ERROR("Error %s: %d\n", message, ret);
-	return ret;
-}
-
 int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 	struct xen_drm_front_ops *front_ops)
 {
@@ -286,6 +275,30 @@ fail:
 	return ret;
 }
 
+static int evtchnl_publish(struct xenbus_transaction xbt,
+	struct xen_drm_front_evtchnl *evtchnl, const char *path,
+	const char *node_ring, const char *node_chnl)
+{
+	struct xenbus_device *xb_dev = evtchnl->front_info->xb_dev;
+	int ret;
+
+	/* write control channel ring reference */
+	ret = xenbus_printf(xbt, path, node_ring, "%u", evtchnl->gref);
+	if (ret < 0) {
+		xenbus_dev_error(xb_dev, ret, "writing ring-ref");
+		return ret;
+	}
+
+	/* write event channel ring reference */
+	ret = xenbus_printf(xbt, path, node_chnl, "%u", evtchnl->port);
+	if (ret < 0) {
+		xenbus_dev_error(xb_dev, ret, "writing event channel");
+		return ret;
+	}
+
+	return 0;
+}
+
 int xen_drm_front_evtchnl_publish_all(struct xen_drm_front_info *front_info)
 {
 	struct xenbus_transaction xbt;
@@ -298,7 +311,7 @@ again:
 	ret = xenbus_transaction_start(&xbt);
 	if (ret < 0) {
 		xenbus_dev_fatal(front_info->xb_dev, ret,
-				"starting transaction");
+			"starting transaction");
 		return ret;
 	}
 
@@ -334,8 +347,9 @@ again:
 
 fail:
 	xenbus_transaction_end(xbt, 1);
+
 fail_to_end:
-	xenbus_dev_fatal(front_info->xb_dev, ret, "writing XenStore");
+	xenbus_dev_fatal(front_info->xb_dev, ret, "writing Xen store");
 	return ret;
 }
 

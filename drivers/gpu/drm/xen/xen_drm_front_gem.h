@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -37,9 +37,9 @@ struct xen_drm_front_gem_ops {
 	int (*dumb_create)(struct drm_file *file_priv, struct drm_device *dev,
 		struct drm_mode_create_dumb *args);
 
-	int (*mmap)(struct file *, struct vm_area_struct *);
+	int (*mmap)(struct file *filp, struct vm_area_struct *vma);
 
-	struct page **(*get_pages)(struct drm_gem_object *gem_obj);
+	struct page **(*get_pages)(struct drm_gem_object *obj);
 };
 
 const struct xen_drm_front_gem_ops *xen_drm_front_gem_get_ops(void);

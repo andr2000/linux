@@ -545,22 +545,16 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 
 	case XenbusStateInitialising:
 		/* recovering after backend unexpected closure */
-		mutex_lock(&front_info->mutex);
 		be_on_disconnected(front_info);
-		mutex_unlock(&front_info->mutex);
 		break;
 
 	case XenbusStateInitWait:
 		/* recovering after backend unexpected closure */
-		mutex_lock(&front_info->mutex);
 		be_on_disconnected(front_info);
-		if (xb_dev->state != XenbusStateInitialising) {
-			mutex_unlock(&front_info->mutex);
+		if (xb_dev->state != XenbusStateInitialising)
 			break;
-		}
 
 		ret = be_on_initwait(front_info);
-		mutex_unlock(&front_info->mutex);
 		if (ret < 0) {
 			xenbus_dev_fatal(xb_dev, ret, "initializing frontend");
 			break;
@@ -573,9 +567,7 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 		if (xb_dev->state != XenbusStateInitialised)
 			break;
 
-		mutex_lock(&front_info->mutex);
 		ret = be_on_connected(front_info);
-		mutex_unlock(&front_info->mutex);
 		if (ret < 0) {
 			xenbus_dev_fatal(xb_dev, ret,
 				"initializing DRM driver");
@@ -599,9 +591,7 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 		if (xb_dev->state == XenbusStateClosed)
 			break;
 
-		mutex_lock(&front_info->mutex);
 		be_on_disconnected(front_info);
-		mutex_unlock(&front_info->mutex);
 		break;
 	}
 }
@@ -622,7 +612,6 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 	front_info->xb_dev = xb_dev;
 	spin_lock_init(&front_info->io_lock);
 	INIT_LIST_HEAD(&front_info->dbuf_list);
-	mutex_init(&front_info->mutex);
 	front_info->drm_pdrv_registered = false;
 	dev_set_drvdata(&xb_dev->dev, front_info);
 	return 0;
@@ -657,9 +646,7 @@ static int xen_drv_remove(struct xenbus_device *dev)
 					front_info->xb_dev->otherend,
 					"state", XenbusStateUnknown)));
 
-	mutex_lock(&front_info->mutex);
 	remove_internal(front_info);
-	mutex_unlock(&front_info->mutex);
 	xenbus_frontend_closed(dev);
 	return 0;
 }

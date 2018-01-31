@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -29,7 +29,7 @@ struct xen_drm_front_cfg_connector {
 	char *xenstore_path;
 };
 
-struct xen_drm_front_cfg_plat_data {
+struct xen_drm_front_cfg {
 	struct xen_drm_front_info *front_info;
 	/* number of connectors in this configuration */
 	int num_connectors;
@@ -40,6 +40,6 @@ struct xen_drm_front_cfg_plat_data {
 };
 
 int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_cfg_plat_data *plat_data);
+	struct xen_drm_front_cfg *cfg);
 
 #endif /* __XEN_DRM_FRONT_CFG_H_ */

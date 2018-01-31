@@ -11,7 +11,7 @@
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *   GNU General Public License for more details.
  *
- * Copyright (C) 2016-2017 EPAM Systems Inc.
+ * Copyright (C) 2016-2018 EPAM Systems Inc.
  *
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
@@ -49,7 +49,6 @@ struct xen_drm_front_evtchnl {
 	int port;
 	int irq;
 	int index;
-	/* state of the event channel */
 	enum xen_drm_front_evtchnl_state state;
 	enum xen_drm_front_evtchnl_type type;
 	/* either response id or incoming event id */
@@ -77,10 +76,14 @@ struct xen_drm_front_evtchnl_pair {
 
 int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 	struct xen_drm_front_ops *front_ops);
+
 int xen_drm_front_evtchnl_publish_all(struct xen_drm_front_info *front_info);
-void xen_drm_front_evtchnl_flush(struct xen_drm_front_evtchnl *channel);
+
+void xen_drm_front_evtchnl_flush(struct xen_drm_front_evtchnl *evtchnl);
+
 void xen_drm_front_evtchnl_set_state(struct xen_drm_front_info *front_info,
 	enum xen_drm_front_evtchnl_state state);
+
 void xen_drm_front_evtchnl_free_all(struct xen_drm_front_info *front_info);
 
 #endif /* __XEN_DRM_FRONT_EVTCHNL_H_ */

@@ -20,6 +20,7 @@
 
 #include <drm/drmP.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_atomic_helper.h>
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_cfg.h"
@@ -316,6 +317,7 @@ int xen_drm_front_drv_remove(struct platform_device *pdev)
 	if (dev) {
 		del_timer_sync(&drm_info->vblank_timer);
 		drm_dev_unregister(dev);
+		drm_atomic_helper_shutdown(dev);
 		drm_mode_config_cleanup(dev);
 		drm_dev_unref(dev);
 	}

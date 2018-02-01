@@ -33,6 +33,8 @@
 #include "xen_drm_front_evtchnl.h"
 #include "xen_drm_front_shbuf.h"
 
+static DECLARE_WAIT_QUEUE_HEAD(module_unload_q);
+
 struct xen_drm_front_dbuf {
 	struct list_head list;
 	uint64_t dbuf_cookie;
@@ -526,13 +528,19 @@ static void be_on_disconnected(struct xen_drm_front_info *front_info)
 		xenbus_switch_state(front_info->xb_dev, XenbusStateReconfiguring);
 }
 
+static bool xen_drv_is_unloading(struct xenbus_device *xb_dev)
+{
+	return (xb_dev->state == XenbusStateClosing) ||
+		(xb_dev->state == XenbusStateClosed);
+
+}
 static void be_on_changed(struct xenbus_device *xb_dev,
 	enum xenbus_state backend_state)
 {
 	struct xen_drm_front_info *front_info = dev_get_drvdata(&xb_dev->dev);
 	int ret;
 
-	DRM_DEBUG("Backend state is %s, front is %s\n",
+	DRM_ERROR("Backend state is %s, front is %s\n",
 		xenbus_strstate(backend_state), xenbus_strstate(xb_dev->state));
 
 	switch (backend_state) {
@@ -544,12 +552,18 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 		break;
 
 	case XenbusStateInitialising:
-		/* recovering after backend unexpected closure */
+		if (xen_drv_is_unloading(xb_dev))
+			break;
+
+		/* initializing/recovering after backend closure */
 		be_on_disconnected(front_info);
 		break;
 
 	case XenbusStateInitWait:
-		/* recovering after backend unexpected closure */
+		if (xen_drv_is_unloading(xb_dev))
+			break;
+
+		/* initializing/recovering after backend closure */
 		be_on_disconnected(front_info);
 		if (xb_dev->state != XenbusStateInitialising)
 			break;
@@ -583,12 +597,14 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 		 * so let it go into closed state, so we can also
 		 * remove ours
 		 */
+		wake_up_all(&module_unload_q);
 		break;
 
 	case XenbusStateUnknown:
 		/* fall through */
 	case XenbusStateClosed:
-		if (xb_dev->state == XenbusStateClosed)
+		wake_up_all(&module_unload_q);
+		if (xen_drv_is_unloading(xb_dev))
 			break;
 
 		be_on_disconnected(front_info);
@@ -624,31 +640,28 @@ fail:
 static int xen_drv_remove(struct xenbus_device *dev)
 {
 	struct xen_drm_front_info *front_info = dev_get_drvdata(&dev->dev);
-	int to = 10;
 
-	/*
-	 * FIXME: on driver removal it is disconnected from XenBus,
-	 * so no backend state change events come in via .otherend_changed
-	 * callback. This prevents us from exiting gracefully, e.g.
-	 * signaling the backend to free event channels, waiting for its
-	 * state change to closed and cleaning at our end.
-	 * Workaround: read backend's state manually
-	 */
-	xenbus_switch_state(dev, XenbusStateClosing);
+	if (xenbus_read_driver_state(dev->otherend) != XenbusStateClosed) {
+		xenbus_switch_state(dev, XenbusStateClosing);
+		wait_event(module_unload_q,
+			xenbus_read_driver_state(dev->otherend) ==
+			XenbusStateClosing);
 
-	while ((xenbus_read_unsigned(front_info->xb_dev->otherend,
-		"state", XenbusStateUnknown) != XenbusStateInitWait) && to--)
-		msleep(10);
+		xenbus_switch_state(dev, XenbusStateClosed);
+		wait_event(module_unload_q,
+			xenbus_read_driver_state(dev->otherend) ==
+			XenbusStateClosed ||
+			xenbus_read_driver_state(dev->otherend) ==
+			XenbusStateUnknown);
+	}
 
-	if (!to)
-		DRM_ERROR("Backend state is %s while removing driver\n",
-			xenbus_strstate(xenbus_read_unsigned(
-					front_info->xb_dev->otherend,
-					"state", XenbusStateUnknown)));
+	DRM_ERROR("Backend state is %s while removing driver\n",
+		xenbus_strstate(xenbus_read_unsigned(
+		front_info->xb_dev->otherend, "state", XenbusStateUnknown)));
 
 	remove_internal(front_info);
-	xenbus_frontend_closed(dev);
-	return 0;
+
+	return xenbus_frontend_closed(dev);
 }
 
 static const struct xenbus_device_id xen_drv_ids[] = {

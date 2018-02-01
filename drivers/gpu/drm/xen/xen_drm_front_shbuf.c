@@ -403,9 +403,7 @@ struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
 		buf->ops = &local_ops;
 
 	buf->xb_dev = cfg->xb_dev;
-	/* at the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
-	buf->num_pages = DIV_ROUND_UP(cfg->size,
-		PAGE_SIZE + BUILD_BUG_ON_ZERO(XEN_PAGE_SIZE != PAGE_SIZE));
+	buf->num_pages = DIV_ROUND_UP(cfg->size, PAGE_SIZE);
 	buf->sgt = cfg->sgt;
 	buf->pages = cfg->pages;
 

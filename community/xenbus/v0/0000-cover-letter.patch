@@ -1,0 +1,31 @@
+From 975bb5fb92fd9fd3f637ce9d1fb16b99e49c0ee8 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Thu, 1 Feb 2018 10:43:38 +0200
+Subject: [PATCH] xen: fix frontend driver disconnected from xenbus on removal
+
+Hi, all!
+
+While working on DRM PV frontend driver I faced an issue with
+driver removal, e.g. when driver's .remove callback is called
+the driver is already disconnected form the xenbus and it is not
+possible to synchronize the process of removal with the backend.
+Backend in my case is a user-space application, so this may explain
+why backends which are kernel modules do not suffer from this:
+it seems that user-space is clumsy and its states are not delivered
+through xenbus fast enough.
+
+The obvious way to fix this behavior is to disconnect frontend
+drivers from xenbus _after_ their .remove callback is called.
+
+Thank you,
+Oleksandr Andrushchenko
+
+Oleksandr Andrushchenko (1):
+  xen: fix frontend driver disconnected from xenbus on removal
+
+ drivers/xen/xenbus/xenbus_probe.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+-- 
+2.7.4
+

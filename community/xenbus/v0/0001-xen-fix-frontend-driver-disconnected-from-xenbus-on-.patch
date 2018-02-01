@@ -1,0 +1,39 @@
+From 975bb5fb92fd9fd3f637ce9d1fb16b99e49c0ee8 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Thu, 1 Feb 2018 10:18:26 +0200
+Subject: [PATCH] xen: fix frontend driver disconnected from xenbus on removal
+
+Current xenbus frontend driver removal flow first disconnects
+the driver from xenbus and then calls driver's remove callback.
+This makes it impossible for the driver to listen to backend's
+state changes and synchronize the removal procedure.
+
+Fix this by removing other end XenBus watches after the
+driver's remove callback is called.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/xen/xenbus/xenbus_probe.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index 74888cacd0b0..9c63cd3f416b 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -258,11 +258,11 @@ int xenbus_dev_remove(struct device *_dev)
+ 
+ 	DPRINTK("%s", dev->nodename);
+ 
+-	free_otherend_watch(dev);
+-
+ 	if (drv->remove)
+ 		drv->remove(dev);
+ 
++	free_otherend_watch(dev);
++
+ 	free_otherend_details(dev);
+ 
+ 	xenbus_switch_state(dev, XenbusStateClosed);
+-- 
+2.7.4
+

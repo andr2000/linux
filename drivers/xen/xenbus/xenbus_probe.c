@@ -258,10 +258,10 @@ int xenbus_dev_remove(struct device *_dev)
 
 	DPRINTK("%s", dev->nodename);
 
-	free_otherend_watch(dev);
-
 	if (drv->remove)
 		drv->remove(dev);
+
+	free_otherend_watch(dev);
 
 	free_otherend_details(dev);
 

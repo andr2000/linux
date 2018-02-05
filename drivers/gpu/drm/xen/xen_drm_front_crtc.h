@@ -45,13 +45,15 @@ struct xen_drm_front_crtc {
 	struct xen_drm_front_connector xen_connector;
 
 	/* vblank and flip handling */
-	atomic_t pg_flip_source_cnt;
+	spinlock_t pg_flip_event_lock;
 	struct drm_pending_vblank_event *pg_flip_event;
 	wait_queue_head_t flip_wait;
 	/* page flip event time-out handling */
 	struct timer_list pg_flip_to_timer;
 	/* current fb cookie */
 	uint64_t fb_cookie;
+	/* last page flip error code while communicating with the backend */
+	int pg_flip_last_status;
 };
 
 int xen_drm_front_crtc_init(struct xen_drm_front_drm_info *drm_info,

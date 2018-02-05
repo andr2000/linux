@@ -19,6 +19,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/slab.h>
 
 #include <asm/xen/hypervisor.h>
@@ -404,12 +405,14 @@ static struct xen_drm_front_ops front_ops = {
 
 static int xen_drm_drv_probe(struct platform_device *pdev)
 {
-#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
-	struct device *dev = &pdev->dev;
-
-	/* make sure we have DMA ops set up, so no dummy ops are in use */
-	arch_setup_dma_ops(dev, 0, *dev->dma_mask, NULL, false);
-#endif
+	/*
+	 * The device is not spawn from a device tree, so arch_setup_dma_ops
+	 * is not called, thus leaving the device with dummy DMA ops.
+	 * This makes the device return error on PRIME buffer import, which
+	 * is not correct: to fix this call of_dma_configure() with a NULL
+	 * node to set default DMA ops.
+	 */
+	of_dma_configure(&pdev->dev, NULL);
 	return xen_drm_front_drv_probe(pdev, &front_ops);
 }
 

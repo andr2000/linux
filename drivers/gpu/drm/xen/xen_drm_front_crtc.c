@@ -33,17 +33,6 @@
  */
 #define XEN_DRM_CRTC_PFLIP_TO_MS	(VDRM_WAIT_BACK_MS + 100)
 
-/*
- * page flip complete event can be sent by either on back's
- * page flip completed event or atomic_flush, whatever is the
- * _last_
- */
-enum page_flip_event_sources {
-	PF_EVT_SOURCE_BACK,
-	PF_EVT_SOURCE_FLUSH,
-	PF_EVT_SOURCE_MAX,
-};
-
 static struct xen_drm_front_connector *
 to_xen_drm_connector(struct drm_connector *connector)
 {
@@ -214,74 +203,13 @@ static int plane_init(struct xen_drm_front_drm_info *drm_info,
 
 static bool crtc_page_flip_pending(struct xen_drm_front_crtc *xen_crtc)
 {
-	struct drm_device *dev = xen_crtc->crtc.dev;
 	bool pending;
 	unsigned long flags;
 
-	spin_lock_irqsave(&dev->event_lock, flags);
+	spin_lock_irqsave(&xen_crtc->pg_flip_event_lock, flags);
 	pending = xen_crtc->pg_flip_event != NULL;
-	spin_unlock_irqrestore(&dev->event_lock, flags);
+	spin_unlock_irqrestore(&xen_crtc->pg_flip_event_lock, flags);
 	return pending;
-}
-
-static int crtc_do_page_flip(struct drm_crtc *crtc,
-	struct drm_framebuffer *fb, struct drm_pending_vblank_event *event,
-	uint32_t drm_flags, struct drm_modeset_acquire_ctx *ctx)
-{
-	struct xen_drm_front_crtc *xen_crtc = to_xen_drm_crtc(crtc);
-	struct drm_device *dev = xen_crtc->crtc.dev;
-	struct xen_drm_front_drm_info *drm_info;
-	unsigned long flags;
-	int ret;
-
-	if (unlikely(crtc_page_flip_pending(xen_crtc))) {
-		DRM_WARN("Already have pending page flip\n");
-		return -EBUSY;
-	}
-
-	/*
-	 * There are 2 possible cases:
-	 *   1. backend sends page flip completed before atomic_flush
-	 *   2. backend is clumsy and sends event later than atomic_flush
-	 * FIXME: drm_pending_vblank_event is not yet fully initialized
-	 *   by the DRM core, so it cannot be used to send events right now
-	 *   (see drm_ioctl), so use it as a placeholder which will not
-	 *   allow concurrent flips
-	 */
-	spin_lock_irqsave(&dev->event_lock, flags);
-	xen_crtc->pg_flip_event = event;
-	atomic_set(&xen_crtc->pg_flip_source_cnt, PF_EVT_SOURCE_MAX);
-	xen_crtc->fb_cookie = xen_drm_front_fb_to_cookie(fb);
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-
-	drm_info = xen_crtc->drm_info;
-
-	ret = drm_info->front_ops->page_flip(drm_info->front_info,
-		xen_crtc->index, xen_drm_front_fb_to_cookie(fb));
-	if (unlikely(ret))
-		goto fail;
-
-	/*
-	 * at this stage back was armed and will send page flip event,
-	 * so if we now fail then we have to drop incoming event
-	 */
-	ret = drm_atomic_helper_page_flip(crtc, fb, event, drm_flags, ctx);
-	if (unlikely(ret)) {
-		xen_crtc->fb_cookie = xen_drm_front_fb_to_cookie(NULL);
-		goto fail;
-	}
-
-	mod_timer(&xen_crtc->pg_flip_to_timer,
-		jiffies + msecs_to_jiffies(XEN_DRM_CRTC_PFLIP_TO_MS));
-	return 0;
-
-fail:
-	spin_lock_irqsave(&dev->event_lock, flags);
-	atomic_set(&xen_crtc->pg_flip_source_cnt, 0);
-	xen_crtc->pg_flip_event = NULL;
-	xen_crtc->fb_cookie = xen_drm_front_fb_to_cookie(NULL);
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-	return ret;
 }
 
 static void crtc_ntfy_page_flip_completed(struct xen_drm_front_crtc *xen_crtc)
@@ -291,14 +219,24 @@ static void crtc_ntfy_page_flip_completed(struct xen_drm_front_crtc *xen_crtc)
 
 	del_timer(&xen_crtc->pg_flip_to_timer);
 
-	if (unlikely(!crtc_page_flip_pending(xen_crtc)))
-		return;
+	spin_lock_irqsave(&xen_crtc->pg_flip_event_lock, flags);
 
-	spin_lock_irqsave(&dev->event_lock, flags);
+	if (unlikely(!xen_crtc->pg_flip_event)) {
+		spin_unlock_irqrestore(&xen_crtc->pg_flip_event_lock, flags);
+		return;
+	}
+
+	spin_lock(&dev->event_lock);
 	drm_crtc_send_vblank_event(&xen_crtc->crtc, xen_crtc->pg_flip_event);
+	spin_unlock(&dev->event_lock);
+
 	xen_crtc->pg_flip_event = NULL;
+	xen_crtc->fb_cookie = xen_drm_front_fb_to_cookie(NULL);
+
+	spin_unlock_irqrestore(&xen_crtc->pg_flip_event_lock, flags);
+
 	wake_up(&xen_crtc->flip_wait);
-	spin_unlock_irqrestore(&dev->event_lock, flags);
+
 	drm_crtc_vblank_put(&xen_crtc->crtc);
 }
 
@@ -310,23 +248,25 @@ static void crtc_on_page_flip_to(struct timer_list *t)
 	if (crtc_page_flip_pending(xen_crtc)) {
 		DRM_ERROR("Flip event timed-out, releasing\n");
 		crtc_ntfy_page_flip_completed(xen_crtc);
-		atomic_set(&xen_crtc->pg_flip_source_cnt, 0);
 	}
 }
 
 void xen_drm_front_crtc_on_page_flip_done(struct xen_drm_front_crtc *xen_crtc,
 	uint64_t fb_cookie)
 {
-	if (unlikely(xen_crtc->fb_cookie != fb_cookie)) {
-		DRM_ERROR("Drop page flip event: current %llx != %llx\n",
-			xen_crtc->fb_cookie, fb_cookie);
+	uint64_t fb_cookie_expected;
+	unsigned long flags;
+
+	spin_lock_irqsave(&xen_crtc->pg_flip_event_lock, flags);
+	fb_cookie_expected = xen_crtc->fb_cookie;
+	spin_unlock_irqrestore(&xen_crtc->pg_flip_event_lock, flags);
+	if (unlikely(fb_cookie_expected != fb_cookie)) {
+		DRM_ERROR("Out-of-order page flip event: expected %llx got %llx\n",
+			fb_cookie_expected, fb_cookie);
 		return;
 	}
 
-	WARN_ON(atomic_read(&xen_crtc->pg_flip_source_cnt) == 0);
-
-	if (atomic_dec_and_test(&xen_crtc->pg_flip_source_cnt))
-		crtc_ntfy_page_flip_completed(xen_crtc);
+	crtc_ntfy_page_flip_completed(xen_crtc);
 }
 
 static int crtc_set_config(struct drm_mode_set *set,
@@ -377,38 +317,85 @@ static void crtc_enable(struct drm_crtc *crtc,
 	drm_crtc_vblank_on(crtc);
 }
 
+static int crtc_atomic_check(struct drm_crtc *crtc,
+	struct drm_crtc_state *state)
+{
+	struct xen_drm_front_crtc *xen_crtc = to_xen_drm_crtc(crtc);
+	int ret;
+
+	ret = xen_crtc->pg_flip_last_status;
+	/*
+	 * let the backend a chance to recover: reset the last error, so another
+	 * .atomic_check will have a chance to let .atomc_flush run
+	 */
+	xen_crtc->pg_flip_last_status = 0;
+	return ret;
+}
+
 static void crtc_atomic_flush(struct drm_crtc *crtc,
 	struct drm_crtc_state *old_crtc_state)
 {
 	struct xen_drm_front_crtc *xen_crtc = to_xen_drm_crtc(crtc);
-	struct drm_pending_vblank_event *event;
 	struct drm_device *dev = crtc->dev;
+	struct drm_framebuffer *fb = crtc->primary->fb;
+	struct drm_pending_vblank_event *event;
 	unsigned long flags;
 
 	spin_lock_irqsave(&dev->event_lock, flags);
 	event = crtc->state->event;
 	crtc->state->event = NULL;
-	if (event) {
-		if (event->event.base.type == DRM_EVENT_FLIP_COMPLETE) {
-			WARN_ON(drm_crtc_vblank_get(crtc) != 0);
-			xen_crtc->pg_flip_event = event;
-			WARN_ON(atomic_read(&xen_crtc->pg_flip_source_cnt) == 0);
-			if (atomic_dec_and_test(&xen_crtc->pg_flip_source_cnt)) {
-				spin_unlock_irqrestore(&dev->event_lock, flags);
-				crtc_ntfy_page_flip_completed(xen_crtc);
-				return;
-			}
-		} else {
-			if (drm_crtc_vblank_get(crtc) == 0)
-				drm_crtc_arm_vblank_event(crtc, event);
-			else
-				drm_crtc_send_vblank_event(crtc, event);
-		}
-	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
+
+	if (fb) {
+		struct xen_drm_front_drm_info *drm_info = xen_crtc->drm_info;
+		int ret;
+
+		WARN_ON(drm_crtc_vblank_get(crtc) != 0);
+
+		spin_lock_irqsave(&xen_crtc->pg_flip_event_lock, flags);
+		if (event && (event->event.base.type == DRM_EVENT_FLIP_COMPLETE)) {
+			/*
+			 * save the event, so we can deliver it later when
+			 * page flip event from the backend comes in
+			 */
+			xen_crtc->pg_flip_event = event;
+			/* make sure we do not use it down the code */
+			event = NULL;
+		}
+		xen_crtc->fb_cookie = xen_drm_front_fb_to_cookie(fb);
+		spin_unlock_irqrestore(&xen_crtc->pg_flip_event_lock, flags);
+
+		ret = drm_info->front_ops->page_flip(drm_info->front_info,
+			xen_crtc->index, xen_drm_front_fb_to_cookie(fb));
+		xen_crtc->pg_flip_last_status = ret;
+		if (ret) {
+			/*
+			 * .atomic_flush is a point of no return, we cannot
+			 * fail here. So, if the below request to the backend
+			 * fails, then the best we can do is to signal it is
+			 * done, so at least guest user-space is unblocked now.
+			 * Also, we remember the error code, so we can report it
+			 * during .atomic_check
+			 */
+			crtc_ntfy_page_flip_completed(xen_crtc);
+			DRM_ERROR("Failed to flip the page on backend side, ret %d\n", ret);
+		} else
+			mod_timer(&xen_crtc->pg_flip_to_timer,
+				jiffies + msecs_to_jiffies(XEN_DRM_CRTC_PFLIP_TO_MS));
+	}
+
+	if (event) {
+		spin_lock_irqsave(&dev->event_lock, flags);
+		if (drm_crtc_vblank_get(crtc) == 0)
+			drm_crtc_arm_vblank_event(crtc, event);
+		else
+			drm_crtc_send_vblank_event(crtc, event);
+		spin_unlock_irqrestore(&dev->event_lock, flags);
+	}
 }
 
 static const struct drm_crtc_helper_funcs crtc_helper_funcs = {
+	.atomic_check = crtc_atomic_check,
 	.atomic_flush = crtc_atomic_flush,
 	.atomic_enable = crtc_enable,
 	.atomic_disable = crtc_disable,
@@ -418,7 +405,7 @@ static const struct drm_crtc_funcs crtc_funcs = {
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
 	.destroy = drm_crtc_cleanup,
-	.page_flip = crtc_do_page_flip,
+	.page_flip = drm_atomic_helper_page_flip,
 	.reset = drm_atomic_helper_crtc_reset,
 	.set_config = crtc_set_config,
 };
@@ -431,6 +418,7 @@ int xen_drm_front_crtc_init(struct xen_drm_front_drm_info *drm_info,
 	memset(xen_crtc, 0, sizeof(*xen_crtc));
 	xen_crtc->drm_info = drm_info;
 	xen_crtc->index = index;
+	spin_lock_init(&xen_crtc->pg_flip_event_lock);
 	init_waitqueue_head(&xen_crtc->flip_wait);
 
 	ret = plane_init(drm_info, &xen_crtc->primary);

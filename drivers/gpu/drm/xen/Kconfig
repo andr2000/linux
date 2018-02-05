@@ -22,16 +22,13 @@ config DRM_XEN_FRONTEND
 
 config DRM_XEN_FRONTEND_CMA
 	bool "Use DRM CMA to allocate dumb buffers"
-	depends on DRM_XEN_FRONTEND=y
+	depends on DRM_XEN_FRONTEND
 	select DRM_KMS_CMA_HELPER
 	select DRM_GEM_CMA_HELPER
 	help
-	  Use DRM CMA to allocate dumb buffers.
-	  This is only available for built-in driver, because
-	  there is a dependency on DMA ops which are only available
-	  for built-in code.
+	  Use DRM CMA helpers to allocate dumb buffers.
 	  Note: in this mode driver cannot use buffers allocated
-	  by backend.
+	  by the backend.
 
 config DRM_XEN_ZCOPY
 	tristate "Zero copy driver for Xen"

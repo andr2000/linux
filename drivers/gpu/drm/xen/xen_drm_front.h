@@ -27,13 +27,13 @@
 
 #include "xen_drm_front_cfg.h"
 
-struct xen_drm_front_crtc;
+struct xen_drm_front_drm_pipeline;
 
 /* timeout in ms to wait for backend to respond */
 #define VDRM_WAIT_BACK_MS	3000
 
 struct xen_drm_front_ops {
-	int (*mode_set)(struct xen_drm_front_crtc *xen_crtc,
+	int (*mode_set)(struct xen_drm_front_drm_pipeline *pipeline,
 		uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 		uint32_t bpp, uint64_t fb_cookie);
 	int (*dbuf_create_from_pages)(struct xen_drm_front_info *front_info,

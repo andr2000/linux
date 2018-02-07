@@ -30,6 +30,7 @@
 #include "xen_drm_balloon.h"
 #include "xen_drm_front.h"
 
+#include "xen_drm_front_conn.h"
 #include "xen_drm_front_drv.h"
 #include "xen_drm_front_evtchnl.h"
 #include "xen_drm_front_shbuf.h"
@@ -137,7 +138,7 @@ static int be_stream_wait_io(struct xen_drm_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
-static int be_mode_set(struct xen_drm_front_crtc *xen_crtc, uint32_t x,
+static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
 	uint32_t y, uint32_t width, uint32_t height, uint32_t bpp,
 	uint64_t fb_cookie)
 
@@ -148,8 +149,8 @@ static int be_mode_set(struct xen_drm_front_crtc *xen_crtc, uint32_t x,
 	unsigned long flags;
 	int ret;
 
-	front_info = xen_crtc->drm_info->front_info;
-	evtchnl = &front_info->evt_pairs[xen_crtc->index].req;
+	front_info = pipeline->drm_info->front_info;
+	evtchnl = &front_info->evt_pairs[pipeline->index].req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 

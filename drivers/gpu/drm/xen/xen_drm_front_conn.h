@@ -16,13 +16,23 @@
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
 
-#ifndef __XEN_DRM_FRONT_KMS_H_
-#define __XEN_DRM_FRONT_KMS_H_
+#ifndef __XEN_DRM_FRONT_CONN_H_
+#define __XEN_DRM_FRONT_CONN_H_
 
-#include "xen_drm_front_drv.h"
+#include <drm/drmP.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_encoder.h>
 
-int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info);
-void xen_drm_front_kms_on_page_flip_done(
-	struct xen_drm_front_drm_pipeline *pipeline, uint64_t fb_cookie);
+#include <linux/wait.h>
 
-#endif /* __XEN_DRM_FRONT_KMS_H_ */
+#define XEN_DRM_CRTC_VREFRESH_HZ	60
+
+struct xen_drm_front_drm_info;
+struct xen_drm_front_drm_pipeline;
+
+const uint32_t *xen_drm_front_conn_get_formats(int *format_count);
+
+int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
+	struct drm_connector *connector);
+
+#endif /* __XEN_DRM_FRONT_CONN_H_ */

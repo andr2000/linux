@@ -27,45 +27,6 @@
 #include "xen_drm_front_gem.h"
 #include "xen_drm_front_kms.h"
 
-static void rearm_vblank_timer(struct xen_drm_front_drm_info *drm_info)
-{
-	mod_timer(&drm_info->vblank_timer,
-		jiffies + msecs_to_jiffies(1000 / XEN_DRM_CRTC_VREFRESH_HZ));
-}
-
-static int enable_vblank(struct drm_device *dev, unsigned int pipe)
-{
-	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
-
-	drm_info->vblank_enabled[pipe] = true;
-	return 0;
-}
-
-static void disable_vblank(struct drm_device *dev, unsigned int pipe)
-{
-	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
-
-	drm_info->vblank_enabled[pipe] = false;
-}
-
-static void emulate_vblank_interrupt(struct timer_list *t)
-{
-	struct xen_drm_front_drm_info *drm_info =
-		from_timer(drm_info, t, vblank_timer);
-	int i;
-
-	/*
-	 * we are not synchronized with enable/disable vblank,
-	 * but calling drm_crtc_handle_vblank is safe with this respect,
-	 * e.g. checks if vblank is enabled for the crtc given are made in
-	 * the DRM core
-	 */
-	for (i = 0; i < ARRAY_SIZE(drm_info->vblank_enabled); i++)
-		if (drm_info->vblank_enabled[i])
-			drm_crtc_handle_vblank(&drm_info->crtcs[i].crtc);
-	rearm_vblank_timer(drm_info);
-}
-
 static int dumb_create(struct drm_file *file_priv,
 	struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
@@ -134,7 +95,7 @@ static void on_page_flip(struct platform_device *pdev,
 	if (unlikely(conn_idx >= drm_info->cfg->num_connectors))
 		return;
 
-	xen_drm_front_crtc_on_page_flip_done(&drm_info->crtcs[conn_idx],
+	xen_drm_front_kms_on_page_flip_done(&drm_info->pipeline[conn_idx],
 		fb_cookie);
 }
 
@@ -214,6 +175,15 @@ static const struct vm_operations_struct xen_drm_vm_ops = {
 	.close          = drm_gem_vm_close,
 };
 
+static int enable_vblank(struct drm_device *dev, unsigned int pipe)
+{
+	return 0;
+}
+
+static void disable_vblank(struct drm_device *dev, unsigned int pipe)
+{
+}
+
 struct drm_driver xen_drm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
@@ -265,8 +235,6 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 
 	drm_info->drm_dev = dev;
 
-	timer_setup(&drm_info->vblank_timer, emulate_vblank_interrupt, 0);
-
 	drm_info->cfg = cfg;
 	dev->dev_private = drm_info;
 	platform_set_drvdata(pdev, drm_info);
@@ -293,8 +261,6 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 	if (ret)
 		goto fail_register;
 
-	rearm_vblank_timer(drm_info);
-
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
 		xen_drm_driver.name, xen_drm_driver.major,
 		xen_drm_driver.minor, xen_drm_driver.patchlevel,
@@ -315,7 +281,6 @@ int xen_drm_front_drv_remove(struct platform_device *pdev)
 	struct drm_device *dev = drm_info->drm_dev;
 
 	if (dev) {
-		del_timer_sync(&drm_info->vblank_timer);
 		drm_dev_unregister(dev);
 		drm_atomic_helper_shutdown(dev);
 		drm_mode_config_cleanup(dev);

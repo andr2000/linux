@@ -16,15 +16,13 @@
  * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
  */
 
-#include "xen_drm_front_crtc.h"
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
-#include <drm/drm_plane_helper.h>
 
 #include <video/videomode.h>
 
-#include "xen_drm_front.h"
+#include "xen_drm_front_conn.h"
 #include "xen_drm_front_drv.h"
 
 /*
@@ -33,30 +31,27 @@
  */
 #define XEN_DRM_CRTC_PFLIP_TO_MS	(VDRM_WAIT_BACK_MS + 100)
 
-static struct xen_drm_front_connector *
-to_xen_drm_connector(struct drm_connector *connector)
+static struct xen_drm_front_drm_pipeline *
+to_xen_drm_pipeline(struct drm_connector *connector)
 {
-	return container_of(connector, struct xen_drm_front_connector, base);
+	return container_of(connector, struct xen_drm_front_drm_pipeline, conn);
 }
 
-static struct xen_drm_front_crtc *to_xen_drm_crtc(struct drm_crtc *crtc)
-{
-	return container_of(crtc, struct xen_drm_front_crtc, crtc);
-}
-
-static const struct drm_encoder_funcs encoder_funcs = {
-	.destroy = drm_encoder_cleanup,
+static const uint32_t plane_formats[] = {
+	DRM_FORMAT_RGB565,
+	DRM_FORMAT_RGB888,
+	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_ARGB8888,
+	DRM_FORMAT_XRGB4444,
+	DRM_FORMAT_ARGB4444,
+	DRM_FORMAT_XRGB1555,
+	DRM_FORMAT_ARGB1555,
 };
 
-static int encoder_init(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc)
+const uint32_t *xen_drm_front_conn_get_formats(int *format_count)
 {
-	struct drm_encoder *encoder = &xen_crtc->encoder;
-
-	encoder->possible_crtcs = 1 << drm_crtc_index(&xen_crtc->crtc);
-	encoder->possible_clones = 0;
-	return drm_encoder_init(drm_info->drm_dev, encoder,
-		&encoder_funcs, DRM_MODE_ENCODER_VIRTUAL, NULL);
+	*format_count = ARRAY_SIZE(plane_formats);
+	return plane_formats;
 }
 
 static enum drm_connector_status connector_detect(
@@ -72,7 +67,8 @@ static enum drm_connector_status connector_detect(
 
 static int connector_get_modes(struct drm_connector *connector)
 {
-	struct xen_drm_front_connector *xen_connector;
+	struct xen_drm_front_drm_pipeline *pipeline =
+		to_xen_drm_pipeline(connector);
 	struct drm_display_mode *mode;
 	struct videomode videomode;
 	int width, height;
@@ -81,11 +77,9 @@ static int connector_get_modes(struct drm_connector *connector)
 	if (!mode)
 		return 0;
 
-	xen_connector = to_xen_drm_connector(connector);
-
 	memset(&videomode, 0, sizeof(videomode));
-	videomode.hactive = xen_connector->width;
-	videomode.vactive = xen_connector->height;
+	videomode.hactive = pipeline->width;
+	videomode.vactive = pipeline->height;
 	width = videomode.hactive + videomode.hfront_porch +
 		videomode.hback_porch + videomode.hsync_len;
 	height = videomode.vactive + videomode.vfront_porch +
@@ -100,13 +94,13 @@ static int connector_get_modes(struct drm_connector *connector)
 static int connector_mode_valid(struct drm_connector *connector,
 	struct drm_display_mode *mode)
 {
-	struct xen_drm_front_connector *xen_connector =
-		to_xen_drm_connector(connector);
+	struct xen_drm_front_drm_pipeline *pipeline =
+		to_xen_drm_pipeline(connector);
 
-	if (mode->hdisplay != xen_connector->width)
+	if (mode->hdisplay != pipeline->width)
 		return MODE_ERROR;
 
-	if (mode->vdisplay != xen_connector->height)
+	if (mode->vdisplay != pipeline->height)
 		return MODE_ERROR;
 
 	return MODE_OK;
@@ -118,89 +112,24 @@ static const struct drm_connector_helper_funcs connector_helper_funcs = {
 };
 
 static const struct drm_connector_funcs connector_funcs = {
-	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
-	.destroy = drm_connector_cleanup,
 	.detect = connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
+	.destroy = drm_connector_cleanup,
 	.reset = drm_atomic_helper_connector_reset,
+	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 };
 
-static int connector_init(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc, int width, int height)
+int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
+	struct drm_connector *connector)
 {
-	struct drm_encoder *encoder = &xen_crtc->encoder;
-	struct drm_connector *connector = &xen_crtc->xen_connector.base;
-	int ret;
-
-	xen_crtc->xen_connector.width = width;
-	xen_crtc->xen_connector.height = height;
-
 	drm_connector_helper_add(connector, &connector_helper_funcs);
-	ret = drm_connector_init(drm_info->drm_dev, connector,
+
+	return drm_connector_init(drm_info->drm_dev, connector,
 		&connector_funcs, DRM_MODE_CONNECTOR_VIRTUAL);
-	if (ret)
-		return ret;
-
-	return drm_mode_connector_attach_encoder(connector, encoder);
 }
 
-static const uint32_t plane_formats[] = {
-	DRM_FORMAT_RGB565,
-	DRM_FORMAT_RGB888,
-	DRM_FORMAT_XRGB8888,
-	DRM_FORMAT_ARGB8888,
-	DRM_FORMAT_XRGB4444,
-	DRM_FORMAT_ARGB4444,
-	DRM_FORMAT_XRGB1555,
-	DRM_FORMAT_ARGB1555,
-};
-
-static int plane_atomic_check(struct drm_plane *plane,
-	struct drm_plane_state *state)
-{
-	struct drm_framebuffer *fb = state->fb;
-	int i;
-
-	if (!state->fb || !state->crtc)
-		return 0;
-
-	for (i = 0; i < ARRAY_SIZE(plane_formats); i++)
-		if (fb->format->format == plane_formats[i])
-			return 0;
-
-	return -EINVAL;
-}
-
-static void plane_atomic_update(struct drm_plane *plane,
-	struct drm_plane_state *old_state)
-{
-	/* nothing to do */
-}
-
-static const struct drm_plane_helper_funcs plane_helper_funcs = {
-	.atomic_check = plane_atomic_check,
-	.atomic_update = plane_atomic_update,
-};
-
-static const struct drm_plane_funcs plane_funcs = {
-	.update_plane = drm_atomic_helper_update_plane,
-	.disable_plane = drm_atomic_helper_disable_plane,
-	.destroy = drm_plane_cleanup,
-	.reset = drm_atomic_helper_plane_reset,
-	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
-};
-
-static int plane_init(struct xen_drm_front_drm_info *drm_info,
-	struct drm_plane *primary)
-{
-	drm_plane_helper_add(primary, &plane_helper_funcs);
-	return drm_universal_plane_init(drm_info->drm_dev, primary, 0,
-		&plane_funcs, plane_formats, ARRAY_SIZE(plane_formats), NULL,
-		DRM_PLANE_TYPE_PRIMARY, NULL);
-}
-
+#if 0
 static bool crtc_page_flip_pending(struct xen_drm_front_crtc *xen_crtc)
 {
 	bool pending;
@@ -269,31 +198,6 @@ void xen_drm_front_crtc_on_page_flip_done(struct xen_drm_front_crtc *xen_crtc,
 	crtc_ntfy_page_flip_completed(xen_crtc);
 }
 
-static int crtc_set_config(struct drm_mode_set *set,
-	struct drm_modeset_acquire_ctx *ctx)
-{
-	struct xen_drm_front_crtc *xen_crtc = to_xen_drm_crtc(set->crtc);
-	struct xen_drm_front_drm_info *drm_info = xen_crtc->drm_info;
-	int ret;
-
-	if (set->mode) {
-		ret = drm_info->front_ops->mode_set(xen_crtc,
-			set->x, set->y, set->fb->width, set->fb->height,
-			set->fb->format->cpp[0] * 8,
-			xen_drm_front_fb_to_cookie(set->fb));
-		if (ret) {
-			DRM_ERROR("Failed to set mode to back: %d\n", ret);
-			return ret;
-		}
-	} else {
-		ret = drm_info->front_ops->mode_set(xen_crtc,
-			0, 0, 0, 0, 0, 0);
-		if (ret)
-			DRM_ERROR("Failed to set mode to back: %d\n", ret);
-		/* fall through - at least try to reset mode locally */
-	}
-	return drm_atomic_helper_set_config(set, ctx);
-}
 
 static void crtc_disable(struct drm_crtc *crtc,
 	struct drm_crtc_state *old_crtc_state)
@@ -393,57 +297,4 @@ static void crtc_atomic_flush(struct drm_crtc *crtc,
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 	}
 }
-
-static const struct drm_crtc_helper_funcs crtc_helper_funcs = {
-	.atomic_check = crtc_atomic_check,
-	.atomic_flush = crtc_atomic_flush,
-	.atomic_enable = crtc_enable,
-	.atomic_disable = crtc_disable,
-};
-
-static const struct drm_crtc_funcs crtc_funcs = {
-	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
-	.destroy = drm_crtc_cleanup,
-	.page_flip = drm_atomic_helper_page_flip,
-	.reset = drm_atomic_helper_crtc_reset,
-	.set_config = crtc_set_config,
-};
-
-int xen_drm_front_crtc_init(struct xen_drm_front_drm_info *drm_info,
-	struct xen_drm_front_crtc *xen_crtc, int index, int width, int height)
-{
-	int ret;
-
-	memset(xen_crtc, 0, sizeof(*xen_crtc));
-	xen_crtc->drm_info = drm_info;
-	xen_crtc->index = index;
-	spin_lock_init(&xen_crtc->pg_flip_event_lock);
-	init_waitqueue_head(&xen_crtc->flip_wait);
-
-	ret = plane_init(drm_info, &xen_crtc->primary);
-	if (ret)
-		goto fail;
-
-	drm_crtc_helper_add(&xen_crtc->crtc, &crtc_helper_funcs);
-	ret = drm_crtc_init_with_planes(drm_info->drm_dev, &xen_crtc->crtc,
-		&xen_crtc->primary, NULL, &crtc_funcs, NULL);
-	if (ret)
-		goto fail;
-
-	ret = encoder_init(drm_info, xen_crtc);
-	if (ret)
-		goto fail;
-
-	ret = connector_init(drm_info, xen_crtc, width, height);
-	if (ret)
-		goto fail;
-
-	timer_setup(&xen_crtc->pg_flip_to_timer, crtc_on_page_flip_to, 0);
-
-	return 0;
-
-fail:
-	/* drm_mode_config_cleanup() will free all allocated resources if any */
-	return ret;
-}
+#endif

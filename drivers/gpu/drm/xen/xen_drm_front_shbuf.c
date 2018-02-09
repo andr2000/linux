@@ -18,6 +18,9 @@
 
 #include "xen_drm_front_shbuf.h"
 
+#if defined(CONFIG_X86)
+#include <drm/drm_cache.h>
+#endif
 #include <linux/errno.h>
 #include <linux/mm.h>
 

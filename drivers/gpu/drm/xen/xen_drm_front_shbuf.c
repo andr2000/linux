@@ -65,17 +65,16 @@ int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf)
 	if (buf->ops->map)
 		return buf->ops->map(buf);
 
-	/* no need to map guest grant references, those are local */
+	/* no need to map own grant references */
 	return 0;
 }
 
 int xen_drm_front_shbuf_unmap(struct xen_drm_front_shbuf *buf)
 {
 	if (buf->ops->unmap)
-		if (buf->grefs)
-			return buf->ops->unmap(buf);
+		return buf->ops->unmap(buf);
 
-	/* no need to unmap guest grant references, those are local */
+	/* no need to unmap own grant references */
 	return 0;
 }
 
@@ -203,7 +202,7 @@ static int backend_unmap(struct xen_drm_front_shbuf *buf)
 	struct gnttab_unmap_grant_ref *unmap_ops;
 	int i;
 
-	if (!buf->pages || !buf->backend_map_handles)
+	if (!buf->pages || !buf->backend_map_handles || !buf->grefs)
 		return 0;
 
 	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops),

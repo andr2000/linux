@@ -100,19 +100,17 @@ static int display_set_config(struct drm_simple_display_pipe *pipe,
 	struct xen_drm_front_drm_info *drm_info = pipeline->drm_info;
 	int ret;
 
-	if (fb) {
+	if (fb)
 		ret = drm_info->front_ops->mode_set(pipeline,
 			crtc->x, crtc->y,
 			fb->width, fb->height, fb->format->cpp[0] * 8,
 			xen_drm_front_fb_to_cookie(fb));
-		if (ret)
-			DRM_ERROR("Failed to set mode to back: %d\n", ret);
-	} else {
+	else
 		ret = drm_info->front_ops->mode_set(pipeline,
-			0, 0, 0, 0, 0, 0);
-		if (ret)
-			DRM_ERROR("Failed to set mode to back: %d\n", ret);
-	}
+			0, 0, 0, 0, 0,
+			xen_drm_front_fb_to_cookie(NULL));
+	if (ret)
+		DRM_ERROR("Failed to set mode to back: %d\n", ret);
 	return ret;
 }
 

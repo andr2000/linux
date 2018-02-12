@@ -52,6 +52,20 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 	return gem_obj;
 }
 
+static int gem_dumb_create(struct drm_file *filp, struct drm_device *dev,
+	struct drm_mode_create_dumb *args)
+{
+	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
+
+	if (drm_info->cfg->be_alloc) {
+		/* This use-case is not yet supported and probably won't be */
+		DRM_ERROR("Backend allocated buffers and CMA helpers are not supported at the same time\n");
+		return -EINVAL;
+	}
+
+	return drm_gem_cma_dumb_create(filp, dev, args);
+}
+
 static struct page **gem_get_pages(struct drm_gem_object *gem_obj)
 {
 	return NULL;
@@ -66,7 +80,7 @@ static const struct xen_drm_front_gem_ops xen_drm_front_gem_cma_ops = {
 	.prime_vunmap          = drm_gem_cma_prime_vunmap,
 	.prime_mmap            = drm_gem_cma_prime_mmap,
 
-	.dumb_create           = drm_gem_cma_dumb_create,
+	.dumb_create           = gem_dumb_create,
 
 	.mmap                  = drm_gem_cma_mmap,
 

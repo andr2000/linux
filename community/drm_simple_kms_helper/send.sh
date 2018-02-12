@@ -1,0 +1,1 @@
+git send-email --to dri-devel@lists.freedesktop.org --to linux-kernel@vger.kernel.org --cc=daniel.vetter@intel.com --cc=gustavo@padovan.org --cc=airlied@linux.ie --cc=seanpaul@chromium.org community/drm_simple_kms_helper/v0

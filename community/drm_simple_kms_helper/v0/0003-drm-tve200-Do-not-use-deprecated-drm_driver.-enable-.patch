@@ -1,0 +1,83 @@
+From ce503da726aa2095ec021579dc8c1d4949ea153c Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Mon, 12 Feb 2018 09:55:18 +0200
+Subject: [PATCH 3/4] drm/tve200: Do not use deprecated
+ drm_driver.{enable|disable)_vblank
+
+Do not use deprecated drm_driver.{enable|disable)_vblank callbacks,
+but use drm_simple_kms_helpe's pipe callbacks instead.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Cc: Linus Walleij <linus.walleij@linaro.org>
+---
+ drivers/gpu/drm/tve200/tve200_display.c | 10 ++++++++--
+ drivers/gpu/drm/tve200/tve200_drm.h     |  2 --
+ drivers/gpu/drm/tve200/tve200_drv.c     |  3 ---
+ 3 files changed, 8 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/tve200/tve200_display.c b/drivers/gpu/drm/tve200/tve200_display.c
+index 2c668bd6d997..db397fcb345a 100644
+--- a/drivers/gpu/drm/tve200/tve200_display.c
++++ b/drivers/gpu/drm/tve200/tve200_display.c
+@@ -273,16 +273,20 @@ static void tve200_display_update(struct drm_simple_display_pipe *pipe,
+ 	}
+ }
+ 
+-int tve200_enable_vblank(struct drm_device *drm, unsigned int crtc)
++static int tve200_display_enable_vblank(struct drm_simple_display_pipe *pipe)
+ {
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_device *drm = crtc->dev;
+ 	struct tve200_drm_dev_private *priv = drm->dev_private;
+ 
+ 	writel(TVE200_INT_V_STATUS, priv->regs + TVE200_INT_EN);
+ 	return 0;
+ }
+ 
+-void tve200_disable_vblank(struct drm_device *drm, unsigned int crtc)
++static void tve200_display_disable_vblank(struct drm_simple_display_pipe *pipe)
+ {
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_device *drm = crtc->dev;
+ 	struct tve200_drm_dev_private *priv = drm->dev_private;
+ 
+ 	writel(0, priv->regs + TVE200_INT_EN);
+@@ -300,6 +304,8 @@ static const struct drm_simple_display_pipe_funcs tve200_display_funcs = {
+ 	.disable = tve200_display_disable,
+ 	.update = tve200_display_update,
+ 	.prepare_fb = tve200_display_prepare_fb,
++	.enable_vblank = tve200_display_enable_vblank,
++	.disable_vblank = tve200_display_disable_vblank,
+ };
+ 
+ int tve200_display_init(struct drm_device *drm)
+diff --git a/drivers/gpu/drm/tve200/tve200_drm.h b/drivers/gpu/drm/tve200/tve200_drm.h
+index 5c270055bd58..1ba4380f489b 100644
+--- a/drivers/gpu/drm/tve200/tve200_drm.h
++++ b/drivers/gpu/drm/tve200/tve200_drm.h
+@@ -113,8 +113,6 @@ struct tve200_drm_dev_private {
+ 	container_of(x, struct tve200_drm_connector, connector)
+ 
+ int tve200_display_init(struct drm_device *dev);
+-int tve200_enable_vblank(struct drm_device *drm, unsigned int crtc);
+-void tve200_disable_vblank(struct drm_device *drm, unsigned int crtc);
+ irqreturn_t tve200_irq(int irq, void *data);
+ int tve200_connector_init(struct drm_device *dev);
+ int tve200_encoder_init(struct drm_device *dev);
+diff --git a/drivers/gpu/drm/tve200/tve200_drv.c b/drivers/gpu/drm/tve200/tve200_drv.c
+index 44911d921864..ac344ddb23bc 100644
+--- a/drivers/gpu/drm/tve200/tve200_drv.c
++++ b/drivers/gpu/drm/tve200/tve200_drv.c
+@@ -162,9 +162,6 @@ static struct drm_driver tve200_drm_driver = {
+ 	.gem_free_object_unlocked = drm_gem_cma_free_object,
+ 	.gem_vm_ops = &drm_gem_cma_vm_ops,
+ 
+-	.enable_vblank = tve200_enable_vblank,
+-	.disable_vblank = tve200_disable_vblank,
+-
+ 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
+ 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+ 	.gem_prime_import = drm_gem_prime_import,
+-- 
+2.7.4
+

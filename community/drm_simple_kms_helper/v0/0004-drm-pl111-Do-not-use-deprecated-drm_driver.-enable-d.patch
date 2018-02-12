@@ -1,0 +1,98 @@
+From f07fcf43455dd57f08d76c91b7362bf9703b3e5b Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Mon, 12 Feb 2018 09:42:15 +0200
+Subject: [PATCH 4/4] drm/pl111: Do not use deprecated
+ drm_driver.{enable|disable)_vblank
+
+Do not use deprecated drm_driver.{enable|disable)_vblank callbacks,
+but use drm_simple_kms_helpe's pipe callbacks instead.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Cc: Eric Anholt <eric@anholt.net>
+---
+ drivers/gpu/drm/pl111/pl111_display.c | 15 ++++++++++++---
+ drivers/gpu/drm/pl111/pl111_drm.h     |  2 --
+ drivers/gpu/drm/pl111/pl111_drv.c     |  5 -----
+ 3 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/pl111/pl111_display.c b/drivers/gpu/drm/pl111/pl111_display.c
+index d75923896609..5b8368c76734 100644
+--- a/drivers/gpu/drm/pl111/pl111_display.c
++++ b/drivers/gpu/drm/pl111/pl111_display.c
+@@ -321,8 +321,10 @@ static void pl111_display_update(struct drm_simple_display_pipe *pipe,
+ 	}
+ }
+ 
+-int pl111_enable_vblank(struct drm_device *drm, unsigned int crtc)
++static int pl111_display_enable_vblank(struct drm_simple_display_pipe *pipe)
+ {
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_device *drm = crtc->dev;
+ 	struct pl111_drm_dev_private *priv = drm->dev_private;
+ 
+ 	writel(CLCD_IRQ_NEXTBASE_UPDATE, priv->regs + priv->ienb);
+@@ -330,8 +332,10 @@ int pl111_enable_vblank(struct drm_device *drm, unsigned int crtc)
+ 	return 0;
+ }
+ 
+-void pl111_disable_vblank(struct drm_device *drm, unsigned int crtc)
++static void pl111_display_disable_vblank(struct drm_simple_display_pipe *pipe)
+ {
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_device *drm = crtc->dev;
+ 	struct pl111_drm_dev_private *priv = drm->dev_private;
+ 
+ 	writel(0, priv->regs + priv->ienb);
+@@ -343,7 +347,7 @@ static int pl111_display_prepare_fb(struct drm_simple_display_pipe *pipe,
+ 	return drm_gem_fb_prepare_fb(&pipe->plane, plane_state);
+ }
+ 
+-static const struct drm_simple_display_pipe_funcs pl111_display_funcs = {
++static struct drm_simple_display_pipe_funcs pl111_display_funcs = {
+ 	.check = pl111_display_check,
+ 	.enable = pl111_display_enable,
+ 	.disable = pl111_display_disable,
+@@ -502,6 +506,11 @@ int pl111_display_init(struct drm_device *drm)
+ 	if (ret)
+ 		return ret;
+ 
++	if (!priv->variant->broken_vblank) {
++		pl111_display_funcs.enable_vblank = pl111_display_enable_vblank;
++		pl111_display_funcs.disable_vblank = pl111_display_disable_vblank;
++	}
++
+ 	ret = drm_simple_display_pipe_init(drm, &priv->pipe,
+ 					   &pl111_display_funcs,
+ 					   priv->variant->formats,
+diff --git a/drivers/gpu/drm/pl111/pl111_drm.h b/drivers/gpu/drm/pl111/pl111_drm.h
+index 6d0e450e51b1..8e252b561e2c 100644
+--- a/drivers/gpu/drm/pl111/pl111_drm.h
++++ b/drivers/gpu/drm/pl111/pl111_drm.h
+@@ -79,8 +79,6 @@ struct pl111_drm_dev_private {
+ };
+ 
+ int pl111_display_init(struct drm_device *dev);
+-int pl111_enable_vblank(struct drm_device *drm, unsigned int crtc);
+-void pl111_disable_vblank(struct drm_device *drm, unsigned int crtc);
+ irqreturn_t pl111_irq(int irq, void *data);
+ int pl111_debugfs_init(struct drm_minor *minor);
+ 
+diff --git a/drivers/gpu/drm/pl111/pl111_drv.c b/drivers/gpu/drm/pl111/pl111_drv.c
+index 1231905150d0..a7a3a49956c5 100644
+--- a/drivers/gpu/drm/pl111/pl111_drv.c
++++ b/drivers/gpu/drm/pl111/pl111_drv.c
+@@ -249,11 +249,6 @@ static int pl111_amba_probe(struct amba_device *amba_dev,
+ 	if (!priv)
+ 		return -ENOMEM;
+ 
+-	if (!variant->broken_vblank) {
+-		pl111_drm_driver.enable_vblank = pl111_enable_vblank;
+-		pl111_drm_driver.disable_vblank = pl111_disable_vblank;
+-	}
+-
+ 	drm = drm_dev_alloc(&pl111_drm_driver, dev);
+ 	if (IS_ERR(drm))
+ 		return PTR_ERR(drm);
+-- 
+2.7.4
+

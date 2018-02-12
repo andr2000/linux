@@ -1,0 +1,41 @@
+From f07fcf43455dd57f08d76c91b7362bf9703b3e5b Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Mon, 12 Feb 2018 10:45:32 +0200
+Subject: [PATCH 0/4] drm/simple_kms_helper: Add {enable|disable}_vblank callback support
+
+If simple_kms_helper based driver needs to work with vblanks,
+then it has to provide drm_driver.{enable|disable}_vblank callbacks,
+because drm_simple_kms_helper.drm_crtc_funcs does not provide any.
+At the same time drm_driver.{enable|disable}_vblank callbacks
+are marked as deprecated and shouldn't be used by new drivers.
+
+Fix this by extending drm_simple_kms_helper.drm_crtc_funcs
+to provide the missing callbacks.
+
+Please note, that patch for the DRM core (drm_simple_kms_helper.*)
+is checked at run-time (I use this patch for my own driver), but patches
+0002-0004 are compile only checked.
+
+Thank you,
+Oleksandr Andrushchenko
+
+Oleksandr Andrushchenko (4):
+  drm/simple_kms_helper: Add {enable|disable}_vblank callback support
+  drm/mxsfb: Do not use deprecated drm_driver.{enable|disable)_vblank
+  drm/tve200: Do not use deprecated drm_driver.{enable|disable)_vblank
+  drm/pl111: Do not use deprecated drm_driver.{enable|disable)_vblank
+
+ drivers/gpu/drm/drm_simple_kms_helper.c | 24 +++++++++++++++
+ drivers/gpu/drm/mxsfb/mxsfb_drv.c       | 54 +++++++++++++++++----------------
+ drivers/gpu/drm/pl111/pl111_display.c   | 15 +++++++--
+ drivers/gpu/drm/pl111/pl111_drm.h       |  2 --
+ drivers/gpu/drm/pl111/pl111_drv.c       |  5 ---
+ drivers/gpu/drm/tve200/tve200_display.c | 10 ++++--
+ drivers/gpu/drm/tve200/tve200_drm.h     |  2 --
+ drivers/gpu/drm/tve200/tve200_drv.c     |  3 --
+ include/drm/drm_simple_kms_helper.h     | 18 +++++++++++
+ 9 files changed, 90 insertions(+), 43 deletions(-)
+
+-- 
+2.7.4
+

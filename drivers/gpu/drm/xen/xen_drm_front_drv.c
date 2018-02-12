@@ -175,21 +175,10 @@ static const struct vm_operations_struct xen_drm_vm_ops = {
 	.close          = drm_gem_vm_close,
 };
 
-static int enable_vblank(struct drm_device *dev, unsigned int pipe)
-{
-	return 0;
-}
-
-static void disable_vblank(struct drm_device *dev, unsigned int pipe)
-{
-}
-
 struct drm_driver xen_drm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
 	.lastclose                 = lastclose,
-	.enable_vblank             = enable_vblank,
-	.disable_vblank            = disable_vblank,
 	.gem_free_object_unlocked  = free_object,
 	.gem_vm_ops                = &xen_drm_vm_ops,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,

@@ -242,10 +242,6 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 
 	dev->irq_enabled = 1;
 
-	/*
-	 * register the DRM device with the core and the connectors,
-	 * encoders, planes with sysfs
-	 */
 	ret = drm_dev_register(dev, 0);
 	if (ret)
 		goto fail_register;

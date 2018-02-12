@@ -36,6 +36,8 @@ struct xen_drm_front_drm_pipeline {
 	struct drm_connector conn;
 	/* these are only for connector mode checking */
 	int width, height;
+	/* last backend error seen on page flip */
+	int pgflip_last_error;
 };
 
 struct xen_drm_front_drm_info {

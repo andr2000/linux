@@ -140,56 +140,56 @@ void xen_drm_front_kms_on_page_flip_done(
 	drm_crtc_handle_vblank(&pipeline->pipe.crtc);
 }
 
-static int display_prepare_fb(struct drm_simple_display_pipe *pipe,
-	struct drm_plane_state *plane_state)
+static void display_send_page_flip(struct drm_simple_display_pipe *pipe,
+	struct drm_plane_state *old_plane_state)
 {
-	struct drm_atomic_state *state = plane_state->state;
-	struct drm_plane_state *old_plane_state;
-
-	old_plane_state = drm_atomic_get_old_plane_state(state,
-		plane_state->plane);
+	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(
+		old_plane_state->state, &pipe->plane);
 
 	/*
-	 * We talk to the backend here as we can return error code now if any,
-	 * effectively stopping the commit. Talking in .update callback will
-	 * be too late.
-	 *
 	 * If old_plane_state->fb is NULL and plane_state->fb is not,
-	 * then this is an atomic commit which will enable display
-	 * later on in this commit sequence (display_enable will be called).
+	 * then this is an atomic commit which will enable display.
 	 * Ignore this and do not send page flip as this framebuffer will be
-	 * set to the backend as a part of display_set_config
+	 * sent to the backend as a part of display_set_config call.
 	 */
 	if (old_plane_state->fb && plane_state->fb) {
 		struct xen_drm_front_drm_pipeline *pipeline =
 			to_xen_drm_pipeline(pipe);
 		struct xen_drm_front_drm_info *drm_info = pipeline->drm_info;
 		int ret;
-
 		ret = drm_info->front_ops->page_flip(drm_info->front_info,
 			pipeline->index,
 			xen_drm_front_fb_to_cookie(plane_state->fb));
+		pipeline->pgflip_last_error = ret;
 		if (ret) {
 			DRM_ERROR("Failed to send page flip request to backend: %d\n", ret);
 			/*
-			 * according to drm_plane_helper_funcs.prepare_fb
-			 * the list of allowed error codes from this callback
-			 * is limited by drm_mode_config_funcs.atomic_commit:
-			 * we can only return -EBUSY, -ENOMEM, -ENOSPC,
-			 * -EIO, -EINTR, -EAGAIN or -ERESTARTSYS
-			 *
-			 * - -EIO, if the hardware completely died.
-			 *
-			 * - -EAGAIN if the IOCTL should be restarted.
-			 *
+			 * As we are at commit stage the DRM core will anyways
+			 * wait for the vblank and knows nothing about our
+			 * failure. The best we can do is to handle
+			 * vblank now, so there is no vblank/flip_done
+			 * time outs
 			 */
-			if (ret == -EIO)
-				return ret;
-
-			return -EAGAIN;
+			drm_crtc_handle_vblank(&pipeline->pipe.crtc);
 		}
 	}
+}
 
+static int display_prepare_fb(struct drm_simple_display_pipe *pipe,
+	struct drm_plane_state *plane_state)
+{
+	struct xen_drm_front_drm_pipeline *pipeline =
+			to_xen_drm_pipeline(pipe);
+
+	if (pipeline->pgflip_last_error) {
+		int ret;
+
+		/* if previous page flip didn't succeed then report the error */
+		ret = pipeline->pgflip_last_error;
+		/* and let us try to page flip next time */
+		pipeline->pgflip_last_error = 0;
+		return ret;
+	}
 	return drm_gem_fb_prepare_fb(&pipe->plane, plane_state);
 }
 
@@ -197,12 +197,13 @@ static void display_update(struct drm_simple_display_pipe *pipe,
 	struct drm_plane_state *old_plane_state)
 {
 	struct drm_crtc *crtc = &pipe->crtc;
-	struct drm_device *dev = crtc->dev;
 	struct drm_pending_vblank_event *event;
-	unsigned long flags;
 
 	event = crtc->state->event;
 	if (event) {
+		struct drm_device *dev = crtc->dev;
+		unsigned long flags;
+
 		crtc->state->event = NULL;
 
 		spin_lock_irqsave(&dev->event_lock, flags);
@@ -212,6 +213,12 @@ static void display_update(struct drm_simple_display_pipe *pipe,
 			drm_crtc_send_vblank_event(crtc, event);
 		spin_unlock_irqrestore(&dev->event_lock, flags);
 	}
+	/*
+	 * send page flip request to the backend *after* we have event armed/
+	 * sent above, so on page flip done event from the backend we can
+	 * deliver it while handling vblank
+	 */
+	display_send_page_flip(pipe, old_plane_state);
 }
 
 static const struct drm_simple_display_pipe_funcs display_funcs = {

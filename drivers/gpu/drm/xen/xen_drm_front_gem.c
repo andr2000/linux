@@ -48,17 +48,17 @@ struct xen_gem_object {
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
-	struct drm_gem_object *gem_obj)
+		struct drm_gem_object *gem_obj)
 {
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
 
 static int gem_alloc_pages_array(struct xen_gem_object *xen_obj,
-	size_t buf_size)
+		size_t buf_size)
 {
 	xen_obj->num_pages = DIV_ROUND_UP(buf_size, PAGE_SIZE);
 	xen_obj->pages = kvmalloc_array(xen_obj->num_pages,
-		sizeof(struct page *), GFP_KERNEL);
+			sizeof(struct page *), GFP_KERNEL);
 	return xen_obj->pages == NULL ? -ENOMEM : 0;
 }
 
@@ -111,10 +111,10 @@ static struct xen_gem_object *gem_create(struct drm_device *dev, size_t size)
 		}
 
 		ret = xen_drm_ballooned_pages_alloc(dev->dev, &xen_obj->balloon,
-			xen_obj->num_pages, xen_obj->pages);
+				xen_obj->num_pages, xen_obj->pages);
 		if (ret < 0) {
 			DRM_ERROR("Cannot allocate %zu ballooned pages: %d\n",
-				xen_obj->num_pages, ret);
+					xen_obj->num_pages, ret);
 			goto fail;
 		}
 
@@ -140,7 +140,7 @@ fail:
 }
 
 static struct xen_gem_object *gem_create_with_handle(struct drm_file *filp,
-	struct drm_device *dev, size_t size, uint32_t *handle)
+		struct drm_device *dev, size_t size, uint32_t *handle)
 {
 	struct xen_gem_object *xen_obj;
 	struct drm_gem_object *gem_obj;
@@ -160,8 +160,8 @@ static struct xen_gem_object *gem_create_with_handle(struct drm_file *filp,
 	return xen_obj;
 }
 
-static int gem_dumb_create(struct drm_file *filp,
-	struct drm_device *dev, struct drm_mode_create_dumb *args)
+static int gem_dumb_create(struct drm_file *filp, struct drm_device *dev,
+		struct drm_mode_create_dumb *args)
 {
 	struct xen_gem_object *xen_obj;
 
@@ -186,13 +186,13 @@ static void gem_free_object(struct drm_gem_object *gem_obj)
 		if (xen_obj->pages) {
 			if (xen_obj->be_alloc) {
 				xen_drm_ballooned_pages_free(gem_obj->dev->dev,
-					&xen_obj->balloon,
-					xen_obj->num_pages, xen_obj->pages);
+						&xen_obj->balloon,
+						xen_obj->num_pages,
+						xen_obj->pages);
 				gem_free_pages_array(xen_obj);
-			} else {
+			} else
 				drm_gem_put_pages(&xen_obj->base,
-					xen_obj->pages, true, false);
-			}
+						xen_obj->pages, true, false);
 		}
 	}
 	drm_gem_object_release(gem_obj);
@@ -217,7 +217,7 @@ static struct sg_table *gem_get_sg_table(struct drm_gem_object *gem_obj)
 }
 
 static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt)
+		struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
@@ -236,7 +236,7 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 	xen_obj->sgt_imported = sgt;
 
 	ret = drm_prime_sg_to_page_addr_arrays(sgt, xen_obj->pages,
-		NULL, xen_obj->num_pages);
+			NULL, xen_obj->num_pages);
 	if (ret < 0)
 		return ERR_PTR(ret);
 
@@ -246,9 +246,9 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 	 * e.g. for mapping etc.
 	 */
 	ret = drm_info->front_ops->dbuf_create_from_pages(
-		drm_info->front_info,
-		xen_drm_front_dbuf_to_cookie(&xen_obj->base),
-		0, 0, 0, size, xen_obj->pages);
+			drm_info->front_info,
+			xen_drm_front_dbuf_to_cookie(&xen_obj->base),
+			0, 0, 0, size, xen_obj->pages);
 	if (ret < 0)
 		return ERR_PTR(ret);
 
@@ -259,7 +259,7 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 }
 
 static int gem_mmap_obj(struct xen_gem_object *xen_obj,
-	struct vm_area_struct *vma)
+		struct vm_area_struct *vma)
 {
 	unsigned long addr = vma->vm_start;
 	int i;
@@ -319,7 +319,7 @@ static void *gem_prime_vmap(struct drm_gem_object *gem_obj)
 		return NULL;
 
 	return vmap(xen_obj->pages, xen_obj->num_pages,
-		VM_MAP, pgprot_writecombine(PAGE_KERNEL));
+			VM_MAP, pgprot_writecombine(PAGE_KERNEL));
 }
 
 static void gem_prime_vunmap(struct drm_gem_object *gem_obj, void *vaddr)

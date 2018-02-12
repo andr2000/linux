@@ -65,7 +65,7 @@ struct xen_drm_front_shbuf_cfg {
 };
 
 struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
-	struct xen_drm_front_shbuf_cfg *cfg);
+		struct xen_drm_front_shbuf_cfg *cfg);
 
 grant_ref_t xen_drm_front_shbuf_get_dir_start(struct xen_drm_front_shbuf *buf);
 

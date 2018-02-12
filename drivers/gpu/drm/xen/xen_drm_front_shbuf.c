@@ -134,7 +134,7 @@ static void guest_calc_num_grefs(struct xen_drm_front_shbuf *buf)
 }
 
 #define xen_page_to_vaddr(page) \
-	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
+		((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
 
 static int backend_map(struct xen_drm_front_shbuf *buf)
 {
@@ -147,7 +147,7 @@ static int backend_map(struct xen_drm_front_shbuf *buf)
 		return -ENOMEM;
 
 	buf->backend_map_handles = kcalloc(buf->num_pages,
-		sizeof(*buf->backend_map_handles), GFP_KERNEL);
+			sizeof(*buf->backend_map_handles), GFP_KERNEL);
 	if (!buf->backend_map_handles) {
 		kfree(map_ops);
 		return -ENOMEM;
@@ -163,7 +163,7 @@ static int backend_map(struct xen_drm_front_shbuf *buf)
 	cur_page = 0;
 	for (cur_dir_page = 0; cur_dir_page < buf->num_grefs; cur_dir_page++) {
 		struct xendispl_page_directory *page_dir =
-			(struct xendispl_page_directory *)ptr;
+				(struct xendispl_page_directory *)ptr;
 		int to_copy = XEN_DRM_NUM_GREFS_PER_PAGE;
 
 		if (to_copy > grefs_left)
@@ -174,8 +174,9 @@ static int backend_map(struct xen_drm_front_shbuf *buf)
 
 			addr = xen_page_to_vaddr(buf->pages[cur_page]);
 			gnttab_set_map_op(&map_ops[cur_page], addr,
-				GNTMAP_host_map, page_dir->gref[cur_gref],
-				buf->xb_dev->otherend_id);
+					GNTMAP_host_map,
+					page_dir->gref[cur_gref],
+					buf->xb_dev->otherend_id);
 			cur_page++;
 		}
 
@@ -190,7 +191,7 @@ static int backend_map(struct xen_drm_front_shbuf *buf)
 		buf->backend_map_handles[cur_page] = map_ops[cur_page].handle;
 		if (unlikely(map_ops[cur_page].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d: %d\n",
-				cur_page, map_ops[cur_page].status);
+					cur_page, map_ops[cur_page].status);
 	}
 
 	kfree(map_ops);
@@ -217,16 +218,16 @@ static int backend_unmap(struct xen_drm_front_shbuf *buf)
 
 		addr = xen_page_to_vaddr(buf->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr, GNTMAP_host_map,
-			buf->backend_map_handles[i]);
+				buf->backend_map_handles[i]);
 	}
 
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, buf->pages,
-		buf->num_pages));
+			buf->num_pages));
 
 	for (i = 0; i < buf->num_pages; i++) {
 		if (unlikely(unmap_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to unmap page %d: %d\n",
-				i, unmap_ops[i].status);
+					i, unmap_ops[i].status);
 	}
 
 	kfree(unmap_ops);
@@ -272,7 +273,7 @@ static void guest_fill_page_dir(struct xen_drm_front_shbuf *buf)
 	grefs_left = buf->num_pages;
 	for (i = 0; i < num_pages_dir; i++) {
 		struct xendispl_page_directory *page_dir =
-			(struct xendispl_page_directory *)ptr;
+				(struct xendispl_page_directory *)ptr;
 
 		if (grefs_left <= XEN_DRM_NUM_GREFS_PER_PAGE) {
 			to_copy = grefs_left;
@@ -282,7 +283,7 @@ static void guest_fill_page_dir(struct xen_drm_front_shbuf *buf)
 			page_dir->gref_dir_next_page = buf->grefs[i + 1];
 		}
 		memcpy(&page_dir->gref, &buf->grefs[cur_gref],
-			to_copy * sizeof(grant_ref_t));
+				to_copy * sizeof(grant_ref_t));
 		ptr += PAGE_SIZE;
 		grefs_left -= to_copy;
 		cur_gref += to_copy;
@@ -290,7 +291,7 @@ static void guest_fill_page_dir(struct xen_drm_front_shbuf *buf)
 }
 
 static int guest_grant_refs_for_buffer(struct xen_drm_front_shbuf *buf,
-	grant_ref_t *priv_gref_head, int gref_idx)
+		grant_ref_t *priv_gref_head, int gref_idx)
 {
 	int i, cur_ref, otherend_id;
 
@@ -299,8 +300,8 @@ static int guest_grant_refs_for_buffer(struct xen_drm_front_shbuf *buf,
 		cur_ref = gnttab_claim_grant_reference(priv_gref_head);
 		if (cur_ref < 0)
 			return cur_ref;
-		gnttab_grant_foreign_access_ref(cur_ref,
-			otherend_id, xen_page_to_gfn(buf->pages[i]), 0);
+		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
+				xen_page_to_gfn(buf->pages[i]), 0);
 		buf->grefs[gref_idx++] = cur_ref;
 	}
 	return 0;
@@ -328,9 +329,9 @@ static int grant_references(struct xen_drm_front_shbuf *buf)
 			return cur_ref;
 
 		frame = xen_page_to_gfn(virt_to_page(buf->directory +
-			PAGE_SIZE * i));
+				PAGE_SIZE * i));
 		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
-			frame, 0);
+				frame, 0);
 		buf->grefs[j++] = cur_ref;
 	}
 
@@ -348,7 +349,7 @@ static int alloc_storage(struct xen_drm_front_shbuf *buf)
 {
 	if (buf->sgt) {
 		buf->pages = kvmalloc_array(buf->num_pages,
-			sizeof(struct page *), GFP_KERNEL);
+				sizeof(struct page *), GFP_KERNEL);
 		if (!buf->pages)
 			return -ENOMEM;
 
@@ -369,7 +370,7 @@ static int alloc_storage(struct xen_drm_front_shbuf *buf)
 }
 
 /*
- * for be allocated buffers we don't need grant_refs_for_buffer as those
+ * For be allocated buffers we don't need grant_refs_for_buffer as those
  * grant references are allocated at backend side
  */
 static const struct xen_drm_front_shbuf_ops backend_ops = {
@@ -379,7 +380,7 @@ static const struct xen_drm_front_shbuf_ops backend_ops = {
 	.unmap = backend_unmap
 };
 
-/* for locally granted references we do not need to map/unmap the references */
+/* For locally granted references we do not need to map/unmap the references */
 static const struct xen_drm_front_shbuf_ops local_ops = {
 	.calc_num_grefs = guest_calc_num_grefs,
 	.fill_page_dir = guest_fill_page_dir,
@@ -387,7 +388,7 @@ static const struct xen_drm_front_shbuf_ops local_ops = {
 };
 
 struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
-	struct xen_drm_front_shbuf_cfg *cfg)
+		struct xen_drm_front_shbuf_cfg *cfg)
 {
 	struct xen_drm_front_shbuf *buf;
 	int ret;

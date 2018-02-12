@@ -30,7 +30,7 @@
 
 #if defined(CONFIG_DRM_XEN_ZCOPY_CMA)
 int xen_drm_ballooned_pages_alloc(struct device *dev,
-	struct xen_drm_balloon *obj, int num_pages, struct page **pages)
+		struct xen_drm_balloon *obj, int num_pages, struct page **pages)
 {
 	xen_pfn_t *frame_list;
 	size_t size;
@@ -52,7 +52,7 @@ int xen_drm_ballooned_pages_alloc(struct device *dev,
 	vaddr = dma_alloc_wc(dev, size, &dev_addr, GFP_KERNEL | __GFP_NOWARN);
 	if (!vaddr) {
 		DRM_ERROR("Failed to allocate DMA buffer with size %zu\n",
-			size);
+				size);
 		ret = -ENOMEM;
 		goto fail;
 	}
@@ -72,7 +72,7 @@ int xen_drm_ballooned_pages_alloc(struct device *dev,
 	ret = HYPERVISOR_memory_op(XENMEM_decrease_reservation, &reservation);
 	if (ret <= 0) {
 		DRM_ERROR("Failed to balloon out %d pages (%d), retrying\n",
-			num_pages, ret);
+				num_pages, ret);
 		WARN_ON(ret != num_pages);
 		ret = -EFAULT;
 		goto fail;
@@ -91,7 +91,7 @@ fail:
 }
 
 void xen_drm_ballooned_pages_free(struct device *dev,
-	struct xen_drm_balloon *obj, int num_pages, struct page **pages)
+		struct xen_drm_balloon *obj, int num_pages, struct page **pages)
 {
 	xen_pfn_t *frame_list;
 	int i, ret;
@@ -102,10 +102,7 @@ void xen_drm_ballooned_pages_free(struct device *dev,
 		.domid        = DOMID_SELF
 	};
 
-	if (!pages)
-		return;
-
-	if (!obj->vaddr)
+	if (!pages || !obj->vaddr)
 		return;
 
 	frame_list = kcalloc(num_pages, sizeof(*frame_list), GFP_KERNEL);
@@ -141,13 +138,13 @@ void xen_drm_ballooned_pages_free(struct device *dev,
 }
 #else
 int xen_drm_ballooned_pages_alloc(struct device *dev,
-	struct xen_drm_balloon *obj, int num_pages, struct page **pages)
+		struct xen_drm_balloon *obj, int num_pages, struct page **pages)
 {
 	return alloc_xenballooned_pages(num_pages, pages);
 }
 
 void xen_drm_ballooned_pages_free(struct device *dev,
-	struct xen_drm_balloon *obj, int num_pages, struct page **pages)
+		struct xen_drm_balloon *obj, int num_pages, struct page **pages)
 {
 	free_xenballooned_pages(num_pages, pages);
 }

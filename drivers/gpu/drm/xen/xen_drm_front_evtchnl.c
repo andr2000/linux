@@ -76,12 +76,11 @@ again:
 		int more_to_do;
 
 		RING_FINAL_CHECK_FOR_RESPONSES(&evtchnl->u.req.ring,
-			more_to_do);
+				more_to_do);
 		if (more_to_do)
 			goto again;
-	} else {
+	} else
 		evtchnl->u.req.ring.sring->rsp_event = i + 1;
-	}
 
 out:
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
@@ -169,8 +168,8 @@ static void evtchnl_free(struct xen_drm_front_info *front_info,
 }
 
 static int evtchnl_alloc(struct xen_drm_front_info *front_info, int index,
-	struct xen_drm_front_evtchnl *evtchnl,
-	enum xen_drm_front_evtchnl_type type)
+		struct xen_drm_front_evtchnl *evtchnl,
+		enum xen_drm_front_evtchnl_type type)
 {
 	struct xenbus_device *xb_dev = front_info->xb_dev;
 	unsigned long page;
@@ -198,7 +197,7 @@ static int evtchnl_alloc(struct xen_drm_front_info *front_info, int index,
 		sring = (struct xen_displif_sring *)page;
 		SHARED_RING_INIT(sring);
 		FRONT_RING_INIT(&evtchnl->u.req.ring,
-			sring, XEN_PAGE_SIZE);
+				sring, XEN_PAGE_SIZE);
 
 		ret = xenbus_grant_ring(xb_dev, sring, 1, &gref);
 		if (ret < 0)
@@ -209,7 +208,7 @@ static int evtchnl_alloc(struct xen_drm_front_info *front_info, int index,
 		evtchnl->u.evt.page = (struct xendispl_event_page *)page;
 
 		ret = gnttab_grant_foreign_access(xb_dev->otherend_id,
-			virt_to_gfn((void *)page), 0);
+				virt_to_gfn((void *)page), 0);
 		if (ret < 0)
 			goto fail;
 
@@ -223,7 +222,7 @@ static int evtchnl_alloc(struct xen_drm_front_info *front_info, int index,
 		goto fail;
 
 	ret = bind_evtchn_to_irqhandler(evtchnl->port,
-		handler, 0, xb_dev->devicetype, evtchnl);
+			handler, 0, xb_dev->devicetype, evtchnl);
 	if (ret < 0)
 		goto fail;
 
@@ -236,7 +235,7 @@ fail:
 }
 
 int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_ops *front_ops)
+		struct xen_drm_front_ops *front_ops)
 {
 	struct xen_drm_front_cfg *cfg;
 	int ret, conn;
@@ -244,8 +243,8 @@ int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 	cfg = &front_info->cfg;
 
 	front_info->evt_pairs = devm_kcalloc(&front_info->xb_dev->dev,
-		cfg->num_connectors,
-		sizeof(struct xen_drm_front_evtchnl_pair), GFP_KERNEL);
+			cfg->num_connectors,
+			sizeof(struct xen_drm_front_evtchnl_pair), GFP_KERNEL);
 	if (!front_info->evt_pairs) {
 		ret = -ENOMEM;
 		goto fail;
@@ -253,18 +252,21 @@ int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
 
 	for (conn = 0; conn < cfg->num_connectors; conn++) {
 		ret = evtchnl_alloc(front_info, conn,
-			&front_info->evt_pairs[conn].req, EVTCHNL_TYPE_REQ);
+				&front_info->evt_pairs[conn].req,
+				EVTCHNL_TYPE_REQ);
 		if (ret < 0) {
 			DRM_ERROR("Error allocating control channel\n");
 			goto fail;
 		}
 
 		ret = evtchnl_alloc(front_info, conn,
-			&front_info->evt_pairs[conn].evt, EVTCHNL_TYPE_EVT);
+				&front_info->evt_pairs[conn].evt,
+				EVTCHNL_TYPE_EVT);
 		if (ret < 0) {
 			DRM_ERROR("Error allocating in-event channel\n");
 			goto fail;
 		}
+
 		front_info->evt_pairs[conn].evt.u.evt.front_ops = front_ops;
 	}
 	front_info->num_evt_pairs = cfg->num_connectors;
@@ -276,8 +278,8 @@ fail:
 }
 
 static int evtchnl_publish(struct xenbus_transaction xbt,
-	struct xen_drm_front_evtchnl *evtchnl, const char *path,
-	const char *node_ring, const char *node_chnl)
+		struct xen_drm_front_evtchnl *evtchnl, const char *path,
+		const char *node_ring, const char *node_chnl)
 {
 	struct xenbus_device *xb_dev = evtchnl->front_info->xb_dev;
 	int ret;
@@ -311,24 +313,24 @@ again:
 	ret = xenbus_transaction_start(&xbt);
 	if (ret < 0) {
 		xenbus_dev_fatal(front_info->xb_dev, ret,
-			"starting transaction");
+				"starting transaction");
 		return ret;
 	}
 
 	for (conn = 0; conn < plat_data->num_connectors; conn++) {
 		ret = evtchnl_publish(xbt,
-			&front_info->evt_pairs[conn].req,
-			plat_data->connectors[conn].xenstore_path,
-			XENDISPL_FIELD_REQ_RING_REF,
-			XENDISPL_FIELD_REQ_CHANNEL);
+				&front_info->evt_pairs[conn].req,
+				plat_data->connectors[conn].xenstore_path,
+				XENDISPL_FIELD_REQ_RING_REF,
+				XENDISPL_FIELD_REQ_CHANNEL);
 		if (ret < 0)
 			goto fail;
 
 		ret = evtchnl_publish(xbt,
-			&front_info->evt_pairs[conn].evt,
-			plat_data->connectors[conn].xenstore_path,
-			XENDISPL_FIELD_EVT_RING_REF,
-			XENDISPL_FIELD_EVT_CHANNEL);
+				&front_info->evt_pairs[conn].evt,
+				plat_data->connectors[conn].xenstore_path,
+				XENDISPL_FIELD_EVT_RING_REF,
+				XENDISPL_FIELD_EVT_CHANNEL);
 		if (ret < 0)
 			goto fail;
 	}
@@ -339,7 +341,7 @@ again:
 			goto again;
 
 		xenbus_dev_fatal(front_info->xb_dev, ret,
-			"completing transaction");
+				"completing transaction");
 		goto fail_to_end;
 	}
 
@@ -364,7 +366,7 @@ void xen_drm_front_evtchnl_flush(struct xen_drm_front_evtchnl *evtchnl)
 }
 
 void xen_drm_front_evtchnl_set_state(struct xen_drm_front_info *front_info,
-	enum xen_drm_front_evtchnl_state state)
+		enum xen_drm_front_evtchnl_state state)
 {
 	unsigned long flags;
 	int i;
@@ -389,10 +391,8 @@ void xen_drm_front_evtchnl_free_all(struct xen_drm_front_info *front_info)
 		return;
 
 	for (i = 0; i < front_info->num_evt_pairs; i++) {
-		evtchnl_free(front_info,
-			&front_info->evt_pairs[i].req);
-		evtchnl_free(front_info,
-			&front_info->evt_pairs[i].evt);
+		evtchnl_free(front_info, &front_info->evt_pairs[i].req);
+		evtchnl_free(front_info, &front_info->evt_pairs[i].evt);
 	}
 
 	devm_kfree(&front_info->xb_dev->dev, front_info->evt_pairs);

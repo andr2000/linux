@@ -29,8 +29,11 @@ struct xen_drm_balloon {
 };
 
 int xen_drm_ballooned_pages_alloc(struct device *dev,
-	struct xen_drm_balloon *obj, int num_pages, struct page **pages);
+		struct xen_drm_balloon *obj, int num_pages,
+		struct page **pages);
+
 void xen_drm_ballooned_pages_free(struct device *dev,
-	struct xen_drm_balloon *obj,int num_pages, struct page **pages);
+		struct xen_drm_balloon *obj,int num_pages,
+		struct page **pages);
 
 #endif /* __XEN_DRM_BALLOON_H_ */

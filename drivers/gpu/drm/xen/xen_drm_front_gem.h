@@ -25,17 +25,16 @@ struct xen_drm_front_gem_ops {
 	void (*free_object_unlocked)(struct drm_gem_object *obj);
 
 	struct sg_table *(*prime_get_sg_table)(struct drm_gem_object *obj);
-	struct drm_gem_object *(*prime_import_sg_table)(
-		struct drm_device *dev, struct dma_buf_attachment *attach,
-		struct sg_table *sgt);
-
+	struct drm_gem_object *(*prime_import_sg_table)(struct drm_device *dev,
+			struct dma_buf_attachment *attach,
+			struct sg_table *sgt);
 	void *(*prime_vmap)(struct drm_gem_object *obj);
 	void (*prime_vunmap)(struct drm_gem_object *obj, void *vaddr);
 	int (*prime_mmap)(struct drm_gem_object *obj,
-		struct vm_area_struct *vma);
+			struct vm_area_struct *vma);
 
 	int (*dumb_create)(struct drm_file *file_priv, struct drm_device *dev,
-		struct drm_mode_create_dumb *args);
+			struct drm_mode_create_dumb *args);
 
 	int (*mmap)(struct file *filp, struct vm_area_struct *vma);
 

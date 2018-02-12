@@ -26,7 +26,7 @@
 #include "xen_drm_front_gem.h"
 
 static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt)
+		struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct drm_gem_object *gem_obj;
@@ -40,10 +40,10 @@ static struct drm_gem_object *gem_import_sg_table(struct drm_device *dev,
 	cma_obj = to_drm_gem_cma_obj(gem_obj);
 
 	ret = drm_info->front_ops->dbuf_create_from_sgt(
-		drm_info->front_info,
-		xen_drm_front_dbuf_to_cookie(gem_obj),
-		0, 0, 0, gem_obj->size,
-		drm_gem_cma_prime_get_sg_table(gem_obj));
+			drm_info->front_info,
+			xen_drm_front_dbuf_to_cookie(gem_obj),
+			0, 0, 0, gem_obj->size,
+			drm_gem_cma_prime_get_sg_table(gem_obj));
 	if (ret < 0)
 		return ERR_PTR(ret);
 

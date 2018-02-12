@@ -43,7 +43,7 @@ struct xen_drm_front_dbuf {
 };
 
 static int dbuf_add_to_list(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_shbuf *shbuf, uint64_t dbuf_cookie)
+		struct xen_drm_front_shbuf *shbuf, uint64_t dbuf_cookie)
 {
 	struct xen_drm_front_dbuf *dbuf;
 
@@ -58,14 +58,14 @@ static int dbuf_add_to_list(struct xen_drm_front_info *front_info,
 }
 
 static struct xen_drm_front_dbuf *dbuf_get(struct list_head *dbuf_list,
-	uint64_t dbuf_cookie)
+		uint64_t dbuf_cookie)
 {
 	struct xen_drm_front_dbuf *buf, *q;
 
-	list_for_each_entry_safe(buf, q, dbuf_list, list) {
+	list_for_each_entry_safe(buf, q, dbuf_list, list)
 		if (buf->dbuf_cookie == dbuf_cookie)
 			return buf;
-	}
+
 	return NULL;
 }
 
@@ -105,12 +105,12 @@ static void dbuf_free_all(struct list_head *dbuf_list)
 }
 
 static struct xendispl_req *be_prepare_req(
-	struct xen_drm_front_evtchnl *evtchnl, uint8_t operation)
+		struct xen_drm_front_evtchnl *evtchnl, uint8_t operation)
 {
 	struct xendispl_req *req;
 
 	req = RING_GET_REQUEST(&evtchnl->u.req.ring,
-		evtchnl->u.req.ring.req_prod_pvt);
+			evtchnl->u.req.ring.req_prod_pvt);
 	req->operation = operation;
 	req->id = evtchnl->evt_next_id++;
 	evtchnl->evt_id = req->id;
@@ -118,7 +118,7 @@ static struct xendispl_req *be_prepare_req(
 }
 
 static int be_stream_do_io(struct xen_drm_front_evtchnl *evtchnl,
-	struct xendispl_req *req)
+		struct xendispl_req *req)
 {
 	reinit_completion(&evtchnl->u.req.completion);
 	if (unlikely(evtchnl->state != EVTCHNL_STATE_CONNECTED))
@@ -130,8 +130,7 @@ static int be_stream_do_io(struct xen_drm_front_evtchnl *evtchnl,
 
 static int be_stream_wait_io(struct xen_drm_front_evtchnl *evtchnl)
 {
-	if (wait_for_completion_timeout(
-			&evtchnl->u.req.completion,
+	if (wait_for_completion_timeout(&evtchnl->u.req.completion,
 			msecs_to_jiffies(VDRM_WAIT_BACK_MS)) <= 0)
 		return -ETIMEDOUT;
 
@@ -139,8 +138,8 @@ static int be_stream_wait_io(struct xen_drm_front_evtchnl *evtchnl)
 }
 
 static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
-	uint32_t y, uint32_t width, uint32_t height, uint32_t bpp,
-	uint64_t fb_cookie)
+		uint32_t y, uint32_t width, uint32_t height, uint32_t bpp,
+		uint64_t fb_cookie)
 
 {
 	struct xen_drm_front_evtchnl *evtchnl;
@@ -173,9 +172,9 @@ static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
 }
 
 static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
-	uint64_t dbuf_cookie, uint32_t width, uint32_t height,
-	uint32_t bpp, uint64_t size, struct page **pages,
-	struct sg_table *sgt)
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct page **pages,
+		struct sg_table *sgt)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xen_drm_front_shbuf *shbuf;
@@ -208,7 +207,7 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory =
-		xen_drm_front_shbuf_get_dir_start(shbuf);
+			xen_drm_front_shbuf_get_dir_start(shbuf);
 	req->op.dbuf_create.buffer_sz = size;
 	req->op.dbuf_create.dbuf_cookie = dbuf_cookie;
 	req->op.dbuf_create.width = width;
@@ -239,23 +238,23 @@ fail:
 }
 
 static int be_dbuf_create_from_sgt(struct xen_drm_front_info *front_info,
-	uint64_t dbuf_cookie, uint32_t width, uint32_t height,
-	uint32_t bpp, uint64_t size, struct sg_table *sgt)
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct sg_table *sgt)
 {
 	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
-		bpp, size, NULL, sgt);
+			bpp, size, NULL, sgt);
 }
 
 static int be_dbuf_create_from_pages(struct xen_drm_front_info *front_info,
-	uint64_t dbuf_cookie, uint32_t width, uint32_t height,
-	uint32_t bpp, uint64_t size, struct page **pages)
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct page **pages)
 {
 	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
-		bpp, size, pages, NULL);
+			bpp, size, pages, NULL);
 }
 
 static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
-	uint64_t dbuf_cookie)
+		uint64_t dbuf_cookie)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xendispl_req *req;
@@ -297,8 +296,8 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 }
 
 static int be_fb_attach(struct xen_drm_front_info *front_info,
-	uint64_t dbuf_cookie, uint64_t fb_cookie, uint32_t width,
-	uint32_t height, uint32_t pixel_format)
+		uint64_t dbuf_cookie, uint64_t fb_cookie, uint32_t width,
+		uint32_t height, uint32_t pixel_format)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xen_drm_front_dbuf *buf;
@@ -334,7 +333,7 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 }
 
 static int be_fb_detach(struct xen_drm_front_info *front_info,
-	uint64_t fb_cookie)
+		uint64_t fb_cookie)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xendispl_req *req;
@@ -359,7 +358,7 @@ static int be_fb_detach(struct xen_drm_front_info *front_info,
 }
 
 static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
-	uint64_t fb_cookie)
+		uint64_t fb_cookie)
 {
 	struct xen_drm_front_evtchnl *evtchnl;
 	struct xendispl_req *req;
@@ -463,7 +462,7 @@ static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
 	xen_drm_front_platform_info.data = &front_info->cfg;
 	xen_drm_front_platform_info.size_data = sizeof(front_info->cfg);
 	front_info->drm_pdev = platform_device_register_full(
-		&xen_drm_front_platform_info);
+			&xen_drm_front_platform_info);
 	if (IS_ERR(front_info->drm_pdev)) {
 		front_info->drm_pdev = NULL;
 		goto fail;
@@ -531,13 +530,14 @@ static void be_on_disconnected(struct xen_drm_front_info *front_info)
 }
 
 static void be_on_changed(struct xenbus_device *xb_dev,
-	enum xenbus_state backend_state)
+		enum xenbus_state backend_state)
 {
 	struct xen_drm_front_info *front_info = dev_get_drvdata(&xb_dev->dev);
 	int ret;
 
 	DRM_DEBUG("Backend state is %s, front is %s\n",
-		xenbus_strstate(backend_state), xenbus_strstate(xb_dev->state));
+			xenbus_strstate(backend_state),
+			xenbus_strstate(xb_dev->state));
 
 	switch (backend_state) {
 	case XenbusStateReconfiguring:
@@ -574,7 +574,7 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 		ret = be_on_connected(front_info);
 		if (ret < 0) {
 			xenbus_dev_fatal(xb_dev, ret,
-				"initializing DRM driver");
+					"initializing DRM driver");
 			break;
 		}
 
@@ -601,12 +601,13 @@ static void be_on_changed(struct xenbus_device *xb_dev,
 }
 
 static int xen_drv_probe(struct xenbus_device *xb_dev,
-	const struct xenbus_device_id *id)
+		const struct xenbus_device_id *id)
 {
 	struct xen_drm_front_info *front_info;
 	int ret;
 
-	front_info = devm_kzalloc(&xb_dev->dev, sizeof(*front_info), GFP_KERNEL);
+	front_info = devm_kzalloc(&xb_dev->dev,
+			sizeof(*front_info), GFP_KERNEL);
 	if (!front_info) {
 		ret = -ENOMEM;
 		goto fail;
@@ -644,7 +645,8 @@ static int xen_drv_remove(struct xenbus_device *dev)
 	 * Workaround: read backend's state manually and wait with time-out.
 	 */
 	while ((xenbus_read_unsigned(front_info->xb_dev->otherend,
-		"state", XenbusStateUnknown) != XenbusStateInitWait) && to--) {
+			"state", XenbusStateUnknown) != XenbusStateInitWait) &&
+			to--) {
 		msleep(10);
 	}
 
@@ -673,7 +675,7 @@ static struct xenbus_driver xen_driver = {
 
 static int __init xen_drv_init(void)
 {
-        /* at the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
+	/* at the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
 	BUILD_BUG_ON(XEN_PAGE_SIZE != PAGE_SIZE);
 
 	if (!xen_domain())

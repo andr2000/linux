@@ -50,19 +50,21 @@ struct xen_drm_front_drm_info {
 	struct xen_drm_front_drm_pipeline pipeline[XEN_DRM_FRONT_MAX_CRTCS];
 };
 
-static inline uint64_t xen_drm_front_fb_to_cookie(struct drm_framebuffer *fb)
+static inline uint64_t xen_drm_front_fb_to_cookie(
+		struct drm_framebuffer *fb)
 {
 	return (uint64_t)fb;
 }
 
 static inline uint64_t xen_drm_front_dbuf_to_cookie(
-	struct drm_gem_object *gem_obj)
+		struct drm_gem_object *gem_obj)
 {
 	return (uint64_t)gem_obj;
 }
 
 int xen_drm_front_drv_probe(struct platform_device *pdev,
-	struct xen_drm_front_ops *front_ops);
+		struct xen_drm_front_ops *front_ops);
+
 int xen_drm_front_drv_remove(struct platform_device *pdev);
 
 bool xen_drm_front_drv_is_used(struct platform_device *pdev);

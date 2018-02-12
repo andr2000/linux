@@ -33,6 +33,6 @@ struct xen_drm_front_drm_pipeline;
 const uint32_t *xen_drm_front_conn_get_formats(int *format_count);
 
 int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
-	struct drm_connector *connector);
+		struct drm_connector *connector);
 
 #endif /* __XEN_DRM_FRONT_CONN_H_ */

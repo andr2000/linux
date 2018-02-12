@@ -40,6 +40,6 @@ struct xen_drm_front_cfg {
 };
 
 int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_cfg *cfg);
+		struct xen_drm_front_cfg *cfg);
 
 #endif /* __XEN_DRM_FRONT_CFG_H_ */

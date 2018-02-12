@@ -85,13 +85,13 @@ struct xen_drv_info {
 };
 
 static inline struct xen_gem_object *to_xen_gem_obj(
-	struct drm_gem_object *gem_obj)
+		struct drm_gem_object *gem_obj)
 {
 	return container_of(gem_obj, struct xen_gem_object, base);
 }
 
 static struct xen_wait_obj *xen_wait_obj_new(struct xen_drv_info *drv_info,
-	struct xen_gem_object *xen_obj)
+		struct xen_gem_object *xen_obj)
 {
 	struct xen_wait_obj *wait_obj;
 
@@ -108,7 +108,7 @@ static struct xen_wait_obj *xen_wait_obj_new(struct xen_drv_info *drv_info,
 }
 
 static void xen_wait_obj_free(struct xen_drv_info *drv_info,
-	struct xen_wait_obj *wait_obj)
+		struct xen_wait_obj *wait_obj)
 {
 	struct xen_wait_obj *cur_wait_obj, *q;
 
@@ -138,7 +138,7 @@ static void xen_wait_obj_check_pending(struct xen_drv_info *drv_info)
 }
 
 static int xen_wait_obj_wait(struct xen_wait_obj *wait_obj,
-	uint32_t wait_to_ms)
+		uint32_t wait_to_ms)
 {
 	if (wait_for_completion_timeout(&wait_obj->completion,
 			msecs_to_jiffies(wait_to_ms)) <= 0)
@@ -148,7 +148,7 @@ static int xen_wait_obj_wait(struct xen_wait_obj *wait_obj,
 }
 
 static void xen_wait_obj_signal(struct xen_drv_info *drv_info,
-	struct xen_gem_object *xen_obj)
+		struct xen_gem_object *xen_obj)
 {
 	struct xen_wait_obj *wait_obj, *q;
 
@@ -163,7 +163,7 @@ static void xen_wait_obj_signal(struct xen_drv_info *drv_info,
 }
 
 static int xen_wait_obj_handle_new(struct xen_drv_info *drv_info,
-	struct xen_gem_object *xen_obj)
+		struct xen_gem_object *xen_obj)
 {
 	int ret;
 
@@ -176,7 +176,7 @@ static int xen_wait_obj_handle_new(struct xen_drv_info *drv_info,
 }
 
 static void xen_wait_obj_handle_free(struct xen_drv_info *drv_info,
-	struct xen_gem_object *xen_obj)
+		struct xen_gem_object *xen_obj)
 {
 	spin_lock(&drv_info->idr_lock);
 	idr_remove(&drv_info->idr, xen_obj->wait_handle);
@@ -184,7 +184,7 @@ static void xen_wait_obj_handle_free(struct xen_drv_info *drv_info,
 }
 
 static struct xen_gem_object *xen_get_obj_by_wait_handle(
-	struct xen_drv_info *drv_info, int wait_handle)
+		struct xen_drv_info *drv_info, int wait_handle)
 {
 	struct xen_gem_object *xen_obj;
 
@@ -198,7 +198,7 @@ static struct xen_gem_object *xen_get_obj_by_wait_handle(
 }
 
 #define xen_page_to_vaddr(page) \
-	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
+		((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
 
 static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 {
@@ -211,14 +211,14 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 	}
 
 	xen_obj->pages = kcalloc(xen_obj->num_pages, sizeof(*xen_obj->pages),
-		GFP_KERNEL);
+			GFP_KERNEL);
 	if (!xen_obj->pages) {
 		ret = -ENOMEM;
 		goto fail;
 	}
 
 	xen_obj->map_handles = kcalloc(xen_obj->num_pages,
-		sizeof(*xen_obj->map_handles), GFP_KERNEL);
+			sizeof(*xen_obj->map_handles), GFP_KERNEL);
 	if (!xen_obj->map_handles) {
 		ret = -ENOMEM;
 		goto fail;
@@ -231,7 +231,7 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 	}
 
 	ret = xen_drm_ballooned_pages_alloc(dev, &xen_obj->balloon,
-		xen_obj->num_pages, xen_obj->pages);
+			xen_obj->num_pages, xen_obj->pages);
 	if (ret < 0) {
 		DRM_ERROR("Cannot allocate %d ballooned pages: %d\n",
 			xen_obj->num_pages, ret);
@@ -244,14 +244,14 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_map_op(&map_ops[i], addr,
 #if defined(CONFIG_X86)
-			GNTMAP_host_map | GNTMAP_device_map,
+				GNTMAP_host_map | GNTMAP_device_map,
 #else
-			GNTMAP_host_map,
+				GNTMAP_host_map,
 #endif
-			xen_obj->grefs[i], xen_obj->otherend_id);
+				xen_obj->grefs[i], xen_obj->otherend_id);
 	}
 	ret = gnttab_map_refs(map_ops, NULL, xen_obj->pages,
-		xen_obj->num_pages);
+			xen_obj->num_pages);
 
 	BUG_ON(ret);
 
@@ -259,7 +259,8 @@ static int xen_from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
 		xen_obj->map_handles[i] = map_ops[i].handle;
 		if (unlikely(map_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to map page %d with ref %d: %d\n",
-				i, xen_obj->grefs[i], map_ops[i].status);
+					i, xen_obj->grefs[i],
+					map_ops[i].status);
 	}
 	kfree(map_ops);
 	return 0;
@@ -299,25 +300,26 @@ static int xen_from_refs_unmap(struct device *dev,
 		addr = xen_page_to_vaddr(xen_obj->pages[i]);
 		gnttab_set_unmap_op(&unmap_ops[i], addr,
 #if defined(CONFIG_X86)
-			GNTMAP_host_map | GNTMAP_device_map,
+				GNTMAP_host_map | GNTMAP_device_map,
 #else
-			GNTMAP_host_map,
+				GNTMAP_host_map,
 #endif
-			xen_obj->map_handles[i]);
+				xen_obj->map_handles[i]);
 		unmap_ops[i].dev_bus_addr = __pfn_to_phys(__pfn_to_mfn(
-			page_to_pfn(xen_obj->pages[i])));
+				page_to_pfn(xen_obj->pages[i])));
 	}
 
 	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, xen_obj->pages,
-		xen_obj->num_pages));
+			xen_obj->num_pages));
 
 	for (i = 0; i < xen_obj->num_pages; i++) {
 		if (unlikely(unmap_ops[i].status != GNTST_okay))
 			DRM_ERROR("Failed to unmap page %d with ref %d: %d\n",
-				i, xen_obj->grefs[i], unmap_ops[i].status);
+					i, xen_obj->grefs[i],
+					unmap_ops[i].status);
 	}
 	xen_drm_ballooned_pages_free(dev, &xen_obj->balloon,
-		xen_obj->num_pages, xen_obj->pages);
+			xen_obj->num_pages, xen_obj->pages);
 	kfree(xen_obj->pages);
 	xen_obj->pages = NULL;
 	kfree(xen_obj->map_handles);
@@ -336,7 +338,7 @@ static void xen_to_refs_release_refs(struct xen_gem_object *xen_obj)
 		for (i = 0; i < xen_obj->num_pages; i++)
 			if (xen_obj->grefs[i] != GRANT_INVALID_REF)
 				gnttab_end_foreign_access(xen_obj->grefs[i],
-					0, 0UL);
+						0, 0UL);
 	kfree(xen_obj->grefs);
 	xen_obj->grefs = NULL;
 	sg_free_table(xen_obj->sgt);
@@ -350,7 +352,7 @@ static int xen_to_refs_grant_refs(struct xen_gem_object *xen_obj)
 	struct sg_page_iter sg_iter;
 
 	ret = gnttab_alloc_grant_references(xen_obj->num_pages,
-		&priv_gref_head);
+			&priv_gref_head);
 	if (ret < 0) {
 		DRM_ERROR("Cannot allocate grant references\n");
 		return ret;
@@ -367,7 +369,7 @@ static int xen_to_refs_grant_refs(struct xen_gem_object *xen_obj)
 			return cur_ref;
 
 		gnttab_grant_foreign_access_ref(cur_ref,
-			xen_obj->otherend_id, xen_page_to_gfn(page), 0);
+				xen_obj->otherend_id, xen_page_to_gfn(page), 0);
 		xen_obj->grefs[j++] = cur_ref;
 		num_pages--;
 	}
@@ -379,7 +381,7 @@ static int xen_to_refs_grant_refs(struct xen_gem_object *xen_obj)
 }
 
 static int xen_gem_create_with_handle(struct xen_gem_object *xen_obj,
-	struct drm_file *file_priv, struct drm_device *dev, int size)
+		struct drm_file *file_priv, struct drm_device *dev, int size)
 {
 	struct drm_gem_object *gem_obj;
 	int ret;
@@ -393,7 +395,7 @@ static int xen_gem_create_with_handle(struct xen_gem_object *xen_obj,
 }
 
 static int xen_gem_create_obj(struct xen_gem_object *xen_obj,
-	struct drm_device *dev, struct drm_file *file_priv, int size)
+		struct drm_device *dev, struct drm_file *file_priv, int size)
 {
 	struct drm_gem_object *gem_obj;
 	int ret;
@@ -405,7 +407,7 @@ static int xen_gem_create_obj(struct xen_gem_object *xen_obj,
 	gem_obj = drm_gem_object_lookup(file_priv, xen_obj->dumb_handle);
 	if (!gem_obj) {
 		DRM_ERROR("Lookup for handle %d failed\n",
-			xen_obj->dumb_handle);
+				xen_obj->dumb_handle);
 		ret = -EINVAL;
 		goto fail_destroy;
 	}
@@ -422,7 +424,7 @@ fail:
 }
 
 static int xen_gem_init_obj(struct xen_gem_object *xen_obj,
-	struct drm_device *dev, int size)
+		struct drm_device *dev, int size)
 {
 	struct drm_gem_object *gem_obj = &xen_obj->base;
 	int ret;
@@ -443,7 +445,7 @@ static int xen_gem_init_obj(struct xen_gem_object *xen_obj,
 static void xen_obj_release(struct kref *kref)
 {
 	struct xen_gem_object *xen_obj =
-		container_of(kref, struct xen_gem_object, refcount);
+			container_of(kref, struct xen_gem_object, refcount);
 	struct xen_drv_info *drv_info = xen_obj->base.dev->dev_private;
 
 	xen_wait_obj_signal(drv_info, xen_obj);
@@ -460,7 +462,7 @@ static void xen_gem_free_object(struct drm_gem_object *gem_obj)
 		if (xen_obj->sgt) {
 			if (xen_obj->base.import_attach)
 				drm_prime_gem_destroy(&xen_obj->base,
-					xen_obj->sgt);
+						xen_obj->sgt);
 			xen_to_refs_release_refs(xen_obj);
 		} else {
 			xen_from_refs_unmap(gem_obj->dev->dev, xen_obj);
@@ -508,7 +510,7 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 		 */
 		for_each_sg(sgt->sgl, sg, xen_obj->num_pages, i) {
 			sg_set_page(sg, xen_obj->pages[i],
-				PAGE_SIZE, 0);
+					PAGE_SIZE, 0);
 		}
 
 	} else {
@@ -523,7 +525,7 @@ static struct sg_table *xen_gem_prime_get_sg_table(
 }
 
 struct drm_gem_object *xen_gem_prime_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt)
+		struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
 	struct xen_gem_object *xen_obj;
 	int ret;
@@ -540,7 +542,7 @@ struct drm_gem_object *xen_gem_prime_import_sg_table(struct drm_device *dev,
 	xen_obj->sgt = sgt;
 	xen_obj->num_pages = DIV_ROUND_UP(attach->dmabuf->size, PAGE_SIZE);
 	DRM_DEBUG("Imported buffer of size %zu with nents %u\n",
-		attach->dmabuf->size, sgt->nents);
+			attach->dmabuf->size, sgt->nents);
 	return &xen_obj->base;
 
 fail:
@@ -549,8 +551,8 @@ fail:
 }
 
 static int xen_do_ioctl_from_refs(struct drm_device *dev,
-	struct drm_xen_zcopy_dumb_from_refs *req,
-	struct drm_file *file_priv)
+		struct drm_xen_zcopy_dumb_from_refs *req,
+		struct drm_file *file_priv)
 {
 	struct xen_drv_info *drv_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
@@ -564,7 +566,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 	xen_obj->num_pages = req->num_grefs;
 	xen_obj->otherend_id = req->otherend_id;
 	xen_obj->grefs = kcalloc(xen_obj->num_pages, sizeof(grant_ref_t),
-		GFP_KERNEL);
+			GFP_KERNEL);
 	if (!xen_obj->grefs) {
 		ret = -ENOMEM;
 		goto fail;
@@ -581,7 +583,7 @@ static int xen_do_ioctl_from_refs(struct drm_device *dev,
 		goto fail;
 
 	ret = xen_gem_create_obj(xen_obj, dev, file_priv,
-		round_up(req->dumb.size, PAGE_SIZE));
+			round_up(req->dumb.size, PAGE_SIZE));
 	if (ret < 0)
 		goto fail;
 
@@ -608,10 +610,10 @@ fail:
 }
 
 static int xen_ioctl_from_refs(struct drm_device *dev,
-	void *data, struct drm_file *file_priv)
+		void *data, struct drm_file *file_priv)
 {
 	struct drm_xen_zcopy_dumb_from_refs *req =
-		(struct drm_xen_zcopy_dumb_from_refs *)data;
+			(struct drm_xen_zcopy_dumb_from_refs *)data;
 	struct drm_mode_create_dumb *args = &req->dumb;
 	uint32_t cpp, stride, size;
 
@@ -638,7 +640,7 @@ static int xen_ioctl_from_refs(struct drm_device *dev,
 	args->handle = 0;
 	if (req->num_grefs < DIV_ROUND_UP(args->size, PAGE_SIZE)) {
 		DRM_ERROR("Provided %d pages, need %d\n", req->num_grefs,
-			(int)DIV_ROUND_UP(args->size, PAGE_SIZE));
+				(int)DIV_ROUND_UP(args->size, PAGE_SIZE));
 		return -EINVAL;
 	}
 
@@ -646,12 +648,12 @@ static int xen_ioctl_from_refs(struct drm_device *dev,
 }
 
 static int xen_ioctl_to_refs(struct drm_device *dev,
-	void *data, struct drm_file *file_priv)
+		void *data, struct drm_file *file_priv)
 {
 	struct xen_gem_object *xen_obj;
 	struct drm_gem_object *gem_obj;
 	struct drm_xen_zcopy_dumb_to_refs *req =
-		(struct drm_xen_zcopy_dumb_to_refs *)data;
+			(struct drm_xen_zcopy_dumb_to_refs *)data;
 	int ret;
 
 	if (!req->num_grefs || !req->grefs)
@@ -668,13 +670,13 @@ static int xen_ioctl_to_refs(struct drm_device *dev,
 
 	if (xen_obj->num_pages != req->num_grefs) {
 		DRM_ERROR("Provided %d pages, need %d\n", req->num_grefs,
-			xen_obj->num_pages);
+				xen_obj->num_pages);
 		return -EINVAL;
 	}
 
 	xen_obj->otherend_id = req->otherend_id;
 	xen_obj->grefs = kcalloc(xen_obj->num_pages, sizeof(grant_ref_t),
-		GFP_KERNEL);
+			GFP_KERNEL);
 	if (!xen_obj->grefs) {
 		ret = -ENOMEM;
 		goto fail;
@@ -698,10 +700,10 @@ fail:
 }
 
 static int xen_ioctl_wait_free(struct drm_device *dev,
-	void *data, struct drm_file *file_priv)
+		void *data, struct drm_file *file_priv)
 {
 	struct drm_xen_zcopy_dumb_wait_free *req =
-		(struct drm_xen_zcopy_dumb_wait_free *)data;
+			(struct drm_xen_zcopy_dumb_wait_free *)data;
 	struct xen_drv_info *drv_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
 	struct xen_wait_obj *wait_obj;
@@ -744,14 +746,14 @@ static void xen_lastclose(struct drm_device *dev)
 
 static const struct drm_ioctl_desc xen_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_FROM_REFS,
-		xen_ioctl_from_refs,
-		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
+			xen_ioctl_from_refs,
+			DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_TO_REFS,
-		xen_ioctl_to_refs,
-		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
+			xen_ioctl_to_refs,
+			DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 	DRM_IOCTL_DEF_DRV(XEN_ZCOPY_DUMB_WAIT_FREE,
-		xen_ioctl_wait_free,
-		DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
+			xen_ioctl_wait_free,
+			DRM_AUTH | DRM_CONTROL_ALLOW | DRM_UNLOCKED),
 };
 
 static const struct file_operations xen_fops = {
@@ -822,9 +824,9 @@ static int xen_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, drv_info);
 
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
-		xen_driver.name, xen_driver.major,
-		xen_driver.minor, xen_driver.patchlevel,
-		xen_driver.date, drv_info->drm_dev->primary->index);
+			xen_driver.name, xen_driver.major,
+			xen_driver.minor, xen_driver.patchlevel,
+			xen_driver.date, drv_info->drm_dev->primary->index);
 	return 0;
 
 fail:
@@ -857,13 +859,13 @@ static int __init xen_init(void)
 	xen_pdev = platform_device_register_full(&xen_ddrv_platform_info);
 	if (!xen_pdev) {
 		DRM_ERROR("Failed to register " XENDRM_ZCOPY_DRIVER_NAME \
-			" device\n");
+				" device\n");
 		return -ENODEV;
 	}
 	ret = platform_driver_register(&xen_ddrv_info);
 	if (ret != 0) {
 		DRM_ERROR("Failed to register " XENDRM_ZCOPY_DRIVER_NAME \
-			" driver: %d\n", ret);
+				" driver: %d\n", ret);
 		platform_device_unregister(xen_pdev);
 		return ret;
 	}

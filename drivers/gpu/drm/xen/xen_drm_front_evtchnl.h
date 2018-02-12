@@ -75,14 +75,14 @@ struct xen_drm_front_evtchnl_pair {
 };
 
 int xen_drm_front_evtchnl_create_all(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_ops *front_ops);
+		struct xen_drm_front_ops *front_ops);
 
 int xen_drm_front_evtchnl_publish_all(struct xen_drm_front_info *front_info);
 
 void xen_drm_front_evtchnl_flush(struct xen_drm_front_evtchnl *evtchnl);
 
 void xen_drm_front_evtchnl_set_state(struct xen_drm_front_info *front_info,
-	enum xen_drm_front_evtchnl_state state);
+		enum xen_drm_front_evtchnl_state state);
 
 void xen_drm_front_evtchnl_free_all(struct xen_drm_front_info *front_info);
 

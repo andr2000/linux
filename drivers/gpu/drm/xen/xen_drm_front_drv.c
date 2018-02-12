@@ -27,18 +27,18 @@
 #include "xen_drm_front_gem.h"
 #include "xen_drm_front_kms.h"
 
-static int dumb_create(struct drm_file *file_priv,
-	struct drm_device *dev, struct drm_mode_create_dumb *args)
+static int dumb_create(struct drm_file *filp,
+		struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct drm_gem_object *obj;
 	int ret;
 
-	ret = drm_info->gem_ops->dumb_create(file_priv, dev, args);
+	ret = drm_info->gem_ops->dumb_create(filp, dev, args);
 	if (ret)
 		goto fail;
 
-	obj = drm_gem_object_lookup(file_priv, args->handle);
+	obj = drm_gem_object_lookup(filp, args->handle);
 	if (!obj) {
 		ret = -ENOENT;
 		goto fail_destroy;
@@ -47,7 +47,7 @@ static int dumb_create(struct drm_file *file_priv,
 	drm_gem_object_unreference_unlocked(obj);
 
 	/*
-	 * in case of CONFIG_DRM_XEN_FRONTEND_CMA gem_obj is constructed
+	 * In case of CONFIG_DRM_XEN_FRONTEND_CMA gem_obj is constructed
 	 * via DRM CMA helpers and doesn't have ->pages allocated
 	 * (xendrm_gem_get_pages will return NULL), but instead can provide
 	 * sg table
@@ -72,7 +72,7 @@ static int dumb_create(struct drm_file *file_priv,
 	return 0;
 
 fail_destroy:
-	drm_gem_dumb_destroy(file_priv, dev, args->handle);
+	drm_gem_dumb_destroy(filp, dev, args->handle);
 fail:
 	DRM_ERROR("Failed to create dumb buffer: %d\n", ret);
 	return ret;
@@ -83,12 +83,12 @@ static void free_object(struct drm_gem_object *obj)
 	struct xen_drm_front_drm_info *drm_info = obj->dev->dev_private;
 
 	drm_info->front_ops->dbuf_destroy(drm_info->front_info,
-		xen_drm_front_dbuf_to_cookie(obj));
+			xen_drm_front_dbuf_to_cookie(obj));
 	drm_info->gem_ops->free_object_unlocked(obj);
 }
 
 static void on_page_flip(struct platform_device *pdev,
-	int conn_idx, uint64_t fb_cookie)
+		int conn_idx, uint64_t fb_cookie)
 {
 	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
 
@@ -96,7 +96,7 @@ static void on_page_flip(struct platform_device *pdev,
 		return;
 
 	xen_drm_front_kms_on_page_flip_done(&drm_info->pipeline[conn_idx],
-		fb_cookie);
+			fb_cookie);
 }
 
 static void lastclose(struct drm_device *dev)
@@ -124,7 +124,7 @@ static struct sg_table *prime_get_sg_table(struct drm_gem_object *obj)
 }
 
 static struct drm_gem_object *prime_import_sg_table(struct drm_device *dev,
-	struct dma_buf_attachment *attach, struct sg_table *sgt)
+		struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
 	struct xen_drm_front_drm_info *drm_info;
 
@@ -200,7 +200,7 @@ struct drm_driver xen_drm_driver = {
 };
 
 int xen_drm_front_drv_probe(struct platform_device *pdev,
-	struct xen_drm_front_ops *front_ops)
+		struct xen_drm_front_ops *front_ops)
 {
 	struct xen_drm_front_cfg *cfg = dev_get_platdata(&pdev->dev);
 	struct xen_drm_front_drm_info *drm_info;
@@ -247,9 +247,9 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 		goto fail_register;
 
 	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
-		xen_drm_driver.name, xen_drm_driver.major,
-		xen_drm_driver.minor, xen_drm_driver.patchlevel,
-		xen_drm_driver.date, dev->primary->index);
+			xen_drm_driver.name, xen_drm_driver.major,
+			xen_drm_driver.minor, xen_drm_driver.patchlevel,
+			xen_drm_driver.date, dev->primary->index);
 
 	return 0;
 

@@ -27,13 +27,13 @@
 #include "xen_drm_front_cfg.h"
 
 static int cfg_connector(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_cfg_connector *connector,
-	const char *path, int index)
+		struct xen_drm_front_cfg_connector *connector,
+		const char *path, int index)
 {
 	char *connector_path;
 
 	connector_path = devm_kasprintf(&front_info->xb_dev->dev,
-		GFP_KERNEL, "%s/%d", path, index);
+			GFP_KERNEL, "%s/%d", path, index);
 	if (!connector_path)
 		return -ENOMEM;
 
@@ -48,12 +48,12 @@ static int cfg_connector(struct xen_drm_front_info *front_info,
 	}
 
 	DRM_INFO("Connector %s: resolution %dx%d\n",
-		connector_path, connector->width, connector->height);
+			connector_path, connector->width, connector->height);
 	return 0;
 }
 
 int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
-	struct xen_drm_front_cfg *cfg)
+		struct xen_drm_front_cfg *cfg)
 {
 	struct xenbus_device *xb_dev = front_info->xb_dev;
 	int ret, i;
@@ -67,7 +67,7 @@ int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
 	cfg->num_connectors = 0;
 	for (i = 0; i < ARRAY_SIZE(cfg->connectors); i++) {
 		ret = cfg_connector(front_info,
-			&cfg->connectors[i], xb_dev->nodename, i);
+				&cfg->connectors[i], xb_dev->nodename, i);
 		if (ret < 0)
 			break;
 		cfg->num_connectors++;
@@ -75,7 +75,7 @@ int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
 
 	if (!cfg->num_connectors) {
 		DRM_ERROR("No connector(s) configured at %s\n",
-			xb_dev->nodename);
+				xb_dev->nodename);
 		return -ENODEV;
 	}
 

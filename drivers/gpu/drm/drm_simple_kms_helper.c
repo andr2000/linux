@@ -88,15 +88,6 @@ static int drm_simple_kms_plane_atomic_check(struct drm_plane *plane,
 	pipe = container_of(plane, struct drm_simple_display_pipe, plane);
 	crtc_state = drm_atomic_get_existing_crtc_state(plane_state->state,
 							&pipe->crtc);
-	if (crtc_state->enable != !!plane_state->crtc)
-		return -EINVAL; /* plane must match crtc enable state */
-
-	if (!crtc_state->enable)
-		return 0; /* nothing to check when disabling or disabled */
-
-	clip.x2 = crtc_state->adjusted_mode.hdisplay;
-	clip.y2 = crtc_state->adjusted_mode.vdisplay;
-
 	ret = drm_plane_helper_check_state(plane_state, &clip,
 					   DRM_PLANE_HELPER_NO_SCALING,
 					   DRM_PLANE_HELPER_NO_SCALING,
@@ -105,7 +96,10 @@ static int drm_simple_kms_plane_atomic_check(struct drm_plane *plane,
 		return ret;
 
 	if (!plane_state->visible)
-		return -EINVAL;
+		return 0;
+
+	clip.x2 = crtc_state->adjusted_mode.hdisplay;
+	clip.y2 = crtc_state->adjusted_mode.vdisplay;
 
 	if (!pipe->funcs || !pipe->funcs->check)
 		return 0;

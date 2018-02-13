@@ -87,7 +87,7 @@ static void free_object(struct drm_gem_object *obj)
 	drm_info->gem_ops->free_object_unlocked(obj);
 }
 
-static void on_page_flip(struct platform_device *pdev,
+static void on_frame_done(struct platform_device *pdev,
 		int conn_idx, uint64_t fb_cookie)
 {
 	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
@@ -95,7 +95,7 @@ static void on_page_flip(struct platform_device *pdev,
 	if (unlikely(conn_idx >= drm_info->cfg->num_connectors))
 		return;
 
-	xen_drm_front_kms_on_page_flip_done(&drm_info->pipeline[conn_idx],
+	xen_drm_front_kms_on_frame_done(&drm_info->pipeline[conn_idx],
 			fb_cookie);
 }
 
@@ -214,7 +214,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 		return -ENOMEM;
 
 	drm_info->front_ops = front_ops;
-	drm_info->front_ops->on_page_flip = on_page_flip;
+	drm_info->front_ops->on_frame_done = on_frame_done;
 	drm_info->gem_ops = xen_drm_front_gem_get_ops();
 	drm_info->front_info = cfg->front_info;
 

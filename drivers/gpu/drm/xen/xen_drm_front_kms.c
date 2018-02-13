@@ -137,7 +137,7 @@ static void display_disable(struct drm_simple_display_pipe *pipe)
 	drm_crtc_vblank_off(crtc);
 }
 
-void xen_drm_front_kms_on_page_flip_done(
+void xen_drm_front_kms_on_frame_done(
 		struct xen_drm_front_drm_pipeline *pipeline,
 		uint64_t fb_cookie)
 {

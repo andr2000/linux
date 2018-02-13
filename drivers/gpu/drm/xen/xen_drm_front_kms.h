@@ -23,7 +23,7 @@
 
 int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info);
 
-void xen_drm_front_kms_on_page_flip_done(
+void xen_drm_front_kms_on_frame_done(
 		struct xen_drm_front_drm_pipeline *pipeline,
 		uint64_t fb_cookie);
 

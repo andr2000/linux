@@ -114,7 +114,7 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENDISPL_EVT_PG_FLIP:
-			evtchnl->u.evt.front_ops->on_page_flip(
+			evtchnl->u.evt.front_ops->on_frame_done(
 				front_info->drm_pdev, evtchnl->index,
 				event->op.pg_flip.fb_cookie);
 			break;

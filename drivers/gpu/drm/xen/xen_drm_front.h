@@ -52,7 +52,7 @@ struct xen_drm_front_ops {
 	int (*page_flip)(struct xen_drm_front_info *front_info,
 			int conn_idx, uint64_t fb_cookie);
 	/* CAUTION! this is called with a spin_lock held! */
-	void (*on_page_flip)(struct platform_device *pdev,
+	void (*on_frame_done)(struct platform_device *pdev,
 			int conn_idx, uint64_t fb_cookie);
 	void (*drm_last_close)(struct xen_drm_front_info *front_info);
 };

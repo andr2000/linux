@@ -153,6 +153,8 @@ static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_SET_CONFIG);
 	req->op.set_config.x = x;
@@ -165,10 +167,11 @@ static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
 
-	if (ret < 0)
-		return ret;
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
 
-	return be_stream_wait_io(evtchnl);
+	mutex_unlock(&front_info->req_io_lock);
+	return ret;
 }
 
 static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
@@ -204,6 +207,8 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 		return ret;
 	}
 
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_CREATE);
 	req->op.dbuf_create.gref_directory =
@@ -230,9 +235,11 @@ static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
 	if (ret < 0)
 		goto fail;
 
+	mutex_unlock(&front_info->req_io_lock);
 	return 0;
 
 fail:
+	mutex_unlock(&front_info->req_io_lock);
 	dbuf_free(&front_info->dbuf_list, dbuf_cookie);
 	return ret;
 }
@@ -275,6 +282,8 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	if (be_alloc)
 		dbuf_free(&front_info->dbuf_list, dbuf_cookie);
 
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_DBUF_DESTROY);
 	req->op.dbuf_destroy.dbuf_cookie = dbuf_cookie;
@@ -292,6 +301,7 @@ static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
 	if (!be_alloc)
 		dbuf_free(&front_info->dbuf_list, dbuf_cookie);
 
+	mutex_unlock(&front_info->req_io_lock);
 	return ret;
 }
 
@@ -315,6 +325,8 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 
 	buf->fb_cookie = fb_cookie;
 
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_FB_ATTACH);
 	req->op.fb_attach.dbuf_cookie = dbuf_cookie;
@@ -326,10 +338,11 @@ static int be_fb_attach(struct xen_drm_front_info *front_info,
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
 
-	if (ret < 0)
-		return ret;
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
 
-	return be_stream_wait_io(evtchnl);
+	mutex_unlock(&front_info->req_io_lock);
+	return ret;
 }
 
 static int be_fb_detach(struct xen_drm_front_info *front_info,
@@ -344,6 +357,8 @@ static int be_fb_detach(struct xen_drm_front_info *front_info,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_FB_DETACH);
 	req->op.fb_detach.fb_cookie = fb_cookie;
@@ -351,10 +366,11 @@ static int be_fb_detach(struct xen_drm_front_info *front_info,
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
 
-	if (ret < 0)
-		return ret;
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
 
-	return be_stream_wait_io(evtchnl);
+	mutex_unlock(&front_info->req_io_lock);
+	return ret;
 }
 
 static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
@@ -370,6 +386,9 @@ static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
 
 	dbuf_flush_fb(&front_info->dbuf_list, fb_cookie);
 	evtchnl = &front_info->evt_pairs[conn_idx].req;
+
+	mutex_lock(&front_info->req_io_lock);
+
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENDISPL_OP_PG_FLIP);
 	req->op.pg_flip.fb_cookie = fb_cookie;
@@ -377,10 +396,11 @@ static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
 
-	if (ret < 0)
-		return ret;
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
 
-	return be_stream_wait_io(evtchnl);
+	mutex_unlock(&front_info->req_io_lock);
+	return ret;
 }
 
 static void xen_drm_drv_unload(struct xen_drm_front_info *front_info)
@@ -616,6 +636,7 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 	xenbus_switch_state(xb_dev, XenbusStateInitialising);
 	front_info->xb_dev = xb_dev;
 	spin_lock_init(&front_info->io_lock);
+	mutex_init(&front_info->req_io_lock);
 	INIT_LIST_HEAD(&front_info->dbuf_list);
 	front_info->drm_pdrv_registered = false;
 	dev_set_drvdata(&xb_dev->dev, front_info);

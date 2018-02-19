@@ -135,6 +135,15 @@ static void display_disable(struct drm_simple_display_pipe *pipe)
 
 	display_set_config(pipe, NULL);
 	drm_crtc_vblank_off(crtc);
+	/* final check for stalled events */
+	if (crtc->state->event && !crtc->state->active) {
+		unsigned long flags;
+
+		spin_lock_irqsave(&crtc->dev->event_lock, flags);
+		drm_crtc_send_vblank_event(crtc, crtc->state->event);
+		spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
+		crtc->state->event = NULL;
+	}
 }
 
 void xen_drm_front_kms_on_frame_done(

@@ -10,6 +10,8 @@
 
 #include <drm/drmP.h>
 
+#include <linux/of_device.h>
+
 #include <xen/platform_pci.h>
 #include <xen/xen.h>
 #include <xen/xenbus.h>
@@ -17,15 +19,161 @@
 #include <xen/interface/io/displif.h>
 
 #include "xen_drm_front.h"
+#include "xen_drm_front_drv.h"
 #include "xen_drm_front_evtchnl.h"
 #include "xen_drm_front_shbuf.h"
 
+static int be_mode_set(struct xen_drm_front_drm_pipeline *pipeline, uint32_t x,
+		uint32_t y, uint32_t width, uint32_t height, uint32_t bpp,
+		uint64_t fb_cookie)
+
+{
+	return 0;
+}
+
+static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct page **pages,
+		struct sg_table *sgt)
+{
+	return 0;
+}
+
+static int be_dbuf_create_from_sgt(struct xen_drm_front_info *front_info,
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct sg_table *sgt)
+{
+	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
+			bpp, size, NULL, sgt);
+}
+
+static int be_dbuf_create_from_pages(struct xen_drm_front_info *front_info,
+		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
+		uint32_t bpp, uint64_t size, struct page **pages)
+{
+	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
+			bpp, size, pages, NULL);
+}
+
+static int be_dbuf_destroy(struct xen_drm_front_info *front_info,
+		uint64_t dbuf_cookie)
+{
+	return 0;
+}
+
+static int be_fb_attach(struct xen_drm_front_info *front_info,
+		uint64_t dbuf_cookie, uint64_t fb_cookie, uint32_t width,
+		uint32_t height, uint32_t pixel_format)
+{
+	return 0;
+}
+
+static int be_fb_detach(struct xen_drm_front_info *front_info,
+		uint64_t fb_cookie)
+{
+	return 0;
+}
+
+static int be_page_flip(struct xen_drm_front_info *front_info, int conn_idx,
+		uint64_t fb_cookie)
+{
+	return 0;
+}
+
+static void xen_drm_drv_unload(struct xen_drm_front_info *front_info)
+{
+	if (front_info->xb_dev->state != XenbusStateReconfiguring)
+		return;
+
+	DRM_DEBUG("Can try removing driver now\n");
+	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
+}
+
 static struct xen_drm_front_ops front_ops = {
-	/* placeholder for now */
+	.mode_set = be_mode_set,
+	.dbuf_create_from_pages = be_dbuf_create_from_pages,
+	.dbuf_create_from_sgt = be_dbuf_create_from_sgt,
+	.dbuf_destroy = be_dbuf_destroy,
+	.fb_attach = be_fb_attach,
+	.fb_detach = be_fb_detach,
+	.page_flip = be_page_flip,
+	.drm_last_close = xen_drm_drv_unload,
 };
+
+static int xen_drm_drv_probe(struct platform_device *pdev)
+{
+	/*
+	 * The device is not spawn from a device tree, so arch_setup_dma_ops
+	 * is not called, thus leaving the device with dummy DMA ops.
+	 * This makes the device return error on PRIME buffer import, which
+	 * is not correct: to fix this call of_dma_configure() with a NULL
+	 * node to set default DMA ops.
+	 */
+	of_dma_configure(&pdev->dev, NULL);
+	return xen_drm_front_drv_probe(pdev, &front_ops);
+}
+
+static int xen_drm_drv_remove(struct platform_device *pdev)
+{
+	return xen_drm_front_drv_remove(pdev);
+}
+
+struct platform_device_info xen_drm_front_platform_info = {
+	.name = XENDISPL_DRIVER_NAME,
+	.id = 0,
+	.num_res = 0,
+	.dma_mask = DMA_BIT_MASK(32),
+};
+
+static struct platform_driver xen_drm_front_front_info = {
+	.probe		= xen_drm_drv_probe,
+	.remove		= xen_drm_drv_remove,
+	.driver		= {
+		.name	= XENDISPL_DRIVER_NAME,
+	},
+};
+
+static void xen_drm_drv_deinit(struct xen_drm_front_info *front_info)
+{
+	if (!front_info->drm_pdrv_registered)
+		return;
+
+	if (front_info->drm_pdev)
+		platform_device_unregister(front_info->drm_pdev);
+
+	platform_driver_unregister(&xen_drm_front_front_info);
+	front_info->drm_pdrv_registered = false;
+	front_info->drm_pdev = NULL;
+}
+
+static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
+{
+	int ret;
+
+	ret = platform_driver_register(&xen_drm_front_front_info);
+	if (ret < 0)
+		return ret;
+
+	front_info->drm_pdrv_registered = true;
+	/* pass card configuration via platform data */
+	xen_drm_front_platform_info.data = &front_info->cfg;
+	xen_drm_front_platform_info.size_data = sizeof(front_info->cfg);
+
+	front_info->drm_pdev = platform_device_register_full(
+			&xen_drm_front_platform_info);
+	if (IS_ERR_OR_NULL(front_info->drm_pdev)) {
+		DRM_ERROR("Failed to register " XENDISPL_DRIVER_NAME " PV DRM driver\n");
+		front_info->drm_pdev = NULL;
+		xen_drm_drv_deinit(front_info);
+		return -ENODEV;
+	}
+
+	return 0;
+}
 
 static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
 {
+	xen_drm_drv_deinit(front_info);
 	xen_drm_front_evtchnl_free_all(front_info);
 }
 
@@ -51,13 +199,27 @@ static int displback_initwait(struct xen_drm_front_info *front_info)
 static int displback_connect(struct xen_drm_front_info *front_info)
 {
 	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_CONNECTED);
-	return 0;
+	return xen_drm_drv_init(front_info);
 }
 
 static void displback_disconnect(struct xen_drm_front_info *front_info)
 {
+	bool removed = true;
+
+	if (front_info->drm_pdev) {
+		if (xen_drm_front_drv_is_used(front_info->drm_pdev)) {
+			DRM_WARN("DRM driver still in use, deferring removal\n");
+			removed = false;
+		} else
+			xen_drv_remove_internal(front_info);
+	}
+
 	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_DISCONNECTED);
-	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
+
+	if (removed)
+		xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
+	else
+		xenbus_switch_state(front_info->xb_dev, XenbusStateReconfiguring);
 }
 
 static void displback_changed(struct xenbus_device *xb_dev,
@@ -138,6 +300,7 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 
 	front_info->xb_dev = xb_dev;
 	spin_lock_init(&front_info->io_lock);
+	front_info->drm_pdrv_registered = false;
 	dev_set_drvdata(&xb_dev->dev, front_info);
 	return xenbus_switch_state(xb_dev, XenbusStateInitialising);
 }

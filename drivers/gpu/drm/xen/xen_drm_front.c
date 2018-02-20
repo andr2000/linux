@@ -17,9 +17,11 @@
 #include <xen/interface/io/displif.h>
 
 #include "xen_drm_front.h"
+#include "xen_drm_front_evtchnl.h"
 
 static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
 {
+	xen_drm_front_evtchnl_free_all(front_info);
 }
 
 static int displback_initwait(struct xen_drm_front_info *front_info)
@@ -33,16 +35,23 @@ static int displback_initwait(struct xen_drm_front_info *front_info)
 		return ret;
 
 	DRM_INFO("Have %d conector(s)\n", cfg->num_connectors);
-	return 0;
+	/* Create event channels for all connectors and publish */
+	ret = xen_drm_front_evtchnl_create_all(front_info);
+	if (ret < 0)
+		return ret;
+
+	return xen_drm_front_evtchnl_publish_all(front_info);
 }
 
 static int displback_connect(struct xen_drm_front_info *front_info)
 {
+	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_CONNECTED);
 	return 0;
 }
 
 static void displback_disconnect(struct xen_drm_front_info *front_info)
 {
+	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_DISCONNECTED);
 	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
 }
 
@@ -125,6 +134,7 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 		return -ENOMEM;
 
 	front_info->xb_dev = xb_dev;
+	spin_lock_init(&front_info->io_lock);
 	dev_set_drvdata(&xb_dev->dev, front_info);
 	return xenbus_switch_state(xb_dev, XenbusStateInitialising);
 }

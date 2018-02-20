@@ -11,8 +11,11 @@
 #ifndef __XEN_DRM_FRONT_H_
 #define __XEN_DRM_FRONT_H_
 
+#include "xen_drm_front_cfg.h"
+
 struct xen_drm_front_info {
 	struct xenbus_device *xb_dev;
+	struct xen_drm_front_cfg cfg;
 };
 
 #endif /* __XEN_DRM_FRONT_H_ */

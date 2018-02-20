@@ -12,14 +12,24 @@
 #define __XEN_DRM_FRONT_DRV_H_
 
 #include <drm/drmP.h>
+#include <drm/drm_simple_kms_helper.h>
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_cfg.h"
+#include "xen_drm_front_conn.h"
 
 struct xen_drm_front_drm_pipeline {
 	struct xen_drm_front_drm_info *drm_info;
 
 	int index;
+
+	struct drm_simple_display_pipe pipe;
+
+	struct drm_connector conn;
+	/* these are only for connector mode checking */
+	int width, height;
+	/* last backend error seen on page flip */
+	int pgflip_last_error;
 };
 
 struct xen_drm_front_drm_info {
@@ -27,6 +37,8 @@ struct xen_drm_front_drm_info {
 	struct xen_drm_front_ops *front_ops;
 	struct drm_device *drm_dev;
 	struct xen_drm_front_cfg *cfg;
+
+	struct xen_drm_front_drm_pipeline pipeline[XEN_DRM_FRONT_MAX_CRTCS];
 };
 
 static inline uint64_t xen_drm_front_fb_to_cookie(

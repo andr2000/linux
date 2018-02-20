@@ -15,6 +15,7 @@
 #include "xen_drm_front.h"
 #include "xen_drm_front_cfg.h"
 #include "xen_drm_front_drv.h"
+#include "xen_drm_front_kms.h"
 
 static int dumb_create(struct drm_file *filp,
 		struct drm_device *dev, struct drm_mode_create_dumb *args)
@@ -33,6 +34,13 @@ static void free_object(struct drm_gem_object *obj)
 static void on_frame_done(struct platform_device *pdev,
 		int conn_idx, uint64_t fb_cookie)
 {
+	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
+
+	if (unlikely(conn_idx >= drm_info->cfg->num_connectors))
+		return;
+
+	xen_drm_front_kms_on_frame_done(&drm_info->pipeline[conn_idx],
+			fb_cookie);
 }
 
 static void lastclose(struct drm_device *dev)
@@ -149,6 +157,12 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 		return ret;
 	}
 
+	ret = xen_drm_front_kms_init(drm_info);
+	if (ret) {
+		DRM_ERROR("Failed to initialize DRM/KMS, ret %d\n", ret);
+		goto fail_modeset;
+	}
+
 	dev->irq_enabled = 1;
 
 	ret = drm_dev_register(dev, 0);
@@ -164,6 +178,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 
 fail_register:
 	drm_dev_unregister(dev);
+fail_modeset:
 	drm_mode_config_cleanup(dev);
 	return ret;
 }

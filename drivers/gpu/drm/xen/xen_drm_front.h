@@ -129,6 +129,8 @@ struct xen_drm_front_info {
 	struct xenbus_device *xb_dev;
 	/* to protect data between backend IO code and interrupt handler */
 	spinlock_t io_lock;
+	/* serializer for backend IO: request/response */
+	struct mutex req_io_lock;
 	bool drm_pdrv_registered;
 	/* virtual DRM platform device */
 	struct platform_device *drm_pdev;
@@ -136,6 +138,9 @@ struct xen_drm_front_info {
 	int num_evt_pairs;
 	struct xen_drm_front_evtchnl_pair *evt_pairs;
 	struct xen_drm_front_cfg cfg;
+
+	/* display buffers */
+	struct list_head dbuf_list;
 };
 
 #endif /* __XEN_DRM_FRONT_H_ */

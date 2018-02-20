@@ -18,6 +18,7 @@
 #include <xen/grant_table.h>
 
 #include "xen_drm_front.h"
+#include "xen_drm_front_drv.h"
 #include "xen_drm_front_evtchnl.h"
 
 static irqreturn_t evtchnl_interrupt_ctrl(int irq, void *dev_id)
@@ -105,7 +106,8 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENDISPL_EVT_PG_FLIP:
-			/* placeholder */
+			xen_drm_front_on_frame_done(front_info->drm_pdev,
+				evtchnl->index, event->op.pg_flip.fb_cookie);
 			break;
 		}
 	}

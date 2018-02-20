@@ -10,17 +10,65 @@
 
 #include <drm/drmP.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_gem_cma_helper.h>
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_cfg.h"
 #include "xen_drm_front_drv.h"
+#include "xen_drm_front_gem.h"
 #include "xen_drm_front_kms.h"
 
 static int dumb_create(struct drm_file *filp, struct drm_device *dev,
 		struct drm_mode_create_dumb *args)
 {
-	return -EINVAL;
+	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
+	struct drm_gem_object *obj;
+	int ret;
+
+	ret = xen_drm_front_gem_dumb_create(filp, dev, args);
+	if (ret)
+		goto fail;
+
+	obj = drm_gem_object_lookup(filp, args->handle);
+	if (!obj) {
+		ret = -ENOENT;
+		goto fail_destroy;
+	}
+
+	drm_gem_object_unreference_unlocked(obj);
+
+	/*
+	 * In case of CONFIG_DRM_XEN_FRONTEND_CMA gem_obj is constructed
+	 * via DRM CMA helpers and doesn't have ->pages allocated
+	 * (xendrm_gem_get_pages will return NULL), but instead can provide
+	 * sg table
+	 */
+	if (xen_drm_front_gem_get_pages(obj))
+		ret = xen_drm_front_dbuf_create_from_pages(
+				drm_info->front_info,
+				xen_drm_front_dbuf_to_cookie(obj),
+				args->width, args->height, args->bpp,
+				args->size,
+				xen_drm_front_gem_get_pages(obj));
+	else
+		ret = xen_drm_front_dbuf_create_from_sgt(
+				drm_info->front_info,
+				xen_drm_front_dbuf_to_cookie(obj),
+				args->width, args->height, args->bpp,
+				args->size,
+				xen_drm_front_gem_get_sg_table(obj));
+	if (ret)
+		goto fail_destroy;
+
+	return 0;
+
+fail_destroy:
+	drm_gem_dumb_destroy(filp, dev, args->handle);
+fail:
+	DRM_ERROR("Failed to create dumb buffer: %d\n", ret);
+	return ret;
 }
 
 static void free_object(struct drm_gem_object *obj)
@@ -29,6 +77,7 @@ static void free_object(struct drm_gem_object *obj)
 
 	xen_drm_front_dbuf_destroy(drm_info->front_info,
 			xen_drm_front_dbuf_to_cookie(obj));
+	xen_drm_front_gem_free_object(obj);
 }
 
 void xen_drm_front_on_frame_done(struct platform_device *pdev,
@@ -61,6 +110,11 @@ static const struct file_operations xen_drm_fops = {
 	.poll           = drm_poll,
 	.read           = drm_read,
 	.llseek         = no_llseek,
+#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
+	.mmap           = drm_gem_cma_mmap,
+#else
+	.mmap           = xen_drm_front_gem_mmap,
+#endif
 };
 
 static const struct vm_operations_struct xen_drm_vm_ops = {
@@ -78,6 +132,8 @@ struct drm_driver xen_drm_driver = {
 	.prime_fd_to_handle        = drm_gem_prime_fd_to_handle,
 	.gem_prime_import          = drm_gem_prime_import,
 	.gem_prime_export          = drm_gem_prime_export,
+	.gem_prime_import_sg_table = xen_drm_front_gem_import_sg_table,
+	.gem_prime_get_sg_table    = xen_drm_front_gem_get_sg_table,
 	.dumb_create               = dumb_create,
 	.fops                      = &xen_drm_fops,
 	.name                      = "xendrm-du",
@@ -85,6 +141,16 @@ struct drm_driver xen_drm_driver = {
 	.date                      = "20180221",
 	.major                     = 1,
 	.minor                     = 0,
+
+#ifdef CONFIG_DRM_XEN_FRONTEND_CMA
+	.gem_prime_vmap            = drm_gem_cma_prime_vmap,
+	.gem_prime_vunmap          = drm_gem_cma_prime_vunmap,
+	.gem_prime_mmap            = drm_gem_cma_prime_mmap,
+#else
+	.gem_prime_vmap            = xen_drm_front_gem_prime_vmap,
+	.gem_prime_vunmap          = xen_drm_front_gem_prime_vunmap,
+	.gem_prime_mmap            = xen_drm_front_gem_prime_mmap,
+#endif
 };
 
 int xen_drm_front_drv_probe(struct platform_device *pdev)
@@ -132,6 +198,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev)
 fail_register:
 	drm_dev_unregister(dev);
 fail_modeset:
+	drm_kms_helper_poll_fini(dev);
 	drm_mode_config_cleanup(dev);
 	return ret;
 }
@@ -142,6 +209,7 @@ int xen_drm_front_drv_remove(struct platform_device *pdev)
 	struct drm_device *dev = drm_info->drm_dev;
 
 	if (dev) {
+		drm_kms_helper_poll_fini(dev);
 		drm_dev_unregister(dev);
 		drm_atomic_helper_shutdown(dev);
 		drm_mode_config_cleanup(dev);

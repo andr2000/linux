@@ -13,12 +13,19 @@
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_conn.h"
 #include "xen_drm_front_drv.h"
+
+/*
+ * Timeout in ms to wait for frame done event from the backend:
+ * must be a bit more than IO time-out
+ */
+#define FRAME_DONE_TO_MS	(XEN_DRM_FRONT_WAIT_BACK_MS + 100)
 
 static struct xen_drm_front_drm_pipeline *
 to_xen_drm_pipeline(struct drm_simple_display_pipe *pipe)
@@ -111,20 +118,30 @@ static void display_enable(struct drm_simple_display_pipe *pipe,
 			fb->format->cpp[0] * 8,
 			xen_drm_front_fb_to_cookie(fb));
 
-	if (ret)
+	if (ret) {
 		DRM_ERROR("Failed to enable display: %d\n", ret);
+		pipeline->conn_connected = false;
+	}
 }
 
 static void display_disable(struct drm_simple_display_pipe *pipe)
 {
 	struct xen_drm_front_drm_pipeline *pipeline =
 			to_xen_drm_pipeline(pipe);
+	struct xen_drm_front_drm_info *drm_info = pipeline->drm_info;
+	unsigned long flags;
 	int ret;
 
 	ret = xen_drm_front_mode_set(pipeline, 0, 0, 0, 0, 0,
 			xen_drm_front_fb_to_cookie(NULL));
 	if (ret)
 		DRM_ERROR("Failed to disable display: %d\n", ret);
+
+	pipeline->conn_connected = true;
+
+	spin_lock_irqsave(&drm_info->front_info->io_lock, flags);
+	pipeline->pflip_timeout = 0;
+	spin_unlock_irqrestore(&drm_info->front_info->io_lock, flags);
 
 	/* release stalled event if any */
 	xen_drm_front_kms_send_pending_event(pipeline);
@@ -134,6 +151,12 @@ void xen_drm_front_kms_on_frame_done(
 		struct xen_drm_front_drm_pipeline *pipeline,
 		uint64_t fb_cookie)
 {
+	/*
+	 * This already runs in interrupt context, e.g. under
+	 * drm_info->front_info->io_lock
+	 */
+	pipeline->pflip_timeout = 0;
+
 	xen_drm_front_kms_send_pending_event(pipeline);
 }
 
@@ -155,7 +178,13 @@ static bool display_send_page_flip(struct drm_simple_display_pipe *pipe,
 		struct xen_drm_front_drm_pipeline *pipeline =
 				to_xen_drm_pipeline(pipe);
 		struct xen_drm_front_drm_info *drm_info = pipeline->drm_info;
+		unsigned long flags;
 		int ret;
+
+		spin_lock_irqsave(&drm_info->front_info->io_lock, flags);
+		pipeline->pflip_timeout = jiffies +
+				msecs_to_jiffies(FRAME_DONE_TO_MS);
+		spin_unlock_irqrestore(&drm_info->front_info->io_lock, flags);
 
 		ret = xen_drm_front_page_flip(drm_info->front_info,
 				pipeline->index,
@@ -163,6 +192,7 @@ static bool display_send_page_flip(struct drm_simple_display_pipe *pipe,
 		if (ret) {
 			DRM_ERROR("Failed to send page flip request to backend: %d\n", ret);
 
+			pipeline->conn_connected = false;
 			/*
 			 * Report the flip not handled, so pending event is
 			 * sent, unblocking user-space.
@@ -183,6 +213,16 @@ static int display_prepare_fb(struct drm_simple_display_pipe *pipe,
 		struct drm_plane_state *plane_state)
 {
 	return drm_gem_fb_prepare_fb(&pipe->plane, plane_state);
+}
+
+static int display_check(struct drm_simple_display_pipe *pipe,
+		struct drm_plane_state *plane_state,
+		struct drm_crtc_state *crtc_state)
+{
+	struct xen_drm_front_drm_pipeline *pipeline =
+			to_xen_drm_pipeline(pipe);
+
+	return pipeline->conn_connected ? 0 : -EINVAL;
 }
 
 static void display_update(struct drm_simple_display_pipe *pipe,
@@ -222,6 +262,7 @@ static void display_update(struct drm_simple_display_pipe *pipe,
 static const struct drm_simple_display_pipe_funcs display_funcs = {
 	.enable = display_enable,
 	.disable = display_disable,
+	.check = display_check,
 	.prepare_fb = display_prepare_fb,
 	.update = display_update,
 };
@@ -278,5 +319,6 @@ int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
 	}
 
 	drm_mode_config_reset(dev);
+	drm_kms_helper_poll_init(dev);
 	return 0;
 }

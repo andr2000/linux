@@ -19,4 +19,7 @@ void xen_drm_front_kms_on_frame_done(
 		struct xen_drm_front_drm_pipeline *pipeline,
 		uint64_t fb_cookie);
 
+void xen_drm_front_kms_send_pending_event(
+		struct xen_drm_front_drm_pipeline *pipeline);
+
 #endif /* __XEN_DRM_FRONT_KMS_H_ */

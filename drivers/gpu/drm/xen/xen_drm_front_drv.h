@@ -30,6 +30,19 @@ struct xen_drm_front_drm_pipeline {
 	int width, height;
 
 	struct drm_pending_vblank_event *pending_event;
+
+	/*
+	 * pflip_timeout is set to current jiffies once we send a page flip and
+	 * reset to 0 when we receive frame done event from the backed.
+	 * It is checked during drm_connector_helper_funcs.detect_ctx to detect
+	 * time-outs for frame done event, e.g. due to backend errors.
+	 *
+	 * This must be protected with front_info->io_lock, so races between
+	 * interrupt handler and rest of the code are properly handled.
+	 */
+	unsigned long pflip_timeout;
+
+	bool conn_connected;
 };
 
 struct xen_drm_front_drm_info {

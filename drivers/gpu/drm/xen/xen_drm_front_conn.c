@@ -15,6 +15,7 @@
 
 #include "xen_drm_front_conn.h"
 #include "xen_drm_front_drv.h"
+#include "xen_drm_front_kms.h"
 
 static struct xen_drm_front_drm_pipeline *
 to_xen_drm_pipeline(struct drm_connector *connector)
@@ -43,10 +44,28 @@ static int connector_detect(struct drm_connector *connector,
 		struct drm_modeset_acquire_ctx *ctx,
 		bool force)
 {
-	if (drm_dev_is_unplugged(connector->dev))
-		return connector_status_disconnected;
+	struct xen_drm_front_drm_pipeline *pipeline =
+			to_xen_drm_pipeline(connector);
+	struct xen_drm_front_info *front_info = pipeline->drm_info->front_info;
+	unsigned long flags;
 
-	return connector_status_connected;
+	/* check if there is a frame done event time-out */
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	if (pipeline->pflip_timeout &&
+			time_after_eq(jiffies, pipeline->pflip_timeout)) {
+		DRM_ERROR("Frame done event timed-out\n");
+
+		pipeline->pflip_timeout = 0;
+		pipeline->conn_connected = false;
+		xen_drm_front_kms_send_pending_event(pipeline);
+	}
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (drm_dev_is_unplugged(connector->dev))
+		pipeline->conn_connected = false;
+
+	return pipeline->conn_connected ? connector_status_connected :
+			connector_status_disconnected;
 }
 
 #define XEN_DRM_NUM_VIDEO_MODES		1
@@ -112,7 +131,15 @@ static const struct drm_connector_funcs connector_funcs = {
 int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
 		struct drm_connector *connector)
 {
+	struct xen_drm_front_drm_pipeline *pipeline =
+			to_xen_drm_pipeline(connector);
+
 	drm_connector_helper_add(connector, &connector_helper_funcs);
+
+	pipeline->conn_connected = true;
+
+	connector->polled = DRM_CONNECTOR_POLL_CONNECT |
+			DRM_CONNECTOR_POLL_DISCONNECT;
 
 	return drm_connector_init(drm_info->drm_dev, connector,
 		&connector_funcs, DRM_MODE_CONNECTOR_VIRTUAL);

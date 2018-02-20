@@ -24,6 +24,15 @@ static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
 
 static int displback_initwait(struct xen_drm_front_info *front_info)
 {
+	struct xen_drm_front_cfg *cfg = &front_info->cfg;
+	int ret;
+
+	cfg->front_info = front_info;
+	ret = xen_drm_front_cfg_card(front_info, cfg);
+	if (ret < 0)
+		return ret;
+
+	DRM_INFO("Have %d conector(s)\n", cfg->num_connectors);
 	return 0;
 }
 

@@ -15,12 +15,58 @@
 #include "xen_drm_front.h"
 #include "xen_drm_front_cfg.h"
 #include "xen_drm_front_drv.h"
+#include "xen_drm_front_gem.h"
 #include "xen_drm_front_kms.h"
 
 static int dumb_create(struct drm_file *filp,
 		struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
-	return -EINVAL;
+	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
+	struct drm_gem_object *obj;
+	int ret;
+
+	ret = drm_info->gem_ops->dumb_create(filp, dev, args);
+	if (ret)
+		goto fail;
+
+	obj = drm_gem_object_lookup(filp, args->handle);
+	if (!obj) {
+		ret = -ENOENT;
+		goto fail_destroy;
+	}
+
+	drm_gem_object_unreference_unlocked(obj);
+
+	/*
+	 * In case of CONFIG_DRM_XEN_FRONTEND_CMA gem_obj is constructed
+	 * via DRM CMA helpers and doesn't have ->pages allocated
+	 * (xendrm_gem_get_pages will return NULL), but instead can provide
+	 * sg table
+	 */
+	if (drm_info->gem_ops->get_pages(obj))
+		ret = drm_info->front_ops->dbuf_create_from_pages(
+				drm_info->front_info,
+				xen_drm_front_dbuf_to_cookie(obj),
+				args->width, args->height, args->bpp,
+				args->size,
+				drm_info->gem_ops->get_pages(obj));
+	else
+		ret = drm_info->front_ops->dbuf_create_from_sgt(
+				drm_info->front_info,
+				xen_drm_front_dbuf_to_cookie(obj),
+				args->width, args->height, args->bpp,
+				args->size,
+				drm_info->gem_ops->prime_get_sg_table(obj));
+	if (ret)
+		goto fail_destroy;
+
+	return 0;
+
+fail_destroy:
+	drm_gem_dumb_destroy(filp, dev, args->handle);
+fail:
+	DRM_ERROR("Failed to create dumb buffer: %d\n", ret);
+	return ret;
 }
 
 static void free_object(struct drm_gem_object *obj)
@@ -29,6 +75,7 @@ static void free_object(struct drm_gem_object *obj)
 
 	drm_info->front_ops->dbuf_destroy(drm_info->front_info,
 			xen_drm_front_dbuf_to_cookie(obj));
+	drm_info->gem_ops->free_object_unlocked(obj);
 }
 
 static void on_frame_done(struct platform_device *pdev,
@@ -52,32 +99,52 @@ static void lastclose(struct drm_device *dev)
 
 static int gem_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-	return -EINVAL;
+	struct drm_file *file_priv = filp->private_data;
+	struct drm_device *dev = file_priv->minor->dev;
+	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
+
+	return drm_info->gem_ops->mmap(filp, vma);
 }
 
 static struct sg_table *prime_get_sg_table(struct drm_gem_object *obj)
 {
-	return NULL;
+	struct xen_drm_front_drm_info *drm_info;
+
+	drm_info = obj->dev->dev_private;
+	return drm_info->gem_ops->prime_get_sg_table(obj);
 }
 
 static struct drm_gem_object *prime_import_sg_table(struct drm_device *dev,
 		struct dma_buf_attachment *attach, struct sg_table *sgt)
 {
-	return NULL;
+	struct xen_drm_front_drm_info *drm_info;
+
+	drm_info = dev->dev_private;
+	return drm_info->gem_ops->prime_import_sg_table(dev, attach, sgt);
 }
 
 static void *prime_vmap(struct drm_gem_object *obj)
 {
-	return NULL;
+	struct xen_drm_front_drm_info *drm_info;
+
+	drm_info = obj->dev->dev_private;
+	return drm_info->gem_ops->prime_vmap(obj);
 }
 
 static void prime_vunmap(struct drm_gem_object *obj, void *vaddr)
 {
+	struct xen_drm_front_drm_info *drm_info;
+
+	drm_info = obj->dev->dev_private;
+	drm_info->gem_ops->prime_vunmap(obj, vaddr);
 }
 
 static int prime_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma)
 {
-	return -EINVAL;
+	struct xen_drm_front_drm_info *drm_info;
+
+	drm_info = obj->dev->dev_private;
+	return drm_info->gem_ops->prime_mmap(obj, vma);
 }
 
 static const struct file_operations xendrm_fops = {
@@ -139,6 +206,7 @@ int xen_drm_front_drv_probe(struct platform_device *pdev,
 
 	drm_info->front_ops = front_ops;
 	drm_info->front_ops->on_frame_done = on_frame_done;
+	drm_info->gem_ops = xen_drm_front_gem_get_ops();
 	drm_info->front_info = cfg->front_info;
 
 	dev = drm_dev_alloc(&xen_drm_driver, &pdev->dev);

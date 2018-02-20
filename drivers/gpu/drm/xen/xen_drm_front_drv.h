@@ -35,6 +35,7 @@ struct xen_drm_front_drm_pipeline {
 struct xen_drm_front_drm_info {
 	struct xen_drm_front_info *front_info;
 	struct xen_drm_front_ops *front_ops;
+	const struct xen_drm_front_gem_ops *gem_ops;
 	struct drm_device *drm_dev;
 	struct xen_drm_front_cfg *cfg;
 

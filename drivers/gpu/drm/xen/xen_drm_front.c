@@ -18,6 +18,7 @@
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_evtchnl.h"
+#include "xen_drm_front_shbuf.h"
 
 static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
 {
@@ -187,6 +188,13 @@ static struct xenbus_driver xen_driver = {
 
 static int __init xen_drv_init(void)
 {
+	/* At the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
+	if (XEN_PAGE_SIZE != PAGE_SIZE) {
+		DRM_ERROR(XENDISPL_DRIVER_NAME ": different kernel and Xen page sizes are not supported: XEN_PAGE_SIZE (%lu) != PAGE_SIZE (%lu)\n",
+				XEN_PAGE_SIZE, PAGE_SIZE);
+		return -ENODEV;
+	}
+
 	if (!xen_domain())
 		return -ENODEV;
 

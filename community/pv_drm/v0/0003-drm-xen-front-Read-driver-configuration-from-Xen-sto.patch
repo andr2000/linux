@@ -1,0 +1,213 @@
+From 73acbf3fe4c2ae2b5903b7157b495cf08747870a Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 20 Feb 2018 11:05:25 +0200
+Subject: [PATCH 3/9] drm/xen-front: Read driver configuration from Xen store
+
+Read configuration values from Xen store according
+to xen/interface/io/displif.h protocol:
+  - read connector(s) configuration
+  - read buffer allocation mode (backend/frontend)
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/gpu/drm/xen/Makefile            |  3 +-
+ drivers/gpu/drm/xen/xen_drm_front.c     |  9 ++++
+ drivers/gpu/drm/xen/xen_drm_front.h     |  3 ++
+ drivers/gpu/drm/xen/xen_drm_front_cfg.c | 84 +++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_cfg.h | 45 ++++++++++++++++++
+ 5 files changed, 143 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_cfg.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_cfg.h
+
+diff --git a/drivers/gpu/drm/xen/Makefile b/drivers/gpu/drm/xen/Makefile
+index 967074d348f6..0a2eae757f0c 100644
+--- a/drivers/gpu/drm/xen/Makefile
++++ b/drivers/gpu/drm/xen/Makefile
+@@ -1,5 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
+-drm_xen_front-objs := xen_drm_front.o
++drm_xen_front-objs := xen_drm_front.o \
++		      xen_drm_front_cfg.o
+ 
+ obj-$(CONFIG_DRM_XEN_FRONTEND) += drm_xen_front.o
+diff --git a/drivers/gpu/drm/xen/xen_drm_front.c b/drivers/gpu/drm/xen/xen_drm_front.c
+index d0306f9d660d..0a90c474c7ce 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front.c
++++ b/drivers/gpu/drm/xen/xen_drm_front.c
+@@ -32,6 +32,15 @@ static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
+ 
+ static int backend_on_initwait(struct xen_drm_front_info *front_info)
+ {
++	struct xen_drm_front_cfg *cfg = &front_info->cfg;
++	int ret;
++
++	cfg->front_info = front_info;
++	ret = xen_drm_front_cfg_card(front_info, cfg);
++	if (ret < 0)
++		return ret;
++
++	DRM_INFO("Have %d conector(s)\n", cfg->num_connectors);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/xen/xen_drm_front.h b/drivers/gpu/drm/xen/xen_drm_front.h
+index 8af46850f126..62b0d4e3e12b 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front.h
++++ b/drivers/gpu/drm/xen/xen_drm_front.h
+@@ -19,8 +19,11 @@
+ #ifndef __XEN_DRM_FRONT_H_
+ #define __XEN_DRM_FRONT_H_
+ 
++#include "xen_drm_front_cfg.h"
++
+ struct xen_drm_front_info {
+ 	struct xenbus_device *xb_dev;
++	struct xen_drm_front_cfg cfg;
+ };
+ 
+ #endif /* __XEN_DRM_FRONT_H_ */
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_cfg.c b/drivers/gpu/drm/xen/xen_drm_front_cfg.c
+new file mode 100644
+index 000000000000..58fe50bc52a5
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_cfg.c
+@@ -0,0 +1,84 @@
++/*
++ *  Xen para-virtual DRM device
++ *
++ *   This program is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *   GNU General Public License for more details.
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#include <drm/drmP.h>
++
++#include <linux/device.h>
++
++#include <xen/interface/io/displif.h>
++#include <xen/xenbus.h>
++
++#include "xen_drm_front.h"
++#include "xen_drm_front_cfg.h"
++
++static int cfg_connector(struct xen_drm_front_info *front_info,
++		struct xen_drm_front_cfg_connector *connector,
++		const char *path, int index)
++{
++	char *connector_path;
++
++	connector_path = devm_kasprintf(&front_info->xb_dev->dev,
++			GFP_KERNEL, "%s/%d", path, index);
++	if (!connector_path)
++		return -ENOMEM;
++
++	connector->xenstore_path = connector_path;
++	if (xenbus_scanf(XBT_NIL, connector_path, XENDISPL_FIELD_RESOLUTION,
++			"%d" XENDISPL_RESOLUTION_SEPARATOR "%d",
++			&connector->width, &connector->height) < 0) {
++		/* either no entry configured or wrong resolution set */
++		connector->width = 0;
++		connector->height = 0;
++		return -EINVAL;
++	}
++
++	DRM_INFO("Connector %s: resolution %dx%d\n",
++			connector_path, connector->width, connector->height);
++	return 0;
++}
++
++int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
++		struct xen_drm_front_cfg *cfg)
++{
++	struct xenbus_device *xb_dev = front_info->xb_dev;
++	int ret, i;
++
++	if (xenbus_read_unsigned(front_info->xb_dev->nodename,
++			XENDISPL_FIELD_BE_ALLOC, 0)) {
++		DRM_INFO("Backend can provide display buffers\n");
++		cfg->be_alloc = true;
++	}
++
++	cfg->num_connectors = 0;
++	for (i = 0; i < ARRAY_SIZE(cfg->connectors); i++) {
++		ret = cfg_connector(front_info,
++				&cfg->connectors[i], xb_dev->nodename, i);
++		if (ret < 0)
++			break;
++		cfg->num_connectors++;
++	}
++
++	if (!cfg->num_connectors) {
++		DRM_ERROR("No connector(s) configured at %s\n",
++				xb_dev->nodename);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_cfg.h b/drivers/gpu/drm/xen/xen_drm_front_cfg.h
+new file mode 100644
+index 000000000000..1ac4948a13e5
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_cfg.h
+@@ -0,0 +1,45 @@
++/*
++ *  Xen para-virtual DRM device
++ *
++ *   This program is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *   GNU General Public License for more details.
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#ifndef __XEN_DRM_FRONT_CFG_H_
++#define __XEN_DRM_FRONT_CFG_H_
++
++#include <linux/types.h>
++
++#define XEN_DRM_FRONT_MAX_CRTCS	4
++
++struct xen_drm_front_cfg_connector {
++	int width;
++	int height;
++	char *xenstore_path;
++};
++
++struct xen_drm_front_cfg {
++	struct xen_drm_front_info *front_info;
++	/* number of connectors in this configuration */
++	int num_connectors;
++	/* connector configurations */
++	struct xen_drm_front_cfg_connector connectors[XEN_DRM_FRONT_MAX_CRTCS];
++	/* set if dumb buffers are allocated externally on backend side */
++	bool be_alloc;
++};
++
++int xen_drm_front_cfg_card(struct xen_drm_front_info *front_info,
++		struct xen_drm_front_cfg *cfg);
++
++#endif /* __XEN_DRM_FRONT_CFG_H_ */
+-- 
+2.7.4
+

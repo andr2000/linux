@@ -1,0 +1,588 @@
+From 5b6d4331c2e7afc9bf0930ce6314e892b4602027 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 20 Feb 2018 12:03:11 +0200
+Subject: [PATCH 5/9] drm/xen-front: Implement handling of shared display
+ buffers
+
+Implement shared buffer handling according to the
+para-virtualized display device protocol at xen/interface/io/displif.h:
+  - handle page directories according to displif protocol:
+    - allocate and share page directories
+    - grant references to the required set of pages for the
+      page directory
+  - allocate xen balllooned pages via Xen balloon driver
+    with alloc_xenballooned_pages/free_xenballooned_pages
+  - grant references to the required set of pages for the
+    shared buffer itself
+  - implement pages map/unmap for the buffers allocated by the
+    backend (gnttab_map_refs/gnttab_unmap_refs)
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/gpu/drm/xen/Makefile              |   1 +
+ drivers/gpu/drm/xen/xen_drm_front.c       |   4 +
+ drivers/gpu/drm/xen/xen_drm_front_shbuf.c | 430 ++++++++++++++++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_shbuf.h |  80 ++++++
+ 4 files changed, 515 insertions(+)
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_shbuf.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_shbuf.h
+
+diff --git a/drivers/gpu/drm/xen/Makefile b/drivers/gpu/drm/xen/Makefile
+index 4ce7756b8437..f1823cb596c5 100644
+--- a/drivers/gpu/drm/xen/Makefile
++++ b/drivers/gpu/drm/xen/Makefile
+@@ -2,6 +2,7 @@
+ 
+ drm_xen_front-objs := xen_drm_front.o \
+ 		      xen_drm_front_evtchnl.o \
++		      xen_drm_front_shbuf.o \
+ 		      xen_drm_front_cfg.o
+ 
+ obj-$(CONFIG_DRM_XEN_FRONTEND) += drm_xen_front.o
+diff --git a/drivers/gpu/drm/xen/xen_drm_front.c b/drivers/gpu/drm/xen/xen_drm_front.c
+index b558e0ae3b33..0d94ff272da3 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front.c
++++ b/drivers/gpu/drm/xen/xen_drm_front.c
+@@ -26,6 +26,7 @@
+ 
+ #include "xen_drm_front.h"
+ #include "xen_drm_front_evtchnl.h"
++#include "xen_drm_front_shbuf.h"
+ 
+ static struct xen_drm_front_ops front_ops = {
+ 	/* placeholder for now */
+@@ -199,6 +200,9 @@ static struct xenbus_driver xen_driver = {
+ 
+ static int __init xen_drv_init(void)
+ {
++	/* At the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
++	BUILD_BUG_ON(XEN_PAGE_SIZE != PAGE_SIZE);
++
+ 	if (!xen_domain())
+ 		return -ENODEV;
+ 
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_shbuf.c b/drivers/gpu/drm/xen/xen_drm_front_shbuf.c
+new file mode 100644
+index 000000000000..fb8dd40dd5f5
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_shbuf.c
+@@ -0,0 +1,430 @@
++/*
++ *  Xen para-virtual DRM device
++ *
++ *   This program is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *   GNU General Public License for more details.
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#include <drm/drmP.h>
++
++#if defined(CONFIG_X86)
++#include <drm/drm_cache.h>
++#endif
++#include <linux/errno.h>
++#include <linux/mm.h>
++
++#include <asm/xen/hypervisor.h>
++#include <xen/balloon.h>
++#include <xen/xen.h>
++#include <xen/xenbus.h>
++#include <xen/interface/io/ring.h>
++#include <xen/interface/io/displif.h>
++
++#include "xen_drm_front.h"
++#include "xen_drm_front_shbuf.h"
++
++struct xen_drm_front_shbuf_ops {
++	/*
++	 * Calculate number of grefs required to handle this buffer,
++	 * e.g. if grefs are required for page directory only or the buffer
++	 * pages as well.
++	 */
++	void (*calc_num_grefs)(struct xen_drm_front_shbuf *buf);
++	/* Fill page directory according to para-virtual display protocol. */
++	void (*fill_page_dir)(struct xen_drm_front_shbuf *buf);
++	/* Claim grant references for the pages of the buffer. */
++	int (*grant_refs_for_buffer)(struct xen_drm_front_shbuf *buf,
++			grant_ref_t *priv_gref_head, int gref_idx);
++	/* Map grant references of the buffer. */
++	int (*map)(struct xen_drm_front_shbuf *buf);
++	/* Unmap grant references of the buffer. */
++	int (*unmap)(struct xen_drm_front_shbuf *buf);
++};
++
++grant_ref_t xen_drm_front_shbuf_get_dir_start(struct xen_drm_front_shbuf *buf)
++{
++	if (!buf->grefs)
++		return GRANT_INVALID_REF;
++
++	return buf->grefs[0];
++}
++
++int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf)
++{
++	if (buf->ops->map)
++		return buf->ops->map(buf);
++
++	/* no need to map own grant references */
++	return 0;
++}
++
++int xen_drm_front_shbuf_unmap(struct xen_drm_front_shbuf *buf)
++{
++	if (buf->ops->unmap)
++		return buf->ops->unmap(buf);
++
++	/* no need to unmap own grant references */
++	return 0;
++}
++
++void xen_drm_front_shbuf_flush(struct xen_drm_front_shbuf *buf)
++{
++#if defined(CONFIG_X86)
++	drm_clflush_pages(buf->pages, buf->num_pages);
++#endif
++}
++
++void xen_drm_front_shbuf_free(struct xen_drm_front_shbuf *buf)
++{
++	if (buf->grefs) {
++		int i;
++
++		for (i = 0; i < buf->num_grefs; i++)
++			if (buf->grefs[i] != GRANT_INVALID_REF)
++				gnttab_end_foreign_access(buf->grefs[i],
++					0, 0UL);
++	}
++	kfree(buf->grefs);
++	kfree(buf->directory);
++	if (buf->sgt) {
++		sg_free_table(buf->sgt);
++		kvfree(buf->pages);
++	}
++	kfree(buf);
++}
++
++/*
++ * number of grefs a page can hold with respect to the
++ * struct xendispl_page_directory header
++ */
++#define XEN_DRM_NUM_GREFS_PER_PAGE ((PAGE_SIZE - \
++	offsetof(struct xendispl_page_directory, gref)) / \
++	sizeof(grant_ref_t))
++
++static int get_num_pages_dir(struct xen_drm_front_shbuf *buf)
++{
++	/* number of pages the page directory consumes itself */
++	return DIV_ROUND_UP(buf->num_pages, XEN_DRM_NUM_GREFS_PER_PAGE);
++}
++
++static void backend_calc_num_grefs(struct xen_drm_front_shbuf *buf)
++{
++	/* only for pages the page directory consumes itself */
++	buf->num_grefs = get_num_pages_dir(buf);
++}
++
++static void guest_calc_num_grefs(struct xen_drm_front_shbuf *buf)
++{
++	/*
++	 * number of pages the page directory consumes itself
++	 * plus grefs for the buffer pages
++	 */
++	buf->num_grefs = get_num_pages_dir(buf) + buf->num_pages;
++}
++
++#define xen_page_to_vaddr(page) \
++		((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
++
++static int backend_map(struct xen_drm_front_shbuf *buf)
++{
++	struct gnttab_map_grant_ref *map_ops = NULL;
++	unsigned char *ptr;
++	int ret, cur_gref, cur_dir_page, cur_page, grefs_left;
++
++	map_ops = kcalloc(buf->num_pages, sizeof(*map_ops), GFP_KERNEL);
++	if (!map_ops)
++		return -ENOMEM;
++
++	buf->backend_map_handles = kcalloc(buf->num_pages,
++			sizeof(*buf->backend_map_handles), GFP_KERNEL);
++	if (!buf->backend_map_handles) {
++		kfree(map_ops);
++		return -ENOMEM;
++	}
++
++	/*
++	 * read page directory to get grefs from the backend: for external
++	 * buffer we only allocate buf->grefs for the page directory,
++	 * so buf->num_grefs has number of pages in the page directory itself
++	 */
++	ptr = buf->directory;
++	grefs_left = buf->num_pages;
++	cur_page = 0;
++	for (cur_dir_page = 0; cur_dir_page < buf->num_grefs; cur_dir_page++) {
++		struct xendispl_page_directory *page_dir =
++				(struct xendispl_page_directory *)ptr;
++		int to_copy = XEN_DRM_NUM_GREFS_PER_PAGE;
++
++		if (to_copy > grefs_left)
++			to_copy = grefs_left;
++
++		for (cur_gref = 0; cur_gref < to_copy; cur_gref++) {
++			phys_addr_t addr;
++
++			addr = xen_page_to_vaddr(buf->pages[cur_page]);
++			gnttab_set_map_op(&map_ops[cur_page], addr,
++					GNTMAP_host_map,
++					page_dir->gref[cur_gref],
++					buf->xb_dev->otherend_id);
++			cur_page++;
++		}
++
++		grefs_left -= to_copy;
++		ptr += PAGE_SIZE;
++	}
++	ret = gnttab_map_refs(map_ops, NULL, buf->pages, buf->num_pages);
++	BUG_ON(ret);
++
++	/* save handles so we can unmap on free */
++	for (cur_page = 0; cur_page < buf->num_pages; cur_page++) {
++		buf->backend_map_handles[cur_page] = map_ops[cur_page].handle;
++		if (unlikely(map_ops[cur_page].status != GNTST_okay))
++			DRM_ERROR("Failed to map page %d: %d\n",
++					cur_page, map_ops[cur_page].status);
++	}
++
++	kfree(map_ops);
++	return 0;
++}
++
++static int backend_unmap(struct xen_drm_front_shbuf *buf)
++{
++	struct gnttab_unmap_grant_ref *unmap_ops;
++	int i;
++
++	if (!buf->pages || !buf->backend_map_handles || !buf->grefs)
++		return 0;
++
++	unmap_ops = kcalloc(buf->num_pages, sizeof(*unmap_ops),
++		GFP_KERNEL);
++	if (!unmap_ops) {
++		DRM_ERROR("Failed to get memory while unmapping\n");
++		return -ENOMEM;
++	}
++
++	for (i = 0; i < buf->num_pages; i++) {
++		phys_addr_t addr;
++
++		addr = xen_page_to_vaddr(buf->pages[i]);
++		gnttab_set_unmap_op(&unmap_ops[i], addr, GNTMAP_host_map,
++				buf->backend_map_handles[i]);
++	}
++
++	BUG_ON(gnttab_unmap_refs(unmap_ops, NULL, buf->pages,
++			buf->num_pages));
++
++	for (i = 0; i < buf->num_pages; i++) {
++		if (unlikely(unmap_ops[i].status != GNTST_okay))
++			DRM_ERROR("Failed to unmap page %d: %d\n",
++					i, unmap_ops[i].status);
++	}
++
++	kfree(unmap_ops);
++	kfree(buf->backend_map_handles);
++	buf->backend_map_handles = NULL;
++	return 0;
++}
++
++static void backend_fill_page_dir(struct xen_drm_front_shbuf *buf)
++{
++	struct xendispl_page_directory *page_dir;
++	unsigned char *ptr;
++	int i, num_pages_dir;
++
++	ptr = buf->directory;
++	num_pages_dir = get_num_pages_dir(buf);
++
++	/* fill only grefs for the page directory itself */
++	for (i = 0; i < num_pages_dir - 1; i++) {
++		page_dir = (struct xendispl_page_directory *)ptr;
++
++		page_dir->gref_dir_next_page = buf->grefs[i + 1];
++		ptr += PAGE_SIZE;
++	}
++	/* last page must say there is no more pages */
++	page_dir = (struct xendispl_page_directory *)ptr;
++	page_dir->gref_dir_next_page = GRANT_INVALID_REF;
++}
++
++static void guest_fill_page_dir(struct xen_drm_front_shbuf *buf)
++{
++	unsigned char *ptr;
++	int cur_gref, grefs_left, to_copy, i, num_pages_dir;
++
++	ptr = buf->directory;
++	num_pages_dir = get_num_pages_dir(buf);
++
++	/*
++	 * while copying, skip grefs at start, they are for pages
++	 * granted for the page directory itself
++	 */
++	cur_gref = num_pages_dir;
++	grefs_left = buf->num_pages;
++	for (i = 0; i < num_pages_dir; i++) {
++		struct xendispl_page_directory *page_dir =
++				(struct xendispl_page_directory *)ptr;
++
++		if (grefs_left <= XEN_DRM_NUM_GREFS_PER_PAGE) {
++			to_copy = grefs_left;
++			page_dir->gref_dir_next_page = GRANT_INVALID_REF;
++		} else {
++			to_copy = XEN_DRM_NUM_GREFS_PER_PAGE;
++			page_dir->gref_dir_next_page = buf->grefs[i + 1];
++		}
++		memcpy(&page_dir->gref, &buf->grefs[cur_gref],
++				to_copy * sizeof(grant_ref_t));
++		ptr += PAGE_SIZE;
++		grefs_left -= to_copy;
++		cur_gref += to_copy;
++	}
++}
++
++static int guest_grant_refs_for_buffer(struct xen_drm_front_shbuf *buf,
++		grant_ref_t *priv_gref_head, int gref_idx)
++{
++	int i, cur_ref, otherend_id;
++
++	otherend_id = buf->xb_dev->otherend_id;
++	for (i = 0; i < buf->num_pages; i++) {
++		cur_ref = gnttab_claim_grant_reference(priv_gref_head);
++		if (cur_ref < 0)
++			return cur_ref;
++		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
++				xen_page_to_gfn(buf->pages[i]), 0);
++		buf->grefs[gref_idx++] = cur_ref;
++	}
++	return 0;
++}
++
++static int grant_references(struct xen_drm_front_shbuf *buf)
++{
++	grant_ref_t priv_gref_head;
++	int ret, i, j, cur_ref;
++	int otherend_id, num_pages_dir;
++
++	ret = gnttab_alloc_grant_references(buf->num_grefs, &priv_gref_head);
++	if (ret < 0) {
++		DRM_ERROR("Cannot allocate grant references\n");
++		return ret;
++	}
++	otherend_id = buf->xb_dev->otherend_id;
++	j = 0;
++	num_pages_dir = get_num_pages_dir(buf);
++	for (i = 0; i < num_pages_dir; i++) {
++		unsigned long frame;
++
++		cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
++		if (cur_ref < 0)
++			return cur_ref;
++
++		frame = xen_page_to_gfn(virt_to_page(buf->directory +
++				PAGE_SIZE * i));
++		gnttab_grant_foreign_access_ref(cur_ref, otherend_id,
++				frame, 0);
++		buf->grefs[j++] = cur_ref;
++	}
++
++	if (buf->ops->grant_refs_for_buffer) {
++		ret = buf->ops->grant_refs_for_buffer(buf, &priv_gref_head, j);
++		if (ret)
++			return ret;
++	}
++
++	gnttab_free_grant_references(priv_gref_head);
++	return 0;
++}
++
++static int alloc_storage(struct xen_drm_front_shbuf *buf)
++{
++	if (buf->sgt) {
++		buf->pages = kvmalloc_array(buf->num_pages,
++				sizeof(struct page *), GFP_KERNEL);
++		if (!buf->pages)
++			return -ENOMEM;
++
++		if (drm_prime_sg_to_page_addr_arrays(buf->sgt, buf->pages,
++				NULL, buf->num_pages) < 0)
++			return -EINVAL;
++	}
++
++	buf->grefs = kcalloc(buf->num_grefs, sizeof(*buf->grefs), GFP_KERNEL);
++	if (!buf->grefs)
++		return -ENOMEM;
++
++	buf->directory = kcalloc(get_num_pages_dir(buf), PAGE_SIZE, GFP_KERNEL);
++	if (!buf->directory)
++		return -ENOMEM;
++
++	return 0;
++}
++
++/*
++ * For be allocated buffers we don't need grant_refs_for_buffer as those
++ * grant references are allocated at backend side
++ */
++static const struct xen_drm_front_shbuf_ops backend_ops = {
++	.calc_num_grefs = backend_calc_num_grefs,
++	.fill_page_dir = backend_fill_page_dir,
++	.map = backend_map,
++	.unmap = backend_unmap
++};
++
++/* For locally granted references we do not need to map/unmap the references */
++static const struct xen_drm_front_shbuf_ops local_ops = {
++	.calc_num_grefs = guest_calc_num_grefs,
++	.fill_page_dir = guest_fill_page_dir,
++	.grant_refs_for_buffer = guest_grant_refs_for_buffer,
++};
++
++struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
++		struct xen_drm_front_shbuf_cfg *cfg)
++{
++	struct xen_drm_front_shbuf *buf;
++	int ret;
++
++	/* either pages or sgt, not both */
++	BUG_ON(cfg->pages && cfg->sgt);
++
++	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
++	if (!buf)
++		return NULL;
++
++	if (cfg->be_alloc)
++		buf->ops = &backend_ops;
++	else
++		buf->ops = &local_ops;
++
++	buf->xb_dev = cfg->xb_dev;
++	buf->num_pages = DIV_ROUND_UP(cfg->size, PAGE_SIZE);
++	buf->sgt = cfg->sgt;
++	buf->pages = cfg->pages;
++
++	buf->ops->calc_num_grefs(buf);
++
++	ret = alloc_storage(buf);
++	if (ret)
++		goto fail;
++
++	ret = grant_references(buf);
++	if (ret)
++		goto fail;
++
++	buf->ops->fill_page_dir(buf);
++
++	return buf;
++
++fail:
++	xen_drm_front_shbuf_free(buf);
++	return ERR_PTR(ret);
++}
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_shbuf.h b/drivers/gpu/drm/xen/xen_drm_front_shbuf.h
+new file mode 100644
+index 000000000000..48151fc18f0a
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_shbuf.h
+@@ -0,0 +1,80 @@
++/*
++ *  Xen para-virtual DRM device
++ *
++ *   This program is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ *
++ *   This program is distributed in the hope that it will be useful,
++ *   but WITHOUT ANY WARRANTY; without even the implied warranty of
++ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ *   GNU General Public License for more details.
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#ifndef __XEN_DRM_FRONT_SHBUF_H_
++#define __XEN_DRM_FRONT_SHBUF_H_
++
++#include <linux/kernel.h>
++#include <linux/scatterlist.h>
++
++#include <xen/grant_table.h>
++
++struct xen_drm_front_shbuf {
++	/*
++	 * number of references granted for the backend use:
++	 *  - for allocated/imported dma-buf's this holds number of grant
++	 *    references for the page directory and pages of the buffer
++	 *  - for the buffer provided by the backend this holds number of
++	 *    grant references for the page directory as grant references for
++	 *    the buffer will be provided by the backend
++	 */
++	int num_grefs;
++	grant_ref_t *grefs;
++	unsigned char *directory;
++
++	/*
++	 * there are 2 ways to provide backing storage for this shared buffer:
++	 * either pages or sgt. if buffer created from sgt then we own
++	 * the pages and must free those ourselves on closure
++	 */
++	int num_pages;
++	struct page **pages;
++
++	struct sg_table *sgt;
++
++	struct xenbus_device *xb_dev;
++
++	/* these are the ops used internally depending on be_alloc mode */
++	const struct xen_drm_front_shbuf_ops *ops;
++
++	/* Xen map handles for the buffer allocated by the backend */
++	grant_handle_t *backend_map_handles;
++};
++
++struct xen_drm_front_shbuf_cfg {
++	struct xenbus_device *xb_dev;
++	size_t size;
++	struct page **pages;
++	struct sg_table *sgt;
++	bool be_alloc;
++};
++
++struct xen_drm_front_shbuf *xen_drm_front_shbuf_alloc(
++		struct xen_drm_front_shbuf_cfg *cfg);
++
++grant_ref_t xen_drm_front_shbuf_get_dir_start(struct xen_drm_front_shbuf *buf);
++
++int xen_drm_front_shbuf_map(struct xen_drm_front_shbuf *buf);
++
++int xen_drm_front_shbuf_unmap(struct xen_drm_front_shbuf *buf);
++
++void xen_drm_front_shbuf_flush(struct xen_drm_front_shbuf *buf);
++
++void xen_drm_front_shbuf_free(struct xen_drm_front_shbuf *buf);
++
++#endif /* __XEN_DRM_FRONT_SHBUF_H_ */
+-- 
+2.7.4
+

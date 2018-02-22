@@ -25,25 +25,6 @@
 #include "xen_drm_front_drv.h"
 #include "xen_drm_front_shbuf.h"
 
-struct xen_gem_object {
-	struct drm_gem_object base;
-
-	size_t num_pages;
-	struct page **pages;
-
-	/* set for buffers allocated by the backend */
-	bool be_alloc;
-
-	/* this is for imported PRIME buffer */
-	struct sg_table *sgt_imported;
-};
-
-static inline struct xen_gem_object *to_xen_gem_obj(
-		struct drm_gem_object *gem_obj)
-{
-	return container_of(gem_obj, struct xen_gem_object, base);
-}
-
 static int gem_alloc_pages_array(struct xen_gem_object *xen_obj,
 		size_t buf_size)
 {
@@ -347,6 +328,11 @@ static const struct xen_drm_front_gem_ops xen_drm_gem_ops = {
 	.mmap                  = gem_mmap,
 
 	.get_pages             = gem_get_pages,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.dumb_map_offset       = xen_drm_front_gem_dumb_map_offset,
+	.fb_create_with_funcs  = xen_drm_front_gem_fb_create_with_funcs,
+	.fb_destroy            = xen_drm_front_gem_fb_destroy,
+#endif
 };
 
 const struct xen_drm_front_gem_ops *xen_drm_front_gem_get_ops(void)

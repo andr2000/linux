@@ -18,6 +18,8 @@
 #include "xen_drm_front_gem.h"
 #include "xen_drm_front_kms.h"
 
+#include "xen_drm_front_backport.h"
+
 static int dumb_create(struct drm_file *filp,
 		struct drm_device *dev, struct drm_mode_create_dumb *args)
 {
@@ -188,6 +190,13 @@ struct drm_driver xen_drm_driver = {
 	.date                      = "20180221",
 	.major                     = 1,
 	.minor                     = 0,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.get_vblank_counter        = drm_vblank_no_hw_counter,
+	.enable_vblank             = xen_drm_front_enable_vblank,
+	.disable_vblank            = xen_drm_front_disable_vblank,
+	.dumb_map_offset           = xen_drm_front_dumb_map_offset,
+	.dumb_destroy              = drm_gem_dumb_destroy,
+#endif
 };
 
 int xen_drm_front_drv_probe(struct platform_device *pdev,

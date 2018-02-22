@@ -18,6 +18,8 @@
 #include "xen_drm_front_cfg.h"
 #include "xen_drm_front_conn.h"
 
+#include "xen_drm_front_backport.h"
+
 struct xen_drm_front_drm_pipeline {
 	struct xen_drm_front_drm_info *drm_info;
 

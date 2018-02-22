@@ -77,6 +77,12 @@ static const struct xen_drm_front_gem_ops xen_drm_front_gem_cma_ops = {
 	.mmap                  = drm_gem_cma_mmap,
 
 	.get_pages             = gem_get_pages,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.dumb_map_offset       = drm_gem_cma_dumb_map_offset,
+
+	.fb_create_with_funcs  = drm_fb_cma_create_with_funcs,
+	.fb_destroy            = drm_fb_cma_destroy,
+#endif
 };
 
 const struct xen_drm_front_gem_ops *xen_drm_front_gem_get_ops(void)

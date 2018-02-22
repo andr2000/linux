@@ -26,6 +26,8 @@
 #include "xen_drm_front.h"
 #include "xen_drm_front_shbuf.h"
 
+#include "xen_drm_front_backport.h"
+
 struct xen_drm_front_shbuf_ops {
 	/*
 	 * Calculate number of grefs required to handle this buffer,

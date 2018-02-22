@@ -99,7 +99,11 @@ static const struct drm_connector_helper_funcs connector_helper_funcs = {
 };
 
 static const struct drm_connector_funcs connector_funcs = {
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.dpms = drm_atomic_helper_connector_dpms,
+#else
 	.dpms = drm_helper_connector_dpms,
+#endif
 	.detect = connector_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,

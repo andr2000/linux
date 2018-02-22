@@ -492,7 +492,11 @@ static void xen_drm_drv_free_object_unlocked(struct drm_gem_object *obj)
 	xen_drm_front_gem_free_object_unlocked(obj);
 }
 
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+static int xen_drm_drv_unload(struct drm_device *dev)
+#else
 static void xen_drm_drv_release(struct drm_device *dev)
+#endif
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct xen_drm_front_info *front_info = drm_info->front_info;
@@ -502,7 +506,11 @@ static void xen_drm_drv_release(struct drm_device *dev)
 	drm_atomic_helper_shutdown(dev);
 	drm_mode_config_cleanup(dev);
 
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	drm_dev_unref(dev);
+#else
 	drm_dev_fini(dev);
+#endif
 	kfree(dev);
 
 	if (front_info->cfg.be_alloc)
@@ -510,6 +518,9 @@ static void xen_drm_drv_release(struct drm_device *dev)
 				XenbusStateInitialising);
 
 	kfree(drm_info);
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	return 0;
+#endif
 }
 
 static const struct file_operations xen_drm_dev_fops = {
@@ -538,7 +549,11 @@ static const struct vm_operations_struct xen_drm_drv_vm_ops = {
 static struct drm_driver xen_drm_driver = {
 	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
 				     DRIVER_PRIME | DRIVER_ATOMIC,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.unload                    = xen_drm_drv_unload,
+#else
 	.release                   = xen_drm_drv_release,
+#endif
 	.gem_vm_ops                = &xen_drm_drv_vm_ops,
 	.gem_free_object_unlocked  = xen_drm_drv_free_object_unlocked,
 	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
@@ -771,7 +786,9 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 {
 	struct xen_drm_front_info *front_info;
 	struct device *dev = &xb_dev->dev;
+#if LINUX_VERSION_CODE > PV_DRM_LINUX_VERSION
 	int ret;
+#endif
 
 	/*
 	 * The device is not spawn from a device tree, so arch_setup_dma_ops
@@ -780,13 +797,17 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 	 * is not correct: to fix this call of_dma_configure() with a NULL
 	 * node to set default DMA ops.
 	 */
-	dev->bus->force_dma = true;
 	dev->coherent_dma_mask = DMA_BIT_MASK(32);
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	of_dma_configure(dev, NULL);
+#else
+	dev->bus->force_dma = true;
 	ret = of_dma_configure(dev, NULL);
 	if (ret < 0) {
 		DRM_ERROR("Cannot setup DMA ops, ret %d", ret);
 		return ret;
 	}
+#endif
 
 	front_info = devm_kzalloc(&xb_dev->dev,
 			sizeof(*front_info), GFP_KERNEL);

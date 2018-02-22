@@ -15,7 +15,14 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem.h>
+
+#include "xen_drm_front_backport.h"
+
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+#include "xen_drm_front_gem.h"
+#else
 #include <drm/drm_gem_framebuffer_helper.h>
+#endif
 
 #include "xen_drm_front.h"
 #include "xen_drm_front_conn.h"
@@ -42,7 +49,11 @@ static void fb_destroy(struct drm_framebuffer *fb)
 				xen_drm_front_fb_to_cookie(fb));
 		drm_dev_exit(idx);
 	}
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	xen_drm_front_gem_fb_destroy(fb);
+#else
 	drm_gem_fb_destroy(fb);
+#endif
 }
 
 static struct drm_framebuffer_funcs fb_funcs = {
@@ -57,7 +68,12 @@ static struct drm_framebuffer *fb_create(struct drm_device *dev,
 	struct drm_gem_object *gem_obj;
 	int ret;
 
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	fb = xen_drm_front_gem_fb_create_with_funcs(dev, filp,
+		mode_cmd, &fb_funcs);
+#else
 	fb = drm_gem_fb_create_with_funcs(dev, filp, mode_cmd, &fb_funcs);
+#endif
 	if (IS_ERR_OR_NULL(fb))
 		return fb;
 
@@ -74,7 +90,12 @@ static struct drm_framebuffer *fb_create(struct drm_device *dev,
 			drm_info->front_info,
 			xen_drm_front_dbuf_to_cookie(gem_obj),
 			xen_drm_front_fb_to_cookie(fb),
-			fb->width, fb->height, fb->format->format);
+			fb->width, fb->height,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+			fb->pixel_format);
+#else
+			fb->format->format);
+#endif
 	if (ret < 0) {
 		DRM_ERROR("Back failed to attach FB %p: %d\n", fb, ret);
 		goto fail;
@@ -83,7 +104,11 @@ static struct drm_framebuffer *fb_create(struct drm_device *dev,
 	return fb;
 
 fail:
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	xen_drm_front_gem_fb_destroy(fb);
+#else
 	drm_gem_fb_destroy(fb);
+#endif
 	return ERR_PTR(ret);
 }
 
@@ -120,7 +145,12 @@ static void display_enable(struct drm_simple_display_pipe *pipe,
 
 	ret = xen_drm_front_mode_set(pipeline,
 			crtc->x, crtc->y, fb->width, fb->height,
+
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+			fb->bits_per_pixel,
+#else
 			fb->format->cpp[0] * 8,
+#endif
 			xen_drm_front_fb_to_cookie(fb));
 
 	if (ret) {
@@ -181,8 +211,13 @@ static void pflip_to_worker(struct work_struct *work)
 static bool display_send_page_flip(struct drm_simple_display_pipe *pipe,
 		struct drm_plane_state *old_plane_state)
 {
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	struct drm_plane_state *plane_state = pipe->plane.state;
+
+#else
 	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(
 			old_plane_state->state, &pipe->plane);
+#endif
 
 	/*
 	 * If old_plane_state->fb is NULL and plane_state->fb is not,
@@ -273,6 +308,7 @@ static void display_update(struct drm_simple_display_pipe *pipe,
 	drm_dev_exit(idx);
 }
 
+#if LINUX_VERSION_CODE > PV_DRM_LINUX_VERSION
 static enum drm_mode_status display_mode_valid(struct drm_crtc *crtc,
 		const struct drm_display_mode *mode)
 {
@@ -289,9 +325,12 @@ static enum drm_mode_status display_mode_valid(struct drm_crtc *crtc,
 
 	return MODE_OK;
 }
+#endif
 
 static const struct drm_simple_display_pipe_funcs display_funcs = {
+#if LINUX_VERSION_CODE > PV_DRM_LINUX_VERSION
 	.mode_valid = display_mode_valid,
+#endif
 	.enable = display_enable,
 	.disable = display_disable,
 	.prepare_fb = display_prepare_fb,
@@ -322,7 +361,11 @@ static int display_pipe_init(struct xen_drm_front_drm_info *drm_info,
 
 	return drm_simple_display_pipe_init(dev, &pipeline->pipe,
 			&display_funcs, formats, format_count,
-			NULL, &pipeline->conn);
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+#else
+			NULL,
+#endif
+			&pipeline->conn);
 }
 
 int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)

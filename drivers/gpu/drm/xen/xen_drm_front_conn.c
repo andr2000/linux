@@ -14,6 +14,7 @@
 #include <video/videomode.h>
 
 #include "xen_drm_front.h"
+#include "xen_drm_front_backport.h"
 #include "xen_drm_front_conn.h"
 #include "xen_drm_front_kms.h"
 
@@ -40,9 +41,14 @@ const uint32_t *xen_drm_front_conn_get_formats(int *format_count)
 	return plane_formats;
 }
 
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+enum drm_connector_status connector_detect(struct drm_connector *connector,
+		bool force)
+#else
 static int connector_detect(struct drm_connector *connector,
 		struct drm_modeset_acquire_ctx *ctx,
 		bool force)
+#endif
 {
 	struct xen_drm_front_drm_pipeline *pipeline =
 			to_xen_drm_pipeline(connector);
@@ -83,13 +89,40 @@ static int connector_get_modes(struct drm_connector *connector)
 	return 1;
 }
 
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+static enum drm_mode_status connector_mode_valid(
+		struct drm_connector *connector,
+		struct drm_display_mode *mode)
+{
+	struct xen_drm_front_drm_pipeline *pipeline =
+			to_xen_drm_pipeline(connector);
+
+	if (mode->hdisplay != pipeline->width)
+		return MODE_ERROR;
+
+	if (mode->vdisplay != pipeline->height)
+		return MODE_ERROR;
+
+	return MODE_OK;
+}
+#endif
+
 static const struct drm_connector_helper_funcs connector_helper_funcs = {
 	.get_modes = connector_get_modes,
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.mode_valid = connector_mode_valid,
+#else
 	.detect_ctx = connector_detect,
+#endif
 };
 
 static const struct drm_connector_funcs connector_funcs = {
+#if LINUX_VERSION_CODE < PV_DRM_LINUX_VERSION
+	.dpms = drm_atomic_helper_connector_dpms,
+	.detect = connector_detect,
+#else
 	.dpms = drm_helper_connector_dpms,
+#endif
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.destroy = drm_connector_cleanup,
 	.reset = drm_atomic_helper_connector_reset,

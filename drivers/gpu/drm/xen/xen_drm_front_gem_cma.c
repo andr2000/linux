@@ -72,7 +72,3 @@ void xen_drm_front_gem_free_object_unlocked(struct drm_gem_object *gem_obj)
 	drm_gem_cma_free_object(gem_obj);
 }
 
-struct page **xen_drm_front_gem_get_pages(struct drm_gem_object *gem_obj)
-{
-	return NULL;
-}

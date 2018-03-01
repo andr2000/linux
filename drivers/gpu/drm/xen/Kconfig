@@ -46,4 +46,10 @@ config DRM_XEN_ZCOPY
 	  driver domains to use buffers of unpriveledged guests without
 	  additional memory copying.
 
+config DRM_XEN_ZCOPY_CMA
+	bool "Use CMA to allocate buffers"
+	depends on DRM_XEN_ZCOPY
+	help
+	  Use CMA to allocate display buffers.
+
 endchoice

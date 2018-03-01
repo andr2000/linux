@@ -16,8 +16,11 @@
 #include <linux/platform_device.h>
 
 #include <xen/grant_table.h>
+#include <asm/xen/page.h>
 
 #include <drm/xen_zcopy_drm.h>
+
+#include "xen_drm_zcopy_balloon.h"
 
 struct xen_gem_object {
 	struct drm_gem_object base;
@@ -27,10 +30,15 @@ struct xen_gem_object {
 
 	uint32_t num_pages;
 	grant_ref_t *grefs;
-	/* these are the pages for allocated Xen GEM object */
+	/* these are the pages from Xen balloon for allocated Xen GEM object */
 	struct page **pages;
+
+	struct xen_drm_zcopy_balloon balloon;
+
 	/* this will be set if we have imported a PRIME buffer */
 	struct sg_table *sgt;
+	/* map grant handles */
+	grant_handle_t *map_handles;
 };
 
 struct xen_drv_info {
@@ -41,6 +49,198 @@ static inline struct xen_gem_object *to_xen_gem_obj(
 		struct drm_gem_object *gem_obj)
 {
 	return container_of(gem_obj, struct xen_gem_object, base);
+}
+
+#define xen_page_to_vaddr(page) \
+	((phys_addr_t)pfn_to_kaddr(page_to_xen_pfn(page)))
+
+static int from_refs_unmap(struct device *dev,
+		struct xen_gem_object *xen_obj)
+{
+	struct gnttab_unmap_grant_ref *unmap_ops;
+	int i, ret;
+
+	if (!xen_obj->pages || !xen_obj->map_handles)
+		return 0;
+
+	unmap_ops = kcalloc(xen_obj->num_pages, sizeof(*unmap_ops), GFP_KERNEL);
+	if (!unmap_ops)
+		return -ENOMEM;
+
+	for (i = 0; i < xen_obj->num_pages; i++) {
+		phys_addr_t addr;
+
+		/*
+		 * Map the grant entry for access by host CPUs.
+		 * If <host_addr> or <dev_bus_addr> is zero, that
+		 * field is ignored. If non-zero, they must refer to
+		 * a device/host mapping that is tracked by <handle>
+		 */
+		addr = xen_page_to_vaddr(xen_obj->pages[i]);
+		gnttab_set_unmap_op(&unmap_ops[i], addr,
+#if defined(CONFIG_X86)
+			GNTMAP_host_map | GNTMAP_device_map,
+#else
+			GNTMAP_host_map,
+#endif
+			xen_obj->map_handles[i]);
+		unmap_ops[i].dev_bus_addr = __pfn_to_phys(__pfn_to_mfn(
+				page_to_pfn(xen_obj->pages[i])));
+	}
+
+	ret = gnttab_unmap_refs(unmap_ops, NULL, xen_obj->pages,
+			xen_obj->num_pages);
+	if (ret)
+		DRM_ERROR("Failed to unmap grant references, ret %d", ret);
+
+	for (i = 0; i < xen_obj->num_pages; i++) {
+		if (unlikely(unmap_ops[i].status != GNTST_okay))
+			DRM_ERROR("Failed to unmap page %d with ref %d: %d\n",
+					i, xen_obj->grefs[i],
+					unmap_ops[i].status);
+	}
+
+	xen_drm_zcopy_ballooned_pages_free(dev, &xen_obj->balloon,
+			xen_obj->num_pages, xen_obj->pages);
+
+	kfree(xen_obj->pages);
+	xen_obj->pages = NULL;
+	kfree(xen_obj->map_handles);
+	xen_obj->map_handles = NULL;
+	kfree(unmap_ops);
+	kfree(xen_obj->grefs);
+	xen_obj->grefs = NULL;
+	return 0;
+}
+
+static int from_refs_map(struct device *dev, struct xen_gem_object *xen_obj)
+{
+	struct gnttab_map_grant_ref *map_ops = NULL;
+	int ret, i;
+
+	if (xen_obj->pages) {
+		DRM_ERROR("Mapping already mapped pages?\n");
+		return -EINVAL;
+	}
+
+	xen_obj->pages = kcalloc(xen_obj->num_pages, sizeof(*xen_obj->pages),
+			GFP_KERNEL);
+	if (!xen_obj->pages) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	xen_obj->map_handles = kcalloc(xen_obj->num_pages,
+			sizeof(*xen_obj->map_handles), GFP_KERNEL);
+	if (!xen_obj->map_handles) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	map_ops = kcalloc(xen_obj->num_pages, sizeof(*map_ops), GFP_KERNEL);
+	if (!map_ops) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	ret = xen_drm_zcopy_ballooned_pages_alloc(dev, &xen_obj->balloon,
+			xen_obj->num_pages, xen_obj->pages);
+	if (ret < 0) {
+		DRM_ERROR("Cannot allocate %d ballooned pages: %d\n",
+				xen_obj->num_pages, ret);
+		goto fail;
+	}
+
+	for (i = 0; i < xen_obj->num_pages; i++) {
+		phys_addr_t addr;
+
+		addr = xen_page_to_vaddr(xen_obj->pages[i]);
+		gnttab_set_map_op(&map_ops[i], addr,
+#if defined(CONFIG_X86)
+			GNTMAP_host_map | GNTMAP_device_map,
+#else
+			GNTMAP_host_map,
+#endif
+			xen_obj->grefs[i], xen_obj->otherend_id);
+	}
+	ret = gnttab_map_refs(map_ops, NULL, xen_obj->pages,
+			xen_obj->num_pages);
+
+	/* save handles even if error, so we can unmap */
+	for (i = 0; i < xen_obj->num_pages; i++) {
+		xen_obj->map_handles[i] = map_ops[i].handle;
+		if (unlikely(map_ops[i].status != GNTST_okay))
+			DRM_ERROR("Failed to map page %d with ref %d: %d\n",
+				i, xen_obj->grefs[i], map_ops[i].status);
+	}
+
+	if (ret) {
+		DRM_ERROR("Failed to map grant references, ret %d", ret);
+		from_refs_unmap(dev, xen_obj);
+		goto fail;
+	}
+
+	kfree(map_ops);
+	return 0;
+
+fail:
+	kfree(xen_obj->pages);
+	xen_obj->pages = NULL;
+	kfree(xen_obj->map_handles);
+	xen_obj->map_handles = NULL;
+	kfree(map_ops);
+	return ret;
+
+}
+
+static void to_refs_end_foreign_access(struct xen_gem_object *xen_obj)
+{
+	int i;
+
+	if (xen_obj->grefs)
+		for (i = 0; i < xen_obj->num_pages; i++)
+			if (xen_obj->grefs[i] != GRANT_INVALID_REF)
+				gnttab_end_foreign_access(xen_obj->grefs[i],
+						0, 0UL);
+	kfree(xen_obj->grefs);
+	xen_obj->grefs = NULL;
+	sg_free_table(xen_obj->sgt);
+	xen_obj->sgt = NULL;
+}
+
+static int to_refs_grant_foreign_access(struct xen_gem_object *xen_obj)
+{
+	grant_ref_t priv_gref_head;
+	int ret, j, cur_ref, num_pages;
+	struct sg_page_iter sg_iter;
+
+	ret = gnttab_alloc_grant_references(xen_obj->num_pages,
+			&priv_gref_head);
+	if (ret < 0) {
+		DRM_ERROR("Cannot allocate grant references\n");
+		return ret;
+	}
+
+	j = 0;
+	num_pages = xen_obj->num_pages;
+	for_each_sg_page(xen_obj->sgt->sgl, &sg_iter, xen_obj->sgt->nents, 0) {
+		struct page *page;
+
+		page = sg_page_iter_page(&sg_iter);
+		cur_ref = gnttab_claim_grant_reference(&priv_gref_head);
+		if (cur_ref < 0)
+			return cur_ref;
+
+		gnttab_grant_foreign_access_ref(cur_ref,
+				xen_obj->otherend_id, xen_page_to_gfn(page), 0);
+		xen_obj->grefs[j++] = cur_ref;
+		num_pages--;
+	}
+
+	WARN_ON(num_pages != 0);
+
+	gnttab_free_grant_references(priv_gref_head);
+	return 0;
 }
 
 static int gem_create_with_handle(struct xen_gem_object *xen_obj,
@@ -110,11 +310,14 @@ static void gem_free_object(struct drm_gem_object *gem_obj)
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	DRM_DEBUG("Freeing dumb with handle %d\n", xen_obj->dumb_handle);
-	if (xen_obj->grefs)
+	if (xen_obj->grefs) {
 		if (xen_obj->sgt) {
 			if (xen_obj->base.import_attach)
 				drm_prime_gem_destroy(&xen_obj->base,
 						xen_obj->sgt);
+			to_refs_end_foreign_access(xen_obj);
+		} else
+			from_refs_unmap(gem_obj->dev->dev, xen_obj);
 		}
 
 	drm_gem_object_release(gem_obj);
@@ -191,7 +394,9 @@ static int do_ioctl_from_refs(struct drm_device *dev,
 		goto fail;
 	}
 
-	/* do nothing with grefs at the moment */
+	ret = from_refs_map(dev->dev, xen_obj);
+	if (ret < 0)
+		goto fail;
 
 	ret = gem_create_obj(xen_obj, dev, filp,
 			round_up(req->dumb.size, PAGE_SIZE));
@@ -281,7 +486,9 @@ static int ioctl_to_refs(struct drm_device *dev,
 		goto fail;
 	}
 
-	/* do nothing with grefs at the moment */
+	ret = to_refs_grant_foreign_access(xen_obj);
+	if (ret < 0)
+		goto fail;
 
 	if (copy_to_user(req->grefs, xen_obj->grefs,
 			xen_obj->num_pages * sizeof(grant_ref_t))) {
@@ -292,8 +499,7 @@ static int ioctl_to_refs(struct drm_device *dev,
 	return 0;
 
 fail:
-	kfree(xen_obj->grefs);
-	xen_obj->grefs = NULL;
+	to_refs_end_foreign_access(xen_obj);
 	return ret;
 }
 
@@ -405,6 +611,13 @@ static struct platform_device *xen_pdev;
 static int __init xen_drv_init(void)
 {
 	int ret;
+
+	/* At the moment we only support case with XEN_PAGE_SIZE == PAGE_SIZE */
+	if (XEN_PAGE_SIZE != PAGE_SIZE) {
+		DRM_ERROR(XENDRM_ZCOPY_DRIVER_NAME ": different kernel and Xen page sizes are not supported: XEN_PAGE_SIZE (%lu) != PAGE_SIZE (%lu)\n",
+				XEN_PAGE_SIZE, PAGE_SIZE);
+		return -ENODEV;
+	}
 
 	if (!xen_domain())
 		return -ENODEV;

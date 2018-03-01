@@ -14,6 +14,7 @@ Linux GPU Driver Developer's Guide
    vga-switcheroo
    vgaarbiter
    xen-front
+   xen-zcopy
 
 .. only::  subproject
 

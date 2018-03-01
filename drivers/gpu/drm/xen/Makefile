@@ -16,3 +16,7 @@ else
 endif
 
 obj-$(CONFIG_DRM_XEN_FRONTEND) += drm_xen_front.o
+
+drm_xen_zcopy-objs := xen_drm_zcopy_drv.o
+
+obj-$(CONFIG_DRM_XEN_ZCOPY) += drm_xen_zcopy.o

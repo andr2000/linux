@@ -13,6 +13,7 @@ GPU Driver Documentation
    vc4
    bridge/dw-hdmi
    xen-front
+   xen-zcopy
 
 .. only::  subproject and html
 

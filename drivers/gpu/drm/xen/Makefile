@@ -16,3 +16,8 @@ else
 endif
 
 obj-$(CONFIG_DRM_XEN_FRONTEND) += drm_xen_front.o
+
+drm_xen_zcopy-objs := xen_drm_zcopy.o \
+		      xen_drm_zcopy_balloon.o
+
+obj-$(CONFIG_DRM_XEN_ZCOPY) += drm_xen_zcopy.o

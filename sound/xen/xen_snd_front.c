@@ -19,10 +19,12 @@
 #include <xen/interface/io/sndif.h>
 
 #include "xen_snd_front.h"
+#include "xen_snd_front_alsa.h"
 #include "xen_snd_front_evtchnl.h"
 
 static void xen_drv_remove_internal(struct xen_snd_front_info *front_info)
 {
+	xen_snd_front_alsa_cleanup(front_info);
 	xen_snd_front_evtchnl_free_all(front_info);
 }
 
@@ -48,7 +50,7 @@ static int sndback_initwait(struct xen_snd_front_info *front_info)
 
 static int sndback_connect(struct xen_snd_front_info *front_info)
 {
-	return 0;
+	return xen_snd_front_alsa_init(front_info);
 }
 
 static void sndback_disconnect(struct xen_snd_front_info *front_info)

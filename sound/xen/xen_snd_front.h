@@ -18,6 +18,8 @@ struct xen_snd_front_evtchnl_pair;
 struct xen_snd_front_info {
 	struct xenbus_device *xb_dev;
 	spinlock_t io_lock;
+	bool snd_pdrv_registered;
+	struct platform_device *snd_pdev;
 	int num_evt_pairs;
 	struct xen_snd_front_evtchnl_pair *evt_pairs;
 	struct xen_snd_front_cfg cfg;

@@ -56,6 +56,9 @@ struct xen_snd_front_evtchnl {
 			struct completion completion;
 			/* latest response status */
 			int resp_status;
+			union {
+				struct xensnd_query_hw_param hw_param;
+			} resp;
 		} req;
 		struct {
 			struct xensnd_event_page *page;

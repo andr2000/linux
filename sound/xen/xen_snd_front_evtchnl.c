@@ -52,6 +52,12 @@ again:
 			channel->u.req.resp_status = resp->status;
 			complete(&channel->u.req.completion);
 			break;
+		case XENSND_OP_HW_PARAM_QUERY:
+			channel->u.req.resp_status = resp->status;
+			channel->u.req.resp.hw_param =
+					resp->resp.hw_param;
+			complete(&channel->u.req.completion);
+			break;
 
 		default:
 			dev_err(&front_info->xb_dev->dev,
@@ -104,7 +110,10 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENSND_EVT_CUR_POS:
-			/* do nothing at the moment */
+			spin_unlock_irqrestore(&front_info->io_lock, flags);
+			front_info->front_ops->handle_cur_pos(channel,
+					event->op.cur_pos.position);
+			spin_lock_irqsave(&front_info->io_lock, flags);
 			break;
 		}
 	}

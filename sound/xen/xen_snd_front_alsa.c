@@ -12,6 +12,7 @@
 
 #include <sound/core.h>
 #include <sound/pcm.h>
+#include <sound/pcm_params.h>
 
 #include <xen/xenbus.h>
 
@@ -26,7 +27,16 @@ struct pcm_stream_info {
 	struct xen_snd_front_evtchnl_pair *evt_pair;
 	struct xen_snd_front_shbuf sh_buf;
 	int index;
+
+	bool is_open;
 	struct snd_pcm_hardware pcm_hw;
+
+	/* number of processed frames as reported by the backend */
+	snd_pcm_uframes_t be_cur_frame;
+	/* current HW pointer to be reported via .period callback */
+	atomic_t hw_ptr;
+	/* modulo of the number of processed frames - for period detection */
+	uint32_t out_frames;
 };
 
 struct pcm_instance_info {
@@ -47,10 +57,170 @@ struct card_info {
 	struct pcm_instance_info *pcm_instances;
 };
 
+struct alsa_sndif_sample_format {
+	uint8_t sndif;
+	snd_pcm_format_t alsa;
+};
+
+struct alsa_sndif_hw_param {
+	uint8_t sndif;
+	snd_pcm_hw_param_t alsa;
+};
+
+static const struct alsa_sndif_sample_format ALSA_SNDIF_FORMATS[] = {
+	{
+		.sndif = XENSND_PCM_FORMAT_U8,
+		.alsa = SNDRV_PCM_FORMAT_U8
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S8,
+		.alsa = SNDRV_PCM_FORMAT_S8
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U16_LE,
+		.alsa = SNDRV_PCM_FORMAT_U16_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U16_BE,
+		.alsa = SNDRV_PCM_FORMAT_U16_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S16_LE,
+		.alsa = SNDRV_PCM_FORMAT_S16_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S16_BE,
+		.alsa = SNDRV_PCM_FORMAT_S16_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U24_LE,
+		.alsa = SNDRV_PCM_FORMAT_U24_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U24_BE,
+		.alsa = SNDRV_PCM_FORMAT_U24_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S24_LE,
+		.alsa = SNDRV_PCM_FORMAT_S24_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S24_BE,
+		.alsa = SNDRV_PCM_FORMAT_S24_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U32_LE,
+		.alsa = SNDRV_PCM_FORMAT_U32_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_U32_BE,
+		.alsa = SNDRV_PCM_FORMAT_U32_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S32_LE,
+		.alsa = SNDRV_PCM_FORMAT_S32_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_S32_BE,
+		.alsa = SNDRV_PCM_FORMAT_S32_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_A_LAW,
+		.alsa = SNDRV_PCM_FORMAT_A_LAW
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_MU_LAW,
+		.alsa = SNDRV_PCM_FORMAT_MU_LAW
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F32_LE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F32_BE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F64_LE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT64_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_F64_BE,
+		.alsa = SNDRV_PCM_FORMAT_FLOAT64_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IEC958_SUBFRAME_LE,
+		.alsa = SNDRV_PCM_FORMAT_IEC958_SUBFRAME_LE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IEC958_SUBFRAME_BE,
+		.alsa = SNDRV_PCM_FORMAT_IEC958_SUBFRAME_BE
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_IMA_ADPCM,
+		.alsa = SNDRV_PCM_FORMAT_IMA_ADPCM
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_MPEG,
+		.alsa = SNDRV_PCM_FORMAT_MPEG
+	},
+	{
+		.sndif = XENSND_PCM_FORMAT_GSM,
+		.alsa = SNDRV_PCM_FORMAT_GSM
+	},
+};
+
+static int alsa_to_sndif_format(snd_pcm_format_t format)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ALSA_SNDIF_FORMATS); i++)
+		if (ALSA_SNDIF_FORMATS[i].alsa == format)
+			return ALSA_SNDIF_FORMATS[i].sndif;
+
+	return -EINVAL;
+}
+
+static uint64_t to_sndif_formats_mask(uint64_t alsa_formats)
+{
+	uint64_t mask;
+	int i;
+
+	mask = 0;
+	for (i = 0; i < ARRAY_SIZE(ALSA_SNDIF_FORMATS); i++)
+		if (1 << ALSA_SNDIF_FORMATS[i].alsa & alsa_formats)
+			mask |= 1 << ALSA_SNDIF_FORMATS[i].sndif;
+
+	return mask;
+}
+
+static uint64_t to_alsa_formats_mask(uint64_t sndif_formats)
+{
+	uint64_t mask;
+	int i;
+
+	mask = 0;
+	for (i = 0; i < ARRAY_SIZE(ALSA_SNDIF_FORMATS); i++)
+		if (1 << ALSA_SNDIF_FORMATS[i].sndif & sndif_formats)
+			mask |= 1 << ALSA_SNDIF_FORMATS[i].alsa;
+
+	return mask;
+}
+
 static void stream_clear(struct pcm_stream_info *stream)
 {
+	stream->is_open = false;
+	stream->be_cur_frame = 0;
+	stream->out_frames = 0;
+	atomic_set(&stream->hw_ptr, 0);
 	xen_snd_front_evtchnl_pair_clear(stream->evt_pair);
 	xen_snd_front_shbuf_clear(&stream->sh_buf);
+}
+
+static void stream_free(struct pcm_stream_info *stream)
+{
+	xen_snd_front_shbuf_free(&stream->sh_buf);
+	stream_clear(stream);
 }
 
 static struct pcm_stream_info *stream_get(struct snd_pcm_substream *substream)
@@ -67,6 +237,99 @@ static struct pcm_stream_info *stream_get(struct snd_pcm_substream *substream)
 	return stream;
 }
 
+static int alsa_hw_rule(struct snd_pcm_hw_params *params,
+		struct snd_pcm_hw_rule *rule)
+{
+	struct pcm_stream_info *stream = rule->private;
+	struct device *dev = &stream->front_info->xb_dev->dev;
+	struct snd_mask *formats =
+			hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+	struct snd_interval *rates =
+			hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels =
+			hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
+	struct snd_interval *period =
+			hw_param_interval(params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE);
+	struct snd_interval *buffer =
+			hw_param_interval(params, SNDRV_PCM_HW_PARAM_BUFFER_SIZE);
+	struct xensnd_query_hw_param req;
+	struct xensnd_query_hw_param resp;
+	struct snd_interval interval;
+	struct snd_mask mask;
+	uint64_t sndif_formats;
+	int changed, ret;
+
+	/* collect all the values we need for the query */
+
+	req.formats = to_sndif_formats_mask((uint64_t)formats->bits[0] |
+			(uint64_t)(formats->bits[1]) << 32);
+
+	req.rates.min = rates->min;
+	req.rates.max = rates->max;
+
+	req.channels.min = channels->min;
+	req.channels.max = channels->max;
+
+	req.buffer.min = buffer->min;
+	req.buffer.max = buffer->max;
+
+	req.period.min = period->min;
+	req.period.max = period->max;
+
+	ret = stream->front_info->front_ops->query_hw_param(
+			&stream->evt_pair->req, &req, &resp);
+	if (ret < 0) {
+		/* check if this is due to backend communication error */
+		if (ret == -EIO || ret == -ETIMEDOUT)
+			dev_err(dev, "Failed to query ALSA HW parameters\n");
+		return ret;
+	}
+
+	/* refine HW parameters after the query */
+	changed  = 0;
+
+	sndif_formats = to_alsa_formats_mask(resp.formats);
+	snd_mask_none(&mask);
+	mask.bits[0] = (uint32_t)sndif_formats;
+	mask.bits[1] = (uint32_t)(sndif_formats >> 32);
+	ret = snd_mask_refine(formats, &mask);
+	if (ret < 0)
+		return ret;
+	changed |= ret;
+
+	interval.openmin = interval.openmax = 0;
+	interval.integer = 1;
+
+	interval.min = resp.rates.min;
+	interval.max = resp.rates.max;
+	ret = snd_interval_refine(rates, &interval);
+	if (ret < 0)
+		return ret;
+	changed |= ret;
+
+	interval.min = resp.channels.min;
+	interval.max = resp.channels.max;
+	ret = snd_interval_refine(channels, &interval);
+	if (ret < 0)
+		return ret;
+	changed |= ret;
+
+	interval.min = resp.buffer.min;
+	interval.max = resp.buffer.max;
+	ret = snd_interval_refine(buffer, &interval);
+	if (ret < 0)
+		return ret;
+	changed |= ret;
+
+	interval.min = resp.period.min;
+	interval.max = resp.period.max;
+	ret = snd_interval_refine(period, &interval);
+	if (ret < 0)
+		return ret;
+	changed |= ret;
+	return changed;
+}
+
 static int alsa_open(struct snd_pcm_substream *substream)
 {
 	struct pcm_instance_info *pcm_instance =
@@ -75,7 +338,9 @@ static int alsa_open(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct xen_snd_front_info *front_info =
 			pcm_instance->card_info->front_info;
+	struct device *dev = &front_info->xb_dev->dev;
 	unsigned long flags;
+	int ret;
 
 	/*
 	 * return our HW properties: override defaults with those configured
@@ -104,6 +369,47 @@ static int alsa_open(struct snd_pcm_substream *substream)
 	stream_clear(stream);
 
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_FORMAT,
+			alsa_hw_rule, stream,
+			SNDRV_PCM_HW_PARAM_FORMAT, -1);
+	if (ret) {
+		dev_err(dev, "Failed to add HW rule for SNDRV_PCM_HW_PARAM_FORMAT\n");
+		return ret;
+	}
+
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+			alsa_hw_rule, stream,
+			SNDRV_PCM_HW_PARAM_RATE, -1);
+	if (ret) {
+		dev_err(dev, "Failed to add HW rule for SNDRV_PCM_HW_PARAM_RATE\n");
+		return ret;
+	}
+
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_CHANNELS,
+			alsa_hw_rule, stream,
+			SNDRV_PCM_HW_PARAM_CHANNELS, -1);
+	if (ret) {
+		dev_err(dev, "Failed to add HW rule for SNDRV_PCM_HW_PARAM_CHANNELS\n");
+		return ret;
+	}
+
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_PERIOD_SIZE,
+			alsa_hw_rule, stream,
+			SNDRV_PCM_HW_PARAM_PERIOD_SIZE, -1);
+	if (ret) {
+		dev_err(dev, "Failed to add HW rule for SNDRV_PCM_HW_PARAM_PERIOD_SIZE\n");
+		return ret;
+	}
+
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_BUFFER_SIZE,
+			alsa_hw_rule, stream,
+			SNDRV_PCM_HW_PARAM_BUFFER_SIZE, -1);
+	if (ret) {
+		dev_err(dev, "Failed to add HW rule for SNDRV_PCM_HW_PARAM_BUFFER_SIZE\n");
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -130,13 +436,13 @@ static int alsa_hw_params(struct snd_pcm_substream *substream,
 	 * this callback may be called multiple times,
 	 * so free the previously allocated shared buffer if any
 	 */
-	stream_clear(stream);
+	stream_free(stream);
 
 	ret = xen_snd_front_shbuf_alloc(stream->front_info->xb_dev,
 			&stream->sh_buf,
 			params_buffer_bytes(params));
 	if (ret < 0) {
-		stream_clear(stream);
+		stream_free(stream);
 		dev_err(&stream->front_info->xb_dev->dev,
 				"Failed to allocate buffers for stream with index %d\n",
 				stream->index);
@@ -149,41 +455,103 @@ static int alsa_hw_params(struct snd_pcm_substream *substream,
 static int alsa_hw_free(struct snd_pcm_substream *substream)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
-	stream_clear(stream);
-	return 0;
+	ret = stream->front_info->front_ops->close(&stream->evt_pair->req);
+	stream_free(stream);
+	return ret;
 }
 
 static int alsa_prepare(struct snd_pcm_substream *substream)
 {
-	return -EINVAL;
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	if (!stream->is_open) {
+		struct snd_pcm_runtime *runtime = substream->runtime;
+		uint8_t sndif_format;
+		int ret;
+
+		sndif_format = alsa_to_sndif_format(runtime->format);
+		if (sndif_format < 0) {
+			dev_err(&stream->front_info->xb_dev->dev,
+					"Unsupported sample format: %d\n",
+					runtime->format);
+			return sndif_format;
+		}
+
+		ret = stream->front_info->front_ops->prepare(
+				&stream->evt_pair->req,
+				&stream->sh_buf,
+				sndif_format, runtime->channels, runtime->rate,
+				snd_pcm_lib_buffer_bytes(substream),
+				snd_pcm_lib_period_bytes(substream));
+		if (ret < 0)
+			return ret;
+
+		stream->is_open = true;
+	}
+
+	return 0;
 }
 
 static int alsa_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	struct pcm_stream_info *stream = stream_get(substream);
+	int type;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
+		type = XENSND_OP_TRIGGER_START;
 		break;
 
 	case SNDRV_PCM_TRIGGER_RESUME:
+		type = XENSND_OP_TRIGGER_RESUME;
 		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
+		type = XENSND_OP_TRIGGER_STOP;
 		break;
 
 	case SNDRV_PCM_TRIGGER_SUSPEND:
+		type = XENSND_OP_TRIGGER_PAUSE;
 		break;
 
 	default:
 		return -EINVAL;
 	}
 
-	return 0;
+	return stream->front_info->front_ops->trigger(&stream->evt_pair->req,
+			type);
+}
+
+static void alsa_handle_cur_pos(struct xen_snd_front_evtchnl *evtchnl,
+		uint64_t pos_bytes)
+{
+	struct snd_pcm_substream *substream = evtchnl->u.evt.substream;
+	struct pcm_stream_info *stream = stream_get(substream);
+	snd_pcm_uframes_t delta, new_hw_ptr, cur_frame;
+
+	cur_frame = bytes_to_frames(substream->runtime, pos_bytes);
+
+	delta = cur_frame - stream->be_cur_frame;
+	stream->be_cur_frame = cur_frame;
+
+	new_hw_ptr = (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
+	new_hw_ptr = (new_hw_ptr + delta) % substream->runtime->buffer_size;
+	atomic_set(&stream->hw_ptr, (int)new_hw_ptr);
+
+	stream->out_frames += delta;
+	if (stream->out_frames > substream->runtime->period_size) {
+		stream->out_frames %= substream->runtime->period_size;
+		snd_pcm_period_elapsed(substream);
+	}
 }
 
 static snd_pcm_uframes_t alsa_pointer(struct snd_pcm_substream *substream)
 {
-	return 0;
+	struct pcm_stream_info *stream = stream_get(substream);
+
+	return (snd_pcm_uframes_t)atomic_read(&stream->hw_ptr);
 }
 
 static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
@@ -198,7 +566,8 @@ static int alsa_pb_copy_user(struct snd_pcm_substream *substream,
 	if (copy_from_user(stream->sh_buf.vbuffer + pos, src, count))
 		return -EFAULT;
 
-	return 0;
+	return stream->front_info->front_ops->write(&stream->evt_pair->req,
+			pos, count);
 }
 
 static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
@@ -212,7 +581,8 @@ static int alsa_pb_copy_kernel(struct snd_pcm_substream *substream,
 
 	memcpy(stream->sh_buf.vbuffer + pos, src, count);
 
-	return 0;
+	return stream->front_info->front_ops->write(&stream->evt_pair->req,
+			pos, count);
 }
 
 static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
@@ -220,9 +590,15 @@ static int alsa_cap_copy_user(struct snd_pcm_substream *substream,
 		unsigned long count)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
+
+	ret = stream->front_info->front_ops->read(&stream->evt_pair->req,
+			pos, count);
+	if (ret < 0)
+		return ret;
 
 	return copy_to_user(dst, stream->sh_buf.vbuffer + pos, count) ?
 		-EFAULT : 0;
@@ -232,9 +608,15 @@ static int alsa_cap_copy_kernel(struct snd_pcm_substream *substream,
 	int channel, unsigned long pos, void *dst, unsigned long count)
 {
 	struct pcm_stream_info *stream = stream_get(substream);
+	int ret;
 
 	if (unlikely(pos + count > stream->sh_buf.vbuffer_sz))
 		return -EINVAL;
+
+	ret = stream->front_info->front_ops->read(&stream->evt_pair->req,
+			pos, count);
+	if (ret < 0)
+		return ret;
 
 	memcpy(dst, stream->sh_buf.vbuffer + pos, count);
 	return 0;
@@ -249,7 +631,8 @@ static int alsa_pb_fill_silence(struct snd_pcm_substream *substream,
 		return -EINVAL;
 
 	memset(stream->sh_buf.vbuffer + pos, 0, count);
-	return 0;
+	return stream->front_info->front_ops->write(&stream->evt_pair->req,
+			pos, count);
 }
 
 /*
@@ -470,6 +853,8 @@ int xen_snd_front_alsa_init(struct xen_snd_front_info *front_info)
 	ret = platform_driver_register(&snd_drv_info);
 	if (ret < 0)
 		return ret;
+
+	front_info->front_ops->handle_cur_pos = alsa_handle_cur_pos;
 
 	front_info->snd_pdrv_registered = true;
 

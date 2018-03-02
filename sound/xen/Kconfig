@@ -1,0 +1,17 @@
+# ALSA Xen drivers
+
+menuconfig SND_XEN
+	bool "Xen sound devices"
+	depends on XEN
+	default n
+	help
+	  Support for sound devices for Xen hypervisor
+
+config SND_XEN_FRONTEND
+	tristate "Xen para-virtualized sound frontend driver"
+	depends on SND_PCM && SND_XEN
+	select XEN_XENBUS_FRONTEND
+	default n
+	help
+	  This driver implements a frontend for the Xen
+	  para-virtualized sound.

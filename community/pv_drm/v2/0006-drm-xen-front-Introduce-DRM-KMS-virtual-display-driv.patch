@@ -1,0 +1,1077 @@
+From 95aa6940a790854fac541b435b566b7a8bd6a8ba Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 20 Feb 2018 12:28:51 +0200
+Subject: [PATCH v2 6/8] drm/xen-front: Introduce DRM/KMS virtual display
+ driver
+
+Implement essential initialization of the display driver:
+  - introduce required data structures
+  - handle DRM/KMS driver registration
+  - register driver on backend connection
+  - remove driver on backend disconnect
+
+Implement kernel modesetiing/connector handling using
+DRM simple KMS helper pipeline:
+
+- implement KMS part of the driver with the help of DRM
+  simple pipepline helper which is possible due to the fact
+  that the para-virtualized driver only supports a single
+  (primary) plane:
+  - initialize connectors according to XenStore configuration
+  - handle frame done events from the backend
+  - create and destroy frame buffers and propagate those
+    to the backend
+  - propagate set/reset mode configuration to the backend on display
+    enable/disable callbacks
+  - send page flip request to the backend and implement logic for
+    reporting backend IO errors on prepare fb callback
+
+- implement virtual connector handling:
+  - support only pixel formats suitable for single plane modes
+  - make sure the connector is always connected
+  - support a single video mode as per para-virtualized driver
+    configuration
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/gpu/drm/xen/Makefile                |   3 +
+ drivers/gpu/drm/xen/xen_drm_front.c         | 161 +++++++++++++++-
+ drivers/gpu/drm/xen/xen_drm_front.h         |  32 ++++
+ drivers/gpu/drm/xen/xen_drm_front_conn.c    | 119 ++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_conn.h    |  27 +++
+ drivers/gpu/drm/xen/xen_drm_front_drv.c     | 171 +++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_drv.h     |  65 +++++++
+ drivers/gpu/drm/xen/xen_drm_front_evtchnl.c |   4 +-
+ drivers/gpu/drm/xen/xen_drm_front_kms.c     | 282 ++++++++++++++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_kms.h     |  22 +++
+ 10 files changed, 883 insertions(+), 3 deletions(-)
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_conn.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_conn.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_drv.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_drv.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_kms.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_kms.h
+
+diff --git a/drivers/gpu/drm/xen/Makefile b/drivers/gpu/drm/xen/Makefile
+index 6c8c751f12ed..a7858693baae 100644
+--- a/drivers/gpu/drm/xen/Makefile
++++ b/drivers/gpu/drm/xen/Makefile
+@@ -1,6 +1,9 @@
+ # SPDX-License-Identifier: GPL-2.0 OR MIT
+ 
+ drm_xen_front-objs := xen_drm_front.o \
++		      xen_drm_front_drv.o \
++		      xen_drm_front_kms.o \
++		      xen_drm_front_conn.o \
+ 		      xen_drm_front_evtchnl.o \
+ 		      xen_drm_front_shbuf.o \
+ 		      xen_drm_front_cfg.o
+diff --git a/drivers/gpu/drm/xen/xen_drm_front.c b/drivers/gpu/drm/xen/xen_drm_front.c
+index fae631067c31..4e5059a280ba 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front.c
++++ b/drivers/gpu/drm/xen/xen_drm_front.c
+@@ -10,6 +10,8 @@
+ 
+ #include <drm/drmP.h>
+ 
++#include <linux/of_device.h>
++
+ #include <xen/platform_pci.h>
+ #include <xen/xen.h>
+ #include <xen/xenbus.h>
+@@ -17,11 +19,149 @@
+ #include <xen/interface/io/displif.h>
+ 
+ #include "xen_drm_front.h"
++#include "xen_drm_front_drv.h"
+ #include "xen_drm_front_evtchnl.h"
+ #include "xen_drm_front_shbuf.h"
+ 
++int xen_drm_front_mode_set(struct xen_drm_front_drm_pipeline *pipeline,
++		uint32_t x, uint32_t y, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t fb_cookie)
++{
++	return 0;
++}
++
++static int be_dbuf_create_int(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t size, struct page **pages,
++		struct sg_table *sgt)
++{
++	return 0;
++}
++
++int xen_drm_front_dbuf_create_from_sgt(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t size, struct sg_table *sgt)
++{
++	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
++			bpp, size, NULL, sgt);
++}
++
++int xen_drm_front_dbuf_create_from_pages(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t size, struct page **pages)
++{
++	return be_dbuf_create_int(front_info, dbuf_cookie, width, height,
++			bpp, size, pages, NULL);
++}
++
++int xen_drm_front_dbuf_destroy(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie)
++{
++	return 0;
++}
++
++int xen_drm_front_fb_attach(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint64_t fb_cookie, uint32_t width,
++		uint32_t height, uint32_t pixel_format)
++{
++	return 0;
++}
++
++int xen_drm_front_fb_detach(struct xen_drm_front_info *front_info,
++		uint64_t fb_cookie)
++{
++	return 0;
++}
++
++int xen_drm_front_page_flip(struct xen_drm_front_info *front_info,
++		int conn_idx, uint64_t fb_cookie)
++{
++	return 0;
++}
++
++void xen_drm_front_unload(struct xen_drm_front_info *front_info)
++{
++	if (front_info->xb_dev->state != XenbusStateReconfiguring)
++		return;
++
++	DRM_DEBUG("Can try removing driver now\n");
++	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
++}
++
++static int xen_drm_drv_probe(struct platform_device *pdev)
++{
++	/*
++	 * The device is not spawn from a device tree, so arch_setup_dma_ops
++	 * is not called, thus leaving the device with dummy DMA ops.
++	 * This makes the device return error on PRIME buffer import, which
++	 * is not correct: to fix this call of_dma_configure() with a NULL
++	 * node to set default DMA ops.
++	 */
++	of_dma_configure(&pdev->dev, NULL);
++	return xen_drm_front_drv_probe(pdev);
++}
++
++static int xen_drm_drv_remove(struct platform_device *pdev)
++{
++	return xen_drm_front_drv_remove(pdev);
++}
++
++struct platform_device_info xen_drm_front_platform_info = {
++	.name = XENDISPL_DRIVER_NAME,
++	.id = 0,
++	.num_res = 0,
++	.dma_mask = DMA_BIT_MASK(32),
++};
++
++static struct platform_driver xen_drm_front_front_info = {
++	.probe		= xen_drm_drv_probe,
++	.remove		= xen_drm_drv_remove,
++	.driver		= {
++		.name	= XENDISPL_DRIVER_NAME,
++	},
++};
++
++static void xen_drm_drv_deinit(struct xen_drm_front_info *front_info)
++{
++	if (!front_info->drm_pdrv_registered)
++		return;
++
++	if (front_info->drm_pdev)
++		platform_device_unregister(front_info->drm_pdev);
++
++	platform_driver_unregister(&xen_drm_front_front_info);
++	front_info->drm_pdrv_registered = false;
++	front_info->drm_pdev = NULL;
++}
++
++static int xen_drm_drv_init(struct xen_drm_front_info *front_info)
++{
++	int ret;
++
++	ret = platform_driver_register(&xen_drm_front_front_info);
++	if (ret < 0)
++		return ret;
++
++	front_info->drm_pdrv_registered = true;
++	/* pass card configuration via platform data */
++	xen_drm_front_platform_info.data = &front_info->cfg;
++	xen_drm_front_platform_info.size_data = sizeof(front_info->cfg);
++
++	front_info->drm_pdev = platform_device_register_full(
++			&xen_drm_front_platform_info);
++	if (IS_ERR_OR_NULL(front_info->drm_pdev)) {
++		DRM_ERROR("Failed to register " XENDISPL_DRIVER_NAME " PV DRM driver\n");
++		front_info->drm_pdev = NULL;
++		xen_drm_drv_deinit(front_info);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
+ static void xen_drv_remove_internal(struct xen_drm_front_info *front_info)
+ {
++	xen_drm_drv_deinit(front_info);
+ 	xen_drm_front_evtchnl_free_all(front_info);
+ }
+ 
+@@ -47,13 +187,29 @@ static int displback_initwait(struct xen_drm_front_info *front_info)
+ static int displback_connect(struct xen_drm_front_info *front_info)
+ {
+ 	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_CONNECTED);
+-	return 0;
++	return xen_drm_drv_init(front_info);
+ }
+ 
+ static void displback_disconnect(struct xen_drm_front_info *front_info)
+ {
++	bool removed = true;
++
++	if (front_info->drm_pdev) {
++		if (xen_drm_front_drv_is_used(front_info->drm_pdev)) {
++			DRM_WARN("DRM driver still in use, deferring removal\n");
++			removed = false;
++		} else
++			xen_drv_remove_internal(front_info);
++	}
++
+ 	xen_drm_front_evtchnl_set_state(front_info, EVTCHNL_STATE_DISCONNECTED);
+-	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
++
++	if (removed)
++		xenbus_switch_state(front_info->xb_dev,
++				XenbusStateInitialising);
++	else
++		xenbus_switch_state(front_info->xb_dev,
++				XenbusStateReconfiguring);
+ }
+ 
+ static void displback_changed(struct xenbus_device *xb_dev,
+@@ -136,6 +292,7 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
+ 
+ 	front_info->xb_dev = xb_dev;
+ 	spin_lock_init(&front_info->io_lock);
++	front_info->drm_pdrv_registered = false;
+ 	dev_set_drvdata(&xb_dev->dev, front_info);
+ 	return xenbus_switch_state(xb_dev, XenbusStateInitialising);
+ }
+diff --git a/drivers/gpu/drm/xen/xen_drm_front.h b/drivers/gpu/drm/xen/xen_drm_front.h
+index 4adb6101c889..d964c4bd4fb6 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front.h
++++ b/drivers/gpu/drm/xen/xen_drm_front.h
+@@ -11,6 +11,8 @@
+ #ifndef __XEN_DRM_FRONT_H_
+ #define __XEN_DRM_FRONT_H_
+ 
++#include <linux/scatterlist.h>
++
+ #include "xen_drm_front_cfg.h"
+ 
+ #ifndef GRANT_INVALID_REF
+@@ -22,10 +24,13 @@
+ #define GRANT_INVALID_REF	0
+ #endif
+ 
++struct xen_drm_front_drm_pipeline;
++
+ struct xen_drm_front_info {
+ 	struct xenbus_device *xb_dev;
+ 	/* to protect data between backend IO code and interrupt handler */
+ 	spinlock_t io_lock;
++	bool drm_pdrv_registered;
+ 	/* virtual DRM platform device */
+ 	struct platform_device *drm_pdev;
+ 
+@@ -34,4 +39,31 @@ struct xen_drm_front_info {
+ 	struct xen_drm_front_cfg cfg;
+ };
+ 
++int xen_drm_front_mode_set(struct xen_drm_front_drm_pipeline *pipeline,
++		uint32_t x, uint32_t y, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t fb_cookie);
++
++int xen_drm_front_dbuf_create_from_sgt(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t size, struct sg_table *sgt);
++
++int xen_drm_front_dbuf_create_from_pages(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint32_t width, uint32_t height,
++		uint32_t bpp, uint64_t size, struct page **pages);
++
++int xen_drm_front_dbuf_destroy(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie);
++
++int xen_drm_front_fb_attach(struct xen_drm_front_info *front_info,
++		uint64_t dbuf_cookie, uint64_t fb_cookie, uint32_t width,
++		uint32_t height, uint32_t pixel_format);
++
++int xen_drm_front_fb_detach(struct xen_drm_front_info *front_info,
++		uint64_t fb_cookie);
++
++int xen_drm_front_page_flip(struct xen_drm_front_info *front_info,
++		int conn_idx, uint64_t fb_cookie);
++
++void xen_drm_front_unload(struct xen_drm_front_info *front_info);
++
+ #endif /* __XEN_DRM_FRONT_H_ */
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_conn.c b/drivers/gpu/drm/xen/xen_drm_front_conn.c
+new file mode 100644
+index 000000000000..382c8a9da7e6
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_conn.c
+@@ -0,0 +1,119 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_crtc_helper.h>
++
++#include <video/videomode.h>
++
++#include "xen_drm_front_conn.h"
++#include "xen_drm_front_drv.h"
++
++static struct xen_drm_front_drm_pipeline *
++to_xen_drm_pipeline(struct drm_connector *connector)
++{
++	return container_of(connector, struct xen_drm_front_drm_pipeline, conn);
++}
++
++static const uint32_t plane_formats[] = {
++	DRM_FORMAT_RGB565,
++	DRM_FORMAT_RGB888,
++	DRM_FORMAT_XRGB8888,
++	DRM_FORMAT_ARGB8888,
++	DRM_FORMAT_XRGB4444,
++	DRM_FORMAT_ARGB4444,
++	DRM_FORMAT_XRGB1555,
++	DRM_FORMAT_ARGB1555,
++};
++
++const uint32_t *xen_drm_front_conn_get_formats(int *format_count)
++{
++	*format_count = ARRAY_SIZE(plane_formats);
++	return plane_formats;
++}
++
++static int connector_detect(struct drm_connector *connector,
++		struct drm_modeset_acquire_ctx *ctx,
++		bool force)
++{
++	if (drm_dev_is_unplugged(connector->dev))
++		return connector_status_disconnected;
++
++	return connector_status_connected;
++}
++
++#define XEN_DRM_NUM_VIDEO_MODES		1
++#define XEN_DRM_CRTC_VREFRESH_HZ	60
++
++static int connector_get_modes(struct drm_connector *connector)
++{
++	struct xen_drm_front_drm_pipeline *pipeline =
++			to_xen_drm_pipeline(connector);
++	struct drm_display_mode *mode;
++	struct videomode videomode;
++	int width, height;
++
++	mode = drm_mode_create(connector->dev);
++	if (!mode)
++		return 0;
++
++	memset(&videomode, 0, sizeof(videomode));
++	videomode.hactive = pipeline->width;
++	videomode.vactive = pipeline->height;
++	width = videomode.hactive + videomode.hfront_porch +
++			videomode.hback_porch + videomode.hsync_len;
++	height = videomode.vactive + videomode.vfront_porch +
++			videomode.vback_porch + videomode.vsync_len;
++	videomode.pixelclock = width * height * XEN_DRM_CRTC_VREFRESH_HZ;
++	mode->type = DRM_MODE_TYPE_PREFERRED | DRM_MODE_TYPE_DRIVER;
++
++	drm_display_mode_from_videomode(&videomode, mode);
++	drm_mode_probed_add(connector, mode);
++	return XEN_DRM_NUM_VIDEO_MODES;
++}
++
++static int connector_mode_valid(struct drm_connector *connector,
++		struct drm_display_mode *mode)
++{
++	struct xen_drm_front_drm_pipeline *pipeline =
++			to_xen_drm_pipeline(connector);
++
++	if (mode->hdisplay != pipeline->width)
++		return MODE_ERROR;
++
++	if (mode->vdisplay != pipeline->height)
++		return MODE_ERROR;
++
++	return MODE_OK;
++}
++
++static const struct drm_connector_helper_funcs connector_helper_funcs = {
++	.get_modes = connector_get_modes,
++	.mode_valid = connector_mode_valid,
++	.detect_ctx = connector_detect,
++};
++
++static const struct drm_connector_funcs connector_funcs = {
++	.dpms = drm_helper_connector_dpms,
++	.fill_modes = drm_helper_probe_single_connector_modes,
++	.destroy = drm_connector_cleanup,
++	.reset = drm_atomic_helper_connector_reset,
++	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
++};
++
++int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
++		struct drm_connector *connector)
++{
++	drm_connector_helper_add(connector, &connector_helper_funcs);
++
++	return drm_connector_init(drm_info->drm_dev, connector,
++		&connector_funcs, DRM_MODE_CONNECTOR_VIRTUAL);
++}
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_conn.h b/drivers/gpu/drm/xen/xen_drm_front_conn.h
+new file mode 100644
+index 000000000000..f38c4b6db5df
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_conn.h
+@@ -0,0 +1,27 @@
++/* SPDX-License-Identifier: GPL-2.0 OR MIT */
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#ifndef __XEN_DRM_FRONT_CONN_H_
++#define __XEN_DRM_FRONT_CONN_H_
++
++#include <drm/drmP.h>
++#include <drm/drm_crtc.h>
++#include <drm/drm_encoder.h>
++
++#include <linux/wait.h>
++
++struct xen_drm_front_drm_info;
++
++int xen_drm_front_conn_init(struct xen_drm_front_drm_info *drm_info,
++		struct drm_connector *connector);
++
++const uint32_t *xen_drm_front_conn_get_formats(int *format_count);
++
++#endif /* __XEN_DRM_FRONT_CONN_H_ */
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_drv.c b/drivers/gpu/drm/xen/xen_drm_front_drv.c
+new file mode 100644
+index 000000000000..8887ac054601
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_drv.c
+@@ -0,0 +1,171 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#include <drm/drmP.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_gem.h>
++
++#include "xen_drm_front.h"
++#include "xen_drm_front_cfg.h"
++#include "xen_drm_front_drv.h"
++#include "xen_drm_front_kms.h"
++
++static int dumb_create(struct drm_file *filp, struct drm_device *dev,
++		struct drm_mode_create_dumb *args)
++{
++	return -EINVAL;
++}
++
++static void free_object(struct drm_gem_object *obj)
++{
++	struct xen_drm_front_drm_info *drm_info = obj->dev->dev_private;
++
++	xen_drm_front_dbuf_destroy(drm_info->front_info,
++			xen_drm_front_dbuf_to_cookie(obj));
++}
++
++void xen_drm_front_on_frame_done(struct platform_device *pdev,
++		int conn_idx, uint64_t fb_cookie)
++{
++	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
++
++	if (unlikely(conn_idx >= drm_info->cfg->num_connectors))
++		return;
++
++	xen_drm_front_kms_on_frame_done(&drm_info->pipeline[conn_idx],
++			fb_cookie);
++}
++
++static void lastclose(struct drm_device *dev)
++{
++	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
++
++	xen_drm_front_unload(drm_info->front_info);
++}
++
++static const struct file_operations xen_drm_fops = {
++	.owner          = THIS_MODULE,
++	.open           = drm_open,
++	.release        = drm_release,
++	.unlocked_ioctl = drm_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl   = drm_compat_ioctl,
++#endif
++	.poll           = drm_poll,
++	.read           = drm_read,
++	.llseek         = no_llseek,
++};
++
++static const struct vm_operations_struct xen_drm_vm_ops = {
++	.open           = drm_gem_vm_open,
++	.close          = drm_gem_vm_close,
++};
++
++struct drm_driver xen_drm_driver = {
++	.driver_features           = DRIVER_GEM | DRIVER_MODESET |
++				     DRIVER_PRIME | DRIVER_ATOMIC,
++	.lastclose                 = lastclose,
++	.gem_vm_ops                = &xen_drm_vm_ops,
++	.gem_free_object_unlocked  = free_object,
++	.prime_handle_to_fd        = drm_gem_prime_handle_to_fd,
++	.prime_fd_to_handle        = drm_gem_prime_fd_to_handle,
++	.gem_prime_import          = drm_gem_prime_import,
++	.gem_prime_export          = drm_gem_prime_export,
++	.dumb_create               = dumb_create,
++	.fops                      = &xen_drm_fops,
++	.name                      = "xendrm-du",
++	.desc                      = "Xen PV DRM Display Unit",
++	.date                      = "20180221",
++	.major                     = 1,
++	.minor                     = 0,
++};
++
++int xen_drm_front_drv_probe(struct platform_device *pdev)
++{
++	struct xen_drm_front_cfg *cfg = dev_get_platdata(&pdev->dev);
++	struct xen_drm_front_drm_info *drm_info;
++	struct drm_device *dev;
++	int ret;
++
++	DRM_INFO("Creating %s\n", xen_drm_driver.desc);
++
++	drm_info = devm_kzalloc(&pdev->dev, sizeof(*drm_info), GFP_KERNEL);
++	if (!drm_info)
++		return -ENOMEM;
++
++	drm_info->front_info = cfg->front_info;
++
++	dev = drm_dev_alloc(&xen_drm_driver, &pdev->dev);
++	if (!dev)
++		return -ENOMEM;
++
++	drm_info->drm_dev = dev;
++
++	drm_info->cfg = cfg;
++	dev->dev_private = drm_info;
++	platform_set_drvdata(pdev, drm_info);
++
++	ret = xen_drm_front_kms_init(drm_info);
++	if (ret) {
++		DRM_ERROR("Failed to initialize DRM/KMS, ret %d\n", ret);
++		goto fail_modeset;
++	}
++
++	ret = drm_dev_register(dev, 0);
++	if (ret)
++		goto fail_register;
++
++	DRM_INFO("Initialized %s %d.%d.%d %s on minor %d\n",
++			xen_drm_driver.name, xen_drm_driver.major,
++			xen_drm_driver.minor, xen_drm_driver.patchlevel,
++			xen_drm_driver.date, dev->primary->index);
++
++	return 0;
++
++fail_register:
++	drm_dev_unregister(dev);
++fail_modeset:
++	drm_mode_config_cleanup(dev);
++	return ret;
++}
++
++int xen_drm_front_drv_remove(struct platform_device *pdev)
++{
++	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
++	struct drm_device *dev = drm_info->drm_dev;
++
++	if (dev) {
++		drm_dev_unregister(dev);
++		drm_atomic_helper_shutdown(dev);
++		drm_mode_config_cleanup(dev);
++		drm_dev_unref(dev);
++	}
++	return 0;
++}
++
++bool xen_drm_front_drv_is_used(struct platform_device *pdev)
++{
++	struct xen_drm_front_drm_info *drm_info = platform_get_drvdata(pdev);
++	struct drm_device *dev;
++
++	if (!drm_info)
++		return false;
++
++	dev = drm_info->drm_dev;
++	if (!dev)
++		return false;
++
++	/*
++	 * FIXME: the code below must be protected by drm_global_mutex,
++	 * but it is not accessible to us. Anyways there is a race condition,
++	 * but we will re-try.
++	 */
++	return dev->open_count != 0;
++}
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_drv.h b/drivers/gpu/drm/xen/xen_drm_front_drv.h
+new file mode 100644
+index 000000000000..cf3517b61979
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_drv.h
+@@ -0,0 +1,65 @@
++/* SPDX-License-Identifier: GPL-2.0 OR MIT */
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#ifndef __XEN_DRM_FRONT_DRV_H_
++#define __XEN_DRM_FRONT_DRV_H_
++
++#include <drm/drmP.h>
++#include <drm/drm_simple_kms_helper.h>
++
++#include "xen_drm_front.h"
++#include "xen_drm_front_cfg.h"
++#include "xen_drm_front_conn.h"
++
++struct xen_drm_front_drm_pipeline {
++	struct xen_drm_front_drm_info *drm_info;
++
++	int index;
++
++	struct drm_simple_display_pipe pipe;
++
++	struct drm_connector conn;
++	/* These are only for connector mode checking */
++	int width, height;
++
++	struct drm_pending_vblank_event *pending_event;
++};
++
++struct xen_drm_front_drm_info {
++	struct xen_drm_front_info *front_info;
++	struct drm_device *drm_dev;
++	struct xen_drm_front_cfg *cfg;
++
++	struct xen_drm_front_drm_pipeline pipeline[XEN_DRM_FRONT_MAX_CRTCS];
++};
++
++static inline uint64_t xen_drm_front_fb_to_cookie(
++		struct drm_framebuffer *fb)
++{
++	return (uint64_t)fb;
++}
++
++static inline uint64_t xen_drm_front_dbuf_to_cookie(
++		struct drm_gem_object *gem_obj)
++{
++	return (uint64_t)gem_obj;
++}
++
++int xen_drm_front_drv_probe(struct platform_device *pdev);
++
++int xen_drm_front_drv_remove(struct platform_device *pdev);
++
++bool xen_drm_front_drv_is_used(struct platform_device *pdev);
++
++void xen_drm_front_on_frame_done(struct platform_device *pdev,
++		int conn_idx, uint64_t fb_cookie);
++
++#endif /* __XEN_DRM_FRONT_DRV_H_ */
++
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_evtchnl.c b/drivers/gpu/drm/xen/xen_drm_front_evtchnl.c
+index fd9289a6a1c8..228b9ffe8fd8 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front_evtchnl.c
++++ b/drivers/gpu/drm/xen/xen_drm_front_evtchnl.c
+@@ -18,6 +18,7 @@
+ #include <xen/grant_table.h>
+ 
+ #include "xen_drm_front.h"
++#include "xen_drm_front_drv.h"
+ #include "xen_drm_front_evtchnl.h"
+ 
+ static irqreturn_t evtchnl_interrupt_ctrl(int irq, void *dev_id)
+@@ -105,7 +106,8 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
+ 
+ 		switch (event->type) {
+ 		case XENDISPL_EVT_PG_FLIP:
+-			/* placeholder */
++			xen_drm_front_on_frame_done(front_info->drm_pdev,
++				evtchnl->index, event->op.pg_flip.fb_cookie);
+ 			break;
+ 		}
+ 	}
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_kms.c b/drivers/gpu/drm/xen/xen_drm_front_kms.c
+new file mode 100644
+index 000000000000..468995b6bf7a
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_kms.c
+@@ -0,0 +1,282 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#include "xen_drm_front_kms.h"
++
++#include <drm/drmP.h>
++#include <drm/drm_atomic.h>
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_gem.h>
++#include <drm/drm_gem_framebuffer_helper.h>
++
++#include "xen_drm_front.h"
++#include "xen_drm_front_conn.h"
++#include "xen_drm_front_drv.h"
++
++static struct xen_drm_front_drm_pipeline *
++to_xen_drm_pipeline(struct drm_simple_display_pipe *pipe)
++{
++	return container_of(pipe, struct xen_drm_front_drm_pipeline, pipe);
++}
++
++static void fb_destroy(struct drm_framebuffer *fb)
++{
++	struct xen_drm_front_drm_info *drm_info = fb->dev->dev_private;
++
++	xen_drm_front_fb_detach(drm_info->front_info,
++			xen_drm_front_fb_to_cookie(fb));
++	drm_gem_fb_destroy(fb);
++}
++
++static struct drm_framebuffer_funcs fb_funcs = {
++	.destroy = fb_destroy,
++};
++
++static struct drm_framebuffer *fb_create(struct drm_device *dev,
++		struct drm_file *filp, const struct drm_mode_fb_cmd2 *mode_cmd)
++{
++	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
++	static struct drm_framebuffer *fb;
++	struct drm_gem_object *gem_obj;
++	int ret;
++
++	fb = drm_gem_fb_create_with_funcs(dev, filp, mode_cmd, &fb_funcs);
++	if (IS_ERR_OR_NULL(fb))
++		return fb;
++
++	gem_obj = drm_gem_object_lookup(filp, mode_cmd->handles[0]);
++	if (!gem_obj) {
++		DRM_ERROR("Failed to lookup GEM object\n");
++		ret = -ENOENT;
++		goto fail;
++	}
++
++	drm_gem_object_unreference_unlocked(gem_obj);
++
++	ret = xen_drm_front_fb_attach(
++			drm_info->front_info,
++			xen_drm_front_dbuf_to_cookie(gem_obj),
++			xen_drm_front_fb_to_cookie(fb),
++			fb->width, fb->height, fb->format->format);
++	if (ret < 0) {
++		DRM_ERROR("Back failed to attach FB %p: %d\n", fb, ret);
++		goto fail;
++	}
++
++	return fb;
++
++fail:
++	drm_gem_fb_destroy(fb);
++	return ERR_PTR(ret);
++}
++
++static const struct drm_mode_config_funcs mode_config_funcs = {
++	.fb_create = fb_create,
++	.atomic_check = drm_atomic_helper_check,
++	.atomic_commit = drm_atomic_helper_commit,
++};
++
++void xen_drm_front_kms_send_pending_event(
++		struct xen_drm_front_drm_pipeline *pipeline)
++{
++	struct drm_crtc *crtc = &pipeline->pipe.crtc;
++	struct drm_device *dev = crtc->dev;
++	unsigned long flags;
++
++	spin_lock_irqsave(&dev->event_lock, flags);
++	if (pipeline->pending_event)
++		drm_crtc_send_vblank_event(crtc, pipeline->pending_event);
++	pipeline->pending_event = NULL;
++	spin_unlock_irqrestore(&dev->event_lock, flags);
++}
++
++static void display_enable(struct drm_simple_display_pipe *pipe,
++		struct drm_crtc_state *crtc_state)
++{
++	struct xen_drm_front_drm_pipeline *pipeline =
++			to_xen_drm_pipeline(pipe);
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_framebuffer *fb = pipe->plane.state->fb;
++	int ret;
++
++	ret = xen_drm_front_mode_set(pipeline,
++			crtc->x, crtc->y, fb->width, fb->height,
++			fb->format->cpp[0] * 8,
++			xen_drm_front_fb_to_cookie(fb));
++
++	if (ret)
++		DRM_ERROR("Failed to enable display: %d\n", ret);
++}
++
++static void display_disable(struct drm_simple_display_pipe *pipe)
++{
++	struct xen_drm_front_drm_pipeline *pipeline =
++			to_xen_drm_pipeline(pipe);
++	int ret;
++
++	ret = xen_drm_front_mode_set(pipeline, 0, 0, 0, 0, 0,
++			xen_drm_front_fb_to_cookie(NULL));
++	if (ret)
++		DRM_ERROR("Failed to disable display: %d\n", ret);
++
++	/* release stalled event if any */
++	xen_drm_front_kms_send_pending_event(pipeline);
++}
++
++void xen_drm_front_kms_on_frame_done(
++		struct xen_drm_front_drm_pipeline *pipeline,
++		uint64_t fb_cookie)
++{
++	xen_drm_front_kms_send_pending_event(pipeline);
++}
++
++static bool display_send_page_flip(struct drm_simple_display_pipe *pipe,
++		struct drm_plane_state *old_plane_state)
++{
++	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(
++			old_plane_state->state, &pipe->plane);
++
++	/*
++	 * If old_plane_state->fb is NULL and plane_state->fb is not,
++	 * then this is an atomic commit which will enable display.
++	 * If old_plane_state->fb is not NULL and plane_state->fb is,
++	 * then this is an atomic commit which will disable display.
++	 * Ignore these and do not send page flip as this framebuffer will be
++	 * sent to the backend as a part of display_set_config call.
++	 */
++	if (old_plane_state->fb && plane_state->fb) {
++		struct xen_drm_front_drm_pipeline *pipeline =
++				to_xen_drm_pipeline(pipe);
++		struct xen_drm_front_drm_info *drm_info = pipeline->drm_info;
++		int ret;
++
++		ret = xen_drm_front_page_flip(drm_info->front_info,
++				pipeline->index,
++				xen_drm_front_fb_to_cookie(plane_state->fb));
++		if (ret) {
++			DRM_ERROR("Failed to send page flip request to backend: %d\n", ret);
++
++			/*
++			 * Report the flip not handled, so pending event is
++			 * sent, unblocking user-space.
++			 */
++			return false;
++		}
++		/*
++		 * Signal that page flip was handled, pending event will be sent
++		 * on frame done event from the backend.
++		 */
++		return true;
++	}
++
++	return false;
++}
++
++static int display_prepare_fb(struct drm_simple_display_pipe *pipe,
++		struct drm_plane_state *plane_state)
++{
++	return drm_gem_fb_prepare_fb(&pipe->plane, plane_state);
++}
++
++static void display_update(struct drm_simple_display_pipe *pipe,
++		struct drm_plane_state *old_plane_state)
++{
++	struct xen_drm_front_drm_pipeline *pipeline =
++			to_xen_drm_pipeline(pipe);
++	struct drm_crtc *crtc = &pipe->crtc;
++	struct drm_pending_vblank_event *event;
++
++	event = crtc->state->event;
++	if (event) {
++		struct drm_device *dev = crtc->dev;
++		unsigned long flags;
++
++		WARN_ON(pipeline->pending_event);
++
++		spin_lock_irqsave(&dev->event_lock, flags);
++		crtc->state->event = NULL;
++
++		pipeline->pending_event = event;
++		spin_unlock_irqrestore(&dev->event_lock, flags);
++
++	}
++	/*
++	 * Send page flip request to the backend *after* we have event cached
++	 * above, so on page flip done event from the backend we can
++	 * deliver it and there is no race condition between this code and
++	 * event from the backend.
++	 * If this is not a page flip, e.g. no flip done event from the backend
++	 * is expected, then send now.
++	 */
++	if (!display_send_page_flip(pipe, old_plane_state))
++		xen_drm_front_kms_send_pending_event(pipeline);
++}
++
++static const struct drm_simple_display_pipe_funcs display_funcs = {
++	.enable = display_enable,
++	.disable = display_disable,
++	.prepare_fb = display_prepare_fb,
++	.update = display_update,
++};
++
++static int display_pipe_init(struct xen_drm_front_drm_info *drm_info,
++		int index, struct xen_drm_front_cfg_connector *cfg,
++		struct xen_drm_front_drm_pipeline *pipeline)
++{
++	struct drm_device *dev = drm_info->drm_dev;
++	const uint32_t *formats;
++	int format_count;
++	int ret;
++
++	pipeline->drm_info = drm_info;
++	pipeline->index = index;
++	pipeline->height = cfg->height;
++	pipeline->width = cfg->width;
++
++	ret = xen_drm_front_conn_init(drm_info, &pipeline->conn);
++	if (ret)
++		return ret;
++
++	formats = xen_drm_front_conn_get_formats(&format_count);
++
++	return drm_simple_display_pipe_init(dev, &pipeline->pipe,
++			&display_funcs, formats, format_count,
++			NULL, &pipeline->conn);
++}
++
++int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info)
++{
++	struct drm_device *dev = drm_info->drm_dev;
++	int i, ret;
++
++	drm_mode_config_init(dev);
++
++	dev->mode_config.min_width = 0;
++	dev->mode_config.min_height = 0;
++	dev->mode_config.max_width = 4095;
++	dev->mode_config.max_height = 2047;
++	dev->mode_config.funcs = &mode_config_funcs;
++
++	for (i = 0; i < drm_info->cfg->num_connectors; i++) {
++		struct xen_drm_front_cfg_connector *cfg =
++				&drm_info->cfg->connectors[i];
++		struct xen_drm_front_drm_pipeline *pipeline =
++				&drm_info->pipeline[i];
++
++		ret = display_pipe_init(drm_info, i, cfg, pipeline);
++		if (ret) {
++			drm_mode_config_cleanup(dev);
++			return ret;
++		}
++	}
++
++	drm_mode_config_reset(dev);
++	return 0;
++}
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_kms.h b/drivers/gpu/drm/xen/xen_drm_front_kms.h
+new file mode 100644
+index 000000000000..74a2db3d687f
+--- /dev/null
++++ b/drivers/gpu/drm/xen/xen_drm_front_kms.h
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0 OR MIT */
++
++/*
++ *  Xen para-virtual DRM device
++ *
++ * Copyright (C) 2016-2018 EPAM Systems Inc.
++ *
++ * Author: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
++ */
++
++#ifndef __XEN_DRM_FRONT_KMS_H_
++#define __XEN_DRM_FRONT_KMS_H_
++
++#include "xen_drm_front_drv.h"
++
++int xen_drm_front_kms_init(struct xen_drm_front_drm_info *drm_info);
++
++void xen_drm_front_kms_on_frame_done(
++		struct xen_drm_front_drm_pipeline *pipeline,
++		uint64_t fb_cookie);
++
++#endif /* __XEN_DRM_FRONT_KMS_H_ */
+-- 
+2.7.4
+

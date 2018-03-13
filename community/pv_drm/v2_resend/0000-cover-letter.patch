@@ -1,0 +1,181 @@
+From a4754fede2cde820f8c6ce0278b5d240a5d9f4e1 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 13 Mar 2018 18:10:00 +0200
+Subject: [PATCH RESEND v2 0/2] drm/xen-front: Add support for Xen PV display frontend
+
+Hello!
+
+Resending with all the patches squashed on Daniel's request.
+
+This patch series adds support for Xen [1] para-virtualized
+frontend display driver. It implements the protocol from
+include/xen/interface/io/displif.h [2].
+Accompanying backend [3] is implemented as a user-space application
+and its helper library [4], capable of running as a Weston client
+or DRM master.
+Configuration of both backend and frontend is done via 
+Xen guest domain configuration options [5].
+
+*******************************************************************************
+* Driver limitations
+*******************************************************************************
+ 1. Configuration options 1.1 (contiguous display buffers) and 2 (backend
+    allocated buffers) below are not supported at the same time.
+
+ 2. Only primary plane without additional properties is supported.
+
+ 3. Only one video mode supported which resolution is configured via XenStore.
+
+ 4. All CRTCs operate at fixed frequency of 60Hz.
+
+*******************************************************************************
+* Driver modes of operation in terms of display buffers used
+*******************************************************************************
+ Depending on the requirements for the para-virtualized environment, namely
+ requirements dictated by the accompanying DRM/(v)GPU drivers running in both
+ host and guest environments, number of operating modes of para-virtualized
+ display driver are supported:
+  - display buffers can be allocated by either frontend driver or backend
+  - display buffers can be allocated to be contiguous in memory or not
+
+ Note! Frontend driver itself has no dependency on contiguous memory for
+       its operation.
+
+*******************************************************************************
+* 1. Buffers allocated by the frontend driver.
+*******************************************************************************
+
+ The below modes of operation are configured at compile-time via
+ frontend driver's kernel configuration.
+
+ 1.1. Front driver configured to use GEM CMA helpers
+      This use-case is useful when used with accompanying DRM/vGPU driver in
+      guest domain which was designed to only work with contiguous buffers,
+      e.g. DRM driver based on GEM CMA helpers: such drivers can only import
+      contiguous PRIME buffers, thus requiring frontend driver to provide
+      such. In order to implement this mode of operation para-virtualized
+      frontend driver can be configured to use GEM CMA helpers.
+
+ 1.2. Front driver doesn't use GEM CMA
+      If accompanying drivers can cope with non-contiguous memory then, to
+      lower pressure on CMA subsystem of the kernel, driver can allocate
+      buffers from system memory.
+
+ Note! If used with accompanying DRM/(v)GPU drivers this mode of operation
+   may require IOMMU support on the platform, so accompanying DRM/vGPU
+   hardware can still reach display buffer memory while importing PRIME
+   buffers from the frontend driver.
+
+*******************************************************************************
+* 2. Buffers allocated by the backend
+*******************************************************************************
+
+ This mode of operation is run-time configured via guest domain configuration
+ through XenStore entries.
+
+ For systems which do not provide IOMMU support, but having specific
+ requirements for display buffers it is possible to allocate such buffers
+ at backend side and share those with the frontend.
+ For example, if host domain is 1:1 mapped and has DRM/GPU hardware expecting
+ physically contiguous memory, this allows implementing zero-copying
+ use-cases.
+
+
+I would like to thank at least, but not at last the following
+people/communities who helped this driver to happen ;)
+
+1. My team at EPAM for continuous support
+2. Xen community for answering tons of questions on different
+modes of operation of the driver with respect to virtualized
+environment.
+3. Rob Clark for "GEM allocation for para-virtualized DRM driver" [6]
+4. Maarten Lankhorst for "Atomic driver and old remove FB behavior" [7]
+5. Ville Syrjälä for "Questions on page flips and atomic modeset" [8]
+
+
+Changes since v1:
+*******************************************************************************
+- use SPDX license identifier, set license to GPLv2 OR MIT
+- changed midlayers to direct function calls, removed:
+  - front_ops
+  - gem_ops
+- renamed xenbus_driver callbacks to align with exisitng PV drivers
+- re-worked backend error handling with connector hotplug uevents
+- removed vblank handling so user-space doesn't have an impression
+  we really support that
+- directly use front's mode_set in display enable/disable
+- removed BUG_ON, error handling implemented
+- moved driver documentation into Documentation/gpu
+- other comments from Xen community addressed (Boris and Juergen)
+- squashed Xen and DRM patches for better interrconnection visibility
+- for your convenience driver is available at [11]
+
+Thank you,
+Oleksandr Andrushchenko
+
+
+[1] https://wiki.xen.org/wiki/Paravirtualization_(PV)#PV_IO_Drivers
+[2] https://elixir.bootlin.com/linux/v4.16-rc2/source/include/xen/interface/io/displif.h
+[3] https://github.com/xen-troops/displ_be
+[4] https://github.com/xen-troops/libxenbe
+[5] https://xenbits.xen.org/gitweb/?p=xen.git;a=blob;f=docs/man/xl.cfg.pod.5.in;h=a699367779e2ae1212ff8f638eff0206ec1a1cc9;hb=refs/heads/master#l1257
+[6] https://lists.freedesktop.org/archives/dri-devel/2017-March/136038.html
+[7] https://www.spinics.net/lists/dri-devel/msg164102.html
+[8] https://www.spinics.net/lists/dri-devel/msg164463.html
+[9] https://patchwork.freedesktop.org/series/38073/
+[10] https://patchwork.freedesktop.org/series/38139/
+[11] https://github.com/andr2000/linux/commits/drm_tip_pv_drm_v2
+
+
+Oleksandr Andrushchenko (2):
+  drm/xen-front: Add support for Xen PV display frontend
+  drm/xen-front: Provide kernel documentation
+
+ Documentation/gpu/index.rst                 |   1 +
+ Documentation/gpu/xen-front.rst             |  77 ++++
+ drivers/gpu/drm/Kconfig                     |   2 +
+ drivers/gpu/drm/Makefile                    |   1 +
+ drivers/gpu/drm/xen/Kconfig                 |  30 ++
+ drivers/gpu/drm/xen/Makefile                |  17 +
+ drivers/gpu/drm/xen/xen_drm_front.c         | 690 ++++++++++++++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front.h         |  77 ++++
+ drivers/gpu/drm/xen/xen_drm_front_cfg.c     |  77 ++++
+ drivers/gpu/drm/xen/xen_drm_front_cfg.h     |  37 ++
+ drivers/gpu/drm/xen/xen_drm_front_conn.c    | 146 ++++++
+ drivers/gpu/drm/xen/xen_drm_front_conn.h    |  27 ++
+ drivers/gpu/drm/xen/xen_drm_front_drv.c     | 239 ++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_drv.h     |  78 ++++
+ drivers/gpu/drm/xen/xen_drm_front_evtchnl.c | 383 +++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_evtchnl.h |  79 ++++
+ drivers/gpu/drm/xen/xen_drm_front_gem.c     | 335 ++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_gem.h     |  41 ++
+ drivers/gpu/drm/xen/xen_drm_front_gem_cma.c |  74 +++
+ drivers/gpu/drm/xen/xen_drm_front_kms.c     | 324 +++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_kms.h     |  25 +
+ drivers/gpu/drm/xen/xen_drm_front_shbuf.c   | 432 +++++++++++++++++
+ drivers/gpu/drm/xen/xen_drm_front_shbuf.h   |  72 +++
+ 23 files changed, 3264 insertions(+)
+ create mode 100644 Documentation/gpu/xen-front.rst
+ create mode 100644 drivers/gpu/drm/xen/Kconfig
+ create mode 100644 drivers/gpu/drm/xen/Makefile
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_cfg.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_cfg.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_conn.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_conn.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_drv.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_drv.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_evtchnl.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_evtchnl.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_gem.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_gem.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_gem_cma.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_kms.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_kms.h
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_shbuf.c
+ create mode 100644 drivers/gpu/drm/xen/xen_drm_front_shbuf.h
+
+-- 
+2.7.4
+

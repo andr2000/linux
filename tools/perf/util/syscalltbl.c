@@ -15,9 +15,9 @@
 
 #include "syscalltbl.h"
 #include <stdlib.h>
+#include <linux/compiler.h>
 
 #ifdef HAVE_SYSCALL_TABLE
-#include <linux/compiler.h>
 #include <string.h>
 #include "string2.h"
 #include "util.h"
@@ -26,6 +26,10 @@
 #include <asm/syscalls_64.c>
 const int syscalltbl_native_max_id = SYSCALLTBL_x86_64_MAX_ID;
 static const char **syscalltbl_native = syscalltbl_x86_64;
+#elif defined(__s390x__)
+#include <asm/syscalls_64.c>
+const int syscalltbl_native_max_id = SYSCALLTBL_S390_64_MAX_ID;
+static const char **syscalltbl_native = syscalltbl_s390_64;
 #endif
 
 struct syscall {

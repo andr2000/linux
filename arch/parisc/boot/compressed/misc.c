@@ -24,7 +24,8 @@
 /* Symbols defined by linker scripts */
 extern char input_data[];
 extern int input_len;
-extern __le32 output_len;	/* at unaligned address, little-endian */
+/* output_len is inserted by the linker possibly at an unaligned address */
+extern __le32 output_len __aligned(1);
 extern char _text, _end;
 extern char _bss, _ebss;
 extern char _startcode_end;
@@ -122,8 +123,8 @@ int puts(const char *s)
 	while ((nuline = strchr(s, '\n')) != NULL) {
 		if (nuline != s)
 			pdc_iodc_print(s, nuline - s);
-			pdc_iodc_print("\r\n", 2);
-			s = nuline + 1;
+		pdc_iodc_print("\r\n", 2);
+		s = nuline + 1;
 	}
 	if (*s != '\0')
 		pdc_iodc_print(s, strlen(s));

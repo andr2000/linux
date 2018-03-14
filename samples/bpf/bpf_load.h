@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __BPF_LOAD_H
 #define __BPF_LOAD_H
 
@@ -60,5 +61,5 @@ struct ksym {
 
 int load_kallsyms(void);
 struct ksym *ksym_search(long key);
-int set_link_xdp_fd(int ifindex, int fd, __u32 flags);
+int bpf_set_link_xdp_fd(int ifindex, int fd, __u32 flags);
 #endif

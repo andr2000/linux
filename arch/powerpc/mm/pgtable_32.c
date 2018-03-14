@@ -98,14 +98,7 @@ ioremap_prot(phys_addr_t addr, unsigned long size, unsigned long flags)
 
 	/* we don't want to let _PAGE_USER and _PAGE_EXEC leak out */
 	flags &= ~(_PAGE_USER | _PAGE_EXEC);
-
-#ifdef _PAGE_BAP_SR
-	/* _PAGE_USER contains _PAGE_BAP_SR on BookE using the new PTE format
-	 * which means that we just cleared supervisor access... oops ;-) This
-	 * restores it
-	 */
-	flags |= _PAGE_BAP_SR;
-#endif
+	flags |= _PAGE_PRIVILEGED;
 
 	return __ioremap_caller(addr, size, flags, __builtin_return_address(0));
 }
@@ -361,9 +354,9 @@ static int change_page_attr(struct page *page, int numpages, pgprot_t prot)
 			break;
 	}
 	wmb();
+	local_irq_restore(flags);
 	flush_tlb_kernel_range((unsigned long)page_address(start),
 			       (unsigned long)page_address(page));
-	local_irq_restore(flags);
 	return err;
 }
 

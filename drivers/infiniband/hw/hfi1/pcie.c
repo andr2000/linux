@@ -68,7 +68,7 @@
 /*
  * Code to adjust PCIe capabilities.
  */
-static int tune_pcie_caps(struct hfi1_devdata *);
+static void tune_pcie_caps(struct hfi1_devdata *);
 
 /*
  * Do all the common PCIe setup and initialization.
@@ -351,7 +351,7 @@ int pcie_speeds(struct hfi1_devdata *dd)
  */
 int request_msix(struct hfi1_devdata *dd, u32 msireq)
 {
-	int nvec, ret;
+	int nvec;
 
 	nvec = pci_alloc_irq_vectors(dd->pcidev, 1, msireq,
 				     PCI_IRQ_MSIX | PCI_IRQ_LEGACY);
@@ -360,12 +360,7 @@ int request_msix(struct hfi1_devdata *dd, u32 msireq)
 		return nvec;
 	}
 
-	ret = tune_pcie_caps(dd);
-	if (ret) {
-		dd_dev_err(dd, "tune_pcie_caps() failed: %d\n", ret);
-		pci_free_irq_vectors(dd->pcidev);
-		return ret;
-	}
+	tune_pcie_caps(dd);
 
 	/* check for legacy IRQ */
 	if (nvec == 1 && !dd->pcidev->msix_enabled)
@@ -416,15 +411,12 @@ int restore_pci_variables(struct hfi1_devdata *dd)
 	if (ret)
 		goto error;
 
-	ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_SPCIE1,
-				     dd->pci_lnkctl3);
-	if (ret)
-		goto error;
-
-	ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2, dd->pci_tph2);
-	if (ret)
-		goto error;
-
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_write_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					     dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
 	return 0;
 
 error:
@@ -474,15 +466,12 @@ int save_pci_variables(struct hfi1_devdata *dd)
 	if (ret)
 		goto error;
 
-	ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_SPCIE1,
-				    &dd->pci_lnkctl3);
-	if (ret)
-		goto error;
-
-	ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2, &dd->pci_tph2);
-	if (ret)
-		goto error;
-
+	if (pci_find_ext_capability(dd->pcidev, PCI_EXT_CAP_ID_TPH)) {
+		ret = pci_read_config_dword(dd->pcidev, PCIE_CFG_TPH2,
+					    &dd->pci_tph2);
+		if (ret)
+			goto error;
+	}
 	return 0;
 
 error:
@@ -502,7 +491,7 @@ uint aspm_mode = ASPM_MODE_DISABLED;
 module_param_named(aspm, aspm_mode, uint, S_IRUGO);
 MODULE_PARM_DESC(aspm, "PCIe ASPM: 0: disable, 1: enable, 2: dynamic");
 
-static int tune_pcie_caps(struct hfi1_devdata *dd)
+static void tune_pcie_caps(struct hfi1_devdata *dd)
 {
 	struct pci_dev *parent;
 	u16 rc_mpss, rc_mps, ep_mpss, ep_mps;
@@ -513,22 +502,14 @@ static int tune_pcie_caps(struct hfi1_devdata *dd)
 	 * Turn on extended tags in DevCtl in case the BIOS has turned it off
 	 * to improve WFR SDMA bandwidth
 	 */
-	ret = pcie_capability_read_word(dd->pcidev,
-					PCI_EXP_DEVCTL, &ectl);
-	if (ret) {
-		dd_dev_err(dd, "Unable to read from PCI config\n");
-		return ret;
-	}
-
-	if (!(ectl & PCI_EXP_DEVCTL_EXT_TAG)) {
+	ret = pcie_capability_read_word(dd->pcidev, PCI_EXP_DEVCTL, &ectl);
+	if ((!ret) && !(ectl & PCI_EXP_DEVCTL_EXT_TAG)) {
 		dd_dev_info(dd, "Enabling PCIe extended tags\n");
 		ectl |= PCI_EXP_DEVCTL_EXT_TAG;
 		ret = pcie_capability_write_word(dd->pcidev,
 						 PCI_EXP_DEVCTL, ectl);
-		if (ret) {
-			dd_dev_err(dd, "Unable to write to PCI config\n");
-			return ret;
-		}
+		if (ret)
+			dd_dev_info(dd, "Unable to write to PCI config\n");
 	}
 	/* Find out supported and configured values for parent (root) */
 	parent = dd->pcidev->bus->self;
@@ -536,15 +517,22 @@ static int tune_pcie_caps(struct hfi1_devdata *dd)
 	 * The driver cannot perform the tuning if it does not have
 	 * access to the upstream component.
 	 */
-	if (!parent)
-		return -EINVAL;
+	if (!parent) {
+		dd_dev_info(dd, "Parent not found\n");
+		return;
+	}
 	if (!pci_is_root_bus(parent->bus)) {
 		dd_dev_info(dd, "Parent not root\n");
-		return -EINVAL;
+		return;
 	}
-
-	if (!pci_is_pcie(parent) || !pci_is_pcie(dd->pcidev))
-		return -EINVAL;
+	if (!pci_is_pcie(parent)) {
+		dd_dev_info(dd, "Parent is not PCI Express capable\n");
+		return;
+	}
+	if (!pci_is_pcie(dd->pcidev)) {
+		dd_dev_info(dd, "PCI device is not PCI Express capable\n");
+		return;
+	}
 	rc_mpss = parent->pcie_mpss;
 	rc_mps = ffs(pcie_get_mps(parent)) - 8;
 	/* Find out supported and configured values for endpoint (us) */
@@ -590,8 +578,6 @@ static int tune_pcie_caps(struct hfi1_devdata *dd)
 		ep_mrrs = max_mrrs;
 		pcie_set_readrq(dd->pcidev, ep_mrrs);
 	}
-
-	return 0;
 }
 
 /* End of PCIe capability tuning */
@@ -1048,6 +1034,7 @@ int do_pcie_gen3_transition(struct hfi1_devdata *dd)
 	int do_retry, retry_count = 0;
 	int intnum = 0;
 	uint default_pset;
+	uint pset = pcie_pset;
 	u16 target_vector, target_speed;
 	u16 lnkctl2, vendor;
 	u8 div;
@@ -1215,16 +1202,16 @@ retry:
 	 *
 	 * Set Gen3EqPsetReqVec, leave other fields 0.
 	 */
-	if (pcie_pset == UNSET_PSET)
-		pcie_pset = default_pset;
-	if (pcie_pset > 10) {	/* valid range is 0-10, inclusive */
+	if (pset == UNSET_PSET)
+		pset = default_pset;
+	if (pset > 10) {	/* valid range is 0-10, inclusive */
 		dd_dev_err(dd, "%s: Invalid Eq Pset %u, setting to %d\n",
-			   __func__, pcie_pset, default_pset);
-		pcie_pset = default_pset;
+			   __func__, pset, default_pset);
+		pset = default_pset;
 	}
-	dd_dev_info(dd, "%s: using EQ Pset %u\n", __func__, pcie_pset);
+	dd_dev_info(dd, "%s: using EQ Pset %u\n", __func__, pset);
 	pci_write_config_dword(dd->pcidev, PCIE_CFG_REG_PL106,
-			       ((1 << pcie_pset) <<
+			       ((1 << pset) <<
 			PCIE_CFG_REG_PL106_GEN3_EQ_PSET_REQ_VEC_SHIFT) |
 			PCIE_CFG_REG_PL106_GEN3_EQ_EVAL2MS_DISABLE_SMASK |
 			PCIE_CFG_REG_PL106_GEN3_EQ_PHASE23_EXIT_MODE_SMASK);
@@ -1254,10 +1241,10 @@ retry:
 		/* apply static CTLE tunings */
 		u8 pcie_dc, pcie_lf, pcie_hf, pcie_bw;
 
-		pcie_dc = ctle_tunings[pcie_pset][0];
-		pcie_lf = ctle_tunings[pcie_pset][1];
-		pcie_hf = ctle_tunings[pcie_pset][2];
-		pcie_bw = ctle_tunings[pcie_pset][3];
+		pcie_dc = ctle_tunings[pset][0];
+		pcie_lf = ctle_tunings[pset][1];
+		pcie_hf = ctle_tunings[pset][2];
+		pcie_bw = ctle_tunings[pset][3];
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0200 | pcie_dc);
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0100 | pcie_lf);
 		write_gasket_interrupt(dd, intnum++, 0x0026, 0x0000 | pcie_hf);

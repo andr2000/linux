@@ -18,6 +18,8 @@
 #include <drm/drm_crtc_helper.h>
 #include <drm/exynos_drm.h>
 
+#include <linux/console.h>
+
 #include "exynos_drm_drv.h"
 #include "exynos_drm_fb.h"
 #include "exynos_drm_fbdev.h"
@@ -268,20 +270,20 @@ void exynos_drm_fbdev_fini(struct drm_device *dev)
 	private->fb_helper = NULL;
 }
 
-void exynos_drm_fbdev_restore_mode(struct drm_device *dev)
+void exynos_drm_fbdev_suspend(struct drm_device *dev)
 {
 	struct exynos_drm_private *private = dev->dev_private;
 
-	if (!private || !private->fb_helper)
-		return;
-
-	drm_fb_helper_restore_fbdev_mode_unlocked(private->fb_helper);
+	console_lock();
+	drm_fb_helper_set_suspend(private->fb_helper, 1);
+	console_unlock();
 }
 
-void exynos_drm_output_poll_changed(struct drm_device *dev)
+void exynos_drm_fbdev_resume(struct drm_device *dev)
 {
 	struct exynos_drm_private *private = dev->dev_private;
-	struct drm_fb_helper *fb_helper = private->fb_helper;
 
-	drm_fb_helper_hotplug_event(fb_helper);
+	console_lock();
+	drm_fb_helper_set_suspend(private->fb_helper, 0);
+	console_unlock();
 }

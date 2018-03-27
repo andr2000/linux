@@ -339,7 +339,6 @@ static void to_refs_end_foreign_access(struct xen_gem_object *xen_obj)
 						0, 0UL);
 	kfree(xen_obj->grefs);
 	xen_obj->grefs = NULL;
-	sg_free_table(xen_obj->sgt);
 	xen_obj->sgt = NULL;
 }
 
@@ -458,13 +457,11 @@ static void gem_free_object(struct drm_gem_object *gem_obj)
 	DRM_DEBUG("Freeing dumb with handle %d\n", xen_obj->dumb_handle);
 	if (xen_obj->grefs) {
 		if (xen_obj->sgt) {
-			if (xen_obj->base.import_attach)
-				drm_prime_gem_destroy(&xen_obj->base,
-						xen_obj->sgt);
+			drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt);
 			to_refs_end_foreign_access(xen_obj);
 		} else
 			from_refs_unmap(gem_obj->dev->dev, xen_obj);
-		}
+	}
 
 	drm_gem_object_release(gem_obj);
 

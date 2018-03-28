@@ -22,6 +22,15 @@
 
 #include "xen_drm_zcopy_balloon.h"
 
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,10,0)
+
+#define PV_DRM_LINUX_VERSION	KERNEL_VERSION(4,10,0)
+
+#define drm_gem_object_put_unlocked drm_gem_object_unreference_unlocked
+#endif
+
 struct xen_gem_object {
 	struct drm_gem_object base;
 	uint32_t dumb_handle;

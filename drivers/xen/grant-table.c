@@ -729,6 +729,55 @@ void gnttab_free_pages(int nr_pages, struct page **pages)
 }
 EXPORT_SYMBOL(gnttab_free_pages);
 
+int gnttab_dma_alloc_pages(struct device *dev, bool coherent,
+			   int nr_pages, struct page **pages,
+			   void **vaddr, dma_addr_t *dev_bus_addr)
+{
+	int i;
+	int ret;
+
+	ret = alloc_dma_xenballooned_pages(dev, coherent, nr_pages, pages,
+					   vaddr, dev_bus_addr);
+	if (ret < 0)
+		return ret;
+
+	for (i = 0; i < nr_pages; i++) {
+#if BITS_PER_LONG < 64
+		struct xen_page_foreign *foreign;
+
+		foreign = kzalloc(sizeof(*foreign), GFP_KERNEL);
+		if (!foreign) {
+			gnttab_dma_free_pages(dev, flags, nr_pages, pages,
+					      *vaddr, *dev_bus_addr);
+			return -ENOMEM;
+		}
+		set_page_private(pages[i], (unsigned long)foreign);
+#endif
+		SetPagePrivate(pages[i]);
+	}
+	return 0;
+}
+EXPORT_SYMBOL(gnttab_dma_alloc_pages);
+
+void gnttab_dma_free_pages(struct device *dev, bool coherent,
+			   int nr_pages, struct page **pages,
+			   void *vaddr, dma_addr_t dev_bus_addr)
+{
+	int i;
+
+	for (i = 0; i < nr_pages; i++) {
+		if (PagePrivate(pages[i])) {
+#if BITS_PER_LONG < 64
+			kfree((void *)page_private(pages[i]));
+#endif
+			ClearPagePrivate(pages[i]);
+		}
+	}
+	free_dma_xenballooned_pages(dev, coherent, nr_pages, pages,
+				    vaddr, dev_bus_addr);
+}
+EXPORT_SYMBOL(gnttab_dma_free_pages);
+
 /* Handling of paged out grant targets (GNTST_eagain) */
 #define MAX_DELAY 256
 static inline void

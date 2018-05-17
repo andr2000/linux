@@ -123,6 +123,7 @@ subsys_initcall(balloon_init);
 BALLOON_SHOW(current_kb, "%lu\n", PAGES2KB(balloon_stats.current_pages));
 BALLOON_SHOW(low_kb, "%lu\n", PAGES2KB(balloon_stats.balloon_low));
 BALLOON_SHOW(high_kb, "%lu\n", PAGES2KB(balloon_stats.balloon_high));
+BALLOON_SHOW(dma_kb, "%lu\n", PAGES2KB(balloon_stats.dma_pages));
 
 static DEVICE_ULONG_ATTR(schedule_delay, 0444, balloon_stats.schedule_delay);
 static DEVICE_ULONG_ATTR(max_schedule_delay, 0644, balloon_stats.max_schedule_delay);
@@ -205,6 +206,7 @@ static struct attribute *balloon_info_attrs[] = {
 	&dev_attr_current_kb.attr,
 	&dev_attr_low_kb.attr,
 	&dev_attr_high_kb.attr,
+	&dev_attr_dma_kb.attr,
 	NULL
 };
 

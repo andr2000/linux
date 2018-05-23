@@ -207,9 +207,11 @@ static void gntdev_free_map(struct grant_map *map)
 		bool coherent = map->dmabuf_flags &
 			GNTDEV_DMABUF_FLAG_DMA_COHERENT;
 
+#if 0
 		gnttab_dma_free_pages(gntdev_miscdev.this_device,
 				      coherent, map->count, map->pages,
 				      map->dmabuf_vaddr, map->dmabuf_bus_addr);
+#endif
 	} else if (map->pages) {
 		gnttab_free_pages(map->count, map->pages);
 	}
@@ -256,12 +258,14 @@ static struct grant_map *gntdev_alloc_map(int count, int dmabuf_flags)
 		     GNTDEV_DMABUF_FLAG_DMA_COHERENT)) {
 		bool coherent = dmabuf_flags & GNTDEV_DMABUF_FLAG_DMA_COHERENT;
 
+#if 0
 		if (gnttab_dma_alloc_pages(gntdev_miscdev.this_device,
 					   coherent,
 					   count, add->pages,
 					   &add->dmabuf_vaddr,
 					   &add->dmabuf_bus_addr))
 			goto err;
+#endif
 	} else {
 		if (gnttab_alloc_pages(count, add->pages))
 			goto err;

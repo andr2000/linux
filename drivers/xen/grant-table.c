@@ -45,6 +45,9 @@
 #include <linux/workqueue.h>
 #include <linux/ratelimit.h>
 #include <linux/moduleparam.h>
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+#include <linux/dma-mapping.h>
+#endif
 
 #include <xen/xen.h>
 #include <xen/interface/xen.h>
@@ -57,6 +60,7 @@
 #ifdef CONFIG_X86
 #include <asm/xen/cpuid.h>
 #endif
+#include <xen/mem_reservation.h>
 #include <asm/xen/hypercall.h>
 #include <asm/xen/interface.h>
 
@@ -811,6 +815,82 @@ int gnttab_alloc_pages(int nr_pages, struct page **pages)
 }
 EXPORT_SYMBOL(gnttab_alloc_pages);
 
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+/**
+ * gnttab_dma_alloc_pages - alloc DMAable pages suitable for grant mapping into
+ * @args: arguments to the function
+ */
+int gnttab_dma_alloc_pages(struct gnttab_dma_alloc_args *args)
+{
+	unsigned long pfn, start_pfn;
+	xen_pfn_t *frames;
+	size_t size;
+	int i, ret;
+
+	frames = kcalloc(args->nr_pages, sizeof(*frames), GFP_KERNEL);
+	if (!frames)
+		return -ENOMEM;
+
+	size = args->nr_pages << PAGE_SHIFT;
+	if (args->coherent)
+		args->vaddr = dma_alloc_coherent(args->dev, size,
+						 &args->dev_bus_addr,
+						 GFP_KERNEL | __GFP_NOWARN);
+	else
+		args->vaddr = dma_alloc_wc(args->dev, size,
+					   &args->dev_bus_addr,
+					   GFP_KERNEL | __GFP_NOWARN);
+	if (!args->vaddr) {
+		pr_err("Failed to allocate DMA buffer of size %zu\n", size);
+		ret = -ENOMEM;
+		goto fail_free_frames;
+	}
+
+	start_pfn = __phys_to_pfn(args->dev_bus_addr);
+	for (pfn = start_pfn, i = 0; pfn < start_pfn + args->nr_pages;
+			pfn++, i++) {
+		struct page *page = pfn_to_page(pfn);
+
+		args->pages[i] = page;
+		frames[i] = xen_page_to_gfn(page);
+		xenmem_reservation_scrub_page(page);
+	}
+
+	xenmem_reservation_va_mapping_reset(args->nr_pages, args->pages);
+
+	ret = xenmem_reservation_decrease(args->nr_pages, frames);
+	if (ret != args->nr_pages) {
+		pr_err("Failed to decrease reservation for DMA buffer\n");
+		xenmem_reservation_increase(ret, frames);
+		ret = -EFAULT;
+		goto fail_free_dma;
+	}
+
+	ret = gnttab_pages_set_private(args->nr_pages, args->pages);
+	if (ret < 0)
+		goto fail_clear_private;
+
+	kfree(frames);
+	return 0;
+
+fail_clear_private:
+	gnttab_pages_clear_private(args->nr_pages, args->pages);
+fail_free_dma:
+	xenmem_reservation_va_mapping_update(args->nr_pages, args->pages,
+					     frames);
+	if (args->coherent)
+		dma_free_coherent(args->dev, size,
+				  args->vaddr, args->dev_bus_addr);
+	else
+		dma_free_wc(args->dev, size,
+			    args->vaddr, args->dev_bus_addr);
+fail_free_frames:
+	kfree(frames);
+	return ret;
+}
+EXPORT_SYMBOL(gnttab_dma_alloc_pages);
+#endif
+
 void gnttab_pages_clear_private(int nr_pages, struct page **pages)
 {
 	int i;
@@ -837,6 +917,50 @@ void gnttab_free_pages(int nr_pages, struct page **pages)
 	free_xenballooned_pages(nr_pages, pages);
 }
 EXPORT_SYMBOL(gnttab_free_pages);
+
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+/**
+ * gnttab_dma_free_pages - free DMAable pages
+ * @args: arguments to the function
+ */
+int gnttab_dma_free_pages(struct gnttab_dma_alloc_args *args)
+{
+	xen_pfn_t *frames;
+	size_t size;
+	int i, ret;
+
+	gnttab_pages_clear_private(args->nr_pages, args->pages);
+
+	frames = kcalloc(args->nr_pages, sizeof(*frames), GFP_KERNEL);
+	if (!frames)
+		return -ENOMEM;
+
+	for (i = 0; i < args->nr_pages; i++)
+		frames[i] = page_to_xen_pfn(args->pages[i]);
+
+	ret = xenmem_reservation_increase(args->nr_pages, frames);
+	if (ret != args->nr_pages) {
+		pr_err("Failed to decrease reservation for DMA buffer\n");
+		ret = -EFAULT;
+	} else {
+		ret = 0;
+	}
+
+	xenmem_reservation_va_mapping_update(args->nr_pages, args->pages,
+					     frames);
+
+	size = args->nr_pages << PAGE_SHIFT;
+	if (args->coherent)
+		dma_free_coherent(args->dev, size,
+				  args->vaddr, args->dev_bus_addr);
+	else
+		dma_free_wc(args->dev, size,
+			    args->vaddr, args->dev_bus_addr);
+	kfree(frames);
+	return ret;
+}
+EXPORT_SYMBOL(gnttab_dma_free_pages);
+#endif
 
 /* Handling of paged out grant targets (GNTST_eagain) */
 #define MAX_DELAY 256

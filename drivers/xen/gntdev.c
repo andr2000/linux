@@ -6,6 +6,7 @@
  *
  * Copyright (c) 2006-2007, D G Murray.
  *           (c) 2009 Gerd Hoffmann <kraxel@redhat.com>
+ *           (c) 2018 Oleksandr Andrushchenko, EPAM Systems Inc.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -49,6 +50,10 @@
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+#include "gntdev-dmabuf.h"
+#endif
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Derek G. Murray <Derek.Murray@cl.cam.ac.uk>, "
 	      "Gerd Hoffmann <kraxel@redhat.com>");
@@ -78,6 +83,10 @@ struct gntdev_priv {
 #ifdef CONFIG_XEN_GRANT_DMA_ALLOC
 	/* Device for which DMA memory is allocated. */
 	struct device *dma_dev;
+#endif
+
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	struct gntdev_dmabuf_priv *dmabuf_priv;
 #endif
 };
 
@@ -622,6 +631,15 @@ static int gntdev_open(struct inode *inode, struct file *flip)
 	INIT_LIST_HEAD(&priv->freeable_maps);
 	mutex_init(&priv->lock);
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	priv->dmabuf_priv = gntdev_dmabuf_init();
+	if (IS_ERR(priv->dmabuf_priv)) {
+		ret = PTR_ERR(priv->dmabuf_priv);
+		kfree(priv);
+		return ret;
+	}
+#endif
+
 	if (use_ptemod) {
 		priv->mm = get_task_mm(current);
 		if (!priv->mm) {
@@ -671,8 +689,13 @@ static int gntdev_release(struct inode *inode, struct file *flip)
 	WARN_ON(!list_empty(&priv->freeable_maps));
 	mutex_unlock(&priv->lock);
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	gntdev_dmabuf_fini(priv->dmabuf_priv);
+#endif
+
 	if (use_ptemod)
 		mmu_notifier_unregister(&priv->mn, priv->mm);
+
 	kfree(priv);
 	return 0;
 }
@@ -1042,6 +1065,111 @@ static long gntdev_ioctl_grant_copy(struct gntdev_priv *priv, void __user *u)
 	return ret;
 }
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+/* ------------------------------------------------------------------ */
+/* DMA buffer export support.                                         */
+/* ------------------------------------------------------------------ */
+
+int gntdev_dmabuf_exp_from_refs(struct gntdev_priv *priv, int flags,
+				int count, u32 domid, u32 *refs, u32 *fd)
+{
+	/* XXX: this will need to work with gntdev's map, so leave it here. */
+	*fd = -1;
+	return -EINVAL;
+}
+
+/* ------------------------------------------------------------------ */
+/* DMA buffer IOCTL support.                                          */
+/* ------------------------------------------------------------------ */
+
+static long
+gntdev_ioctl_dmabuf_exp_from_refs(struct gntdev_priv *priv,
+				  struct ioctl_gntdev_dmabuf_exp_from_refs __user *u)
+{
+	struct ioctl_gntdev_dmabuf_exp_from_refs op;
+	u32 *refs;
+	long ret;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	refs = kcalloc(op.count, sizeof(*refs), GFP_KERNEL);
+	if (!refs)
+		return -ENOMEM;
+
+	if (copy_from_user(refs, u->refs, sizeof(*refs) * op.count) != 0) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	ret = gntdev_dmabuf_exp_from_refs(priv, op.flags, op.count,
+					  op.domid, refs, &op.fd);
+	if (ret)
+		goto out;
+
+	if (copy_to_user(u, &op, sizeof(op)) != 0)
+		ret = -EFAULT;
+
+out:
+	kfree(refs);
+	return ret;
+}
+
+static long
+gntdev_ioctl_dmabuf_exp_wait_released(struct gntdev_priv *priv,
+				      struct ioctl_gntdev_dmabuf_exp_wait_released __user *u)
+{
+	struct ioctl_gntdev_dmabuf_exp_wait_released op;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	return gntdev_dmabuf_exp_wait_released(priv->dmabuf_priv, op.fd,
+					       op.wait_to_ms);
+}
+
+static long
+gntdev_ioctl_dmabuf_imp_to_refs(struct gntdev_priv *priv,
+				struct ioctl_gntdev_dmabuf_imp_to_refs __user *u)
+{
+	struct ioctl_gntdev_dmabuf_imp_to_refs op;
+	struct gntdev_dmabuf *gntdev_dmabuf;
+	long ret;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	gntdev_dmabuf = gntdev_dmabuf_imp_to_refs(priv->dmabuf_priv,
+						  priv->dma_dev, op.fd,
+						  op.count, op.domid);
+	if (IS_ERR(gntdev_dmabuf))
+		return PTR_ERR(gntdev_dmabuf);
+
+	if (copy_to_user(u->refs, gntdev_dmabuf_imp_get_refs(gntdev_dmabuf),
+			 sizeof(*u->refs) * op.count) != 0) {
+		ret = -EFAULT;
+		goto out_release;
+	}
+	return 0;
+
+out_release:
+	gntdev_dmabuf_imp_release(priv->dmabuf_priv, op.fd);
+	return ret;
+}
+
+static long
+gntdev_ioctl_dmabuf_imp_release(struct gntdev_priv *priv,
+				struct ioctl_gntdev_dmabuf_imp_release __user *u)
+{
+	struct ioctl_gntdev_dmabuf_imp_release op;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	return gntdev_dmabuf_imp_release(priv->dmabuf_priv, op.fd);
+}
+#endif
+
 static long gntdev_ioctl(struct file *flip,
 			 unsigned int cmd, unsigned long arg)
 {
@@ -1063,6 +1191,20 @@ static long gntdev_ioctl(struct file *flip,
 
 	case IOCTL_GNTDEV_GRANT_COPY:
 		return gntdev_ioctl_grant_copy(priv, ptr);
+
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	case IOCTL_GNTDEV_DMABUF_EXP_FROM_REFS:
+		return gntdev_ioctl_dmabuf_exp_from_refs(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_EXP_WAIT_RELEASED:
+		return gntdev_ioctl_dmabuf_exp_wait_released(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_IMP_TO_REFS:
+		return gntdev_ioctl_dmabuf_imp_to_refs(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_IMP_RELEASE:
+		return gntdev_ioctl_dmabuf_imp_release(priv, ptr);
+#endif
 
 	default:
 		pr_debug("priv %p, unknown cmd %x\n", priv, cmd);

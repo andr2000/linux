@@ -6,6 +6,7 @@
  *
  * Copyright (c) 2006-2007, D G Murray.
  *           (c) 2009 Gerd Hoffmann <kraxel@redhat.com>
+ *           (c) 2018 Oleksandr Andrushchenko, EPAM Systems Inc.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -121,6 +122,17 @@ struct grant_map {
 	dma_addr_t dma_bus_addr;
 #endif
 };
+
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+struct xen_dmabuf {
+	union {
+		struct {
+			/* Granted references of the imported buffer. */
+			grant_ref_t *refs;
+		} imp;
+	} u;
+};
+#endif
 
 static int unmap_grant_pages(struct grant_map *map, int offset, int pages);
 
@@ -1036,6 +1048,128 @@ static long gntdev_ioctl_grant_copy(struct gntdev_priv *priv, void __user *u)
 	return ret;
 }
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+/* ------------------------------------------------------------------ */
+/* DMA buffer export support.                                         */
+/* ------------------------------------------------------------------ */
+
+static int dmabuf_exp_wait_released(struct gntdev_priv *priv, int fd,
+				    int wait_to_ms)
+{
+	return -ETIMEDOUT;
+}
+
+static int dmabuf_exp_from_refs(struct gntdev_priv *priv, int flags,
+				int count, u32 domid, u32 *refs, u32 *fd)
+{
+	*fd = -1;
+	return -EINVAL;
+}
+
+/* ------------------------------------------------------------------ */
+/* DMA buffer import support.                                         */
+/* ------------------------------------------------------------------ */
+
+static int dmabuf_imp_release(struct gntdev_priv *priv, u32 fd)
+{
+	return 0;
+}
+
+static struct xen_dmabuf *
+dmabuf_imp_to_refs(struct gntdev_priv *priv, int fd, int count, int domid)
+{
+	return ERR_PTR(-ENOMEM);
+}
+
+/* ------------------------------------------------------------------ */
+/* DMA buffer IOCTL support.                                          */
+/* ------------------------------------------------------------------ */
+
+static long
+gntdev_ioctl_dmabuf_exp_from_refs(struct gntdev_priv *priv,
+				  struct ioctl_gntdev_dmabuf_exp_from_refs __user *u)
+{
+	struct ioctl_gntdev_dmabuf_exp_from_refs op;
+	u32 *refs;
+	long ret;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	refs = kcalloc(op.count, sizeof(*refs), GFP_KERNEL);
+	if (!refs)
+		return -ENOMEM;
+
+	if (copy_from_user(refs, u->refs, sizeof(*refs) * op.count) != 0) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	ret = dmabuf_exp_from_refs(priv, op.flags, op.count,
+				   op.domid, refs, &op.fd);
+	if (ret)
+		goto out;
+
+	if (copy_to_user(u, &op, sizeof(op)) != 0)
+		ret = -EFAULT;
+
+out:
+	kfree(refs);
+	return ret;
+}
+
+static long
+gntdev_ioctl_dmabuf_exp_wait_released(struct gntdev_priv *priv,
+				      struct ioctl_gntdev_dmabuf_exp_wait_released __user *u)
+{
+	struct ioctl_gntdev_dmabuf_exp_wait_released op;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	return dmabuf_exp_wait_released(priv, op.fd, op.wait_to_ms);
+}
+
+static long
+gntdev_ioctl_dmabuf_imp_to_refs(struct gntdev_priv *priv,
+				struct ioctl_gntdev_dmabuf_imp_to_refs __user *u)
+{
+	struct ioctl_gntdev_dmabuf_imp_to_refs op;
+	struct xen_dmabuf *xen_dmabuf;
+	long ret;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	xen_dmabuf = dmabuf_imp_to_refs(priv, op.fd, op.count, op.domid);
+	if (IS_ERR(xen_dmabuf))
+		return PTR_ERR(xen_dmabuf);
+
+	if (copy_to_user(u->refs, xen_dmabuf->u.imp.refs,
+			 sizeof(*u->refs) * op.count) != 0) {
+		ret = -EFAULT;
+		goto out_release;
+	}
+	return 0;
+
+out_release:
+	dmabuf_imp_release(priv, op.fd);
+	return ret;
+}
+
+static long
+gntdev_ioctl_dmabuf_imp_release(struct gntdev_priv *priv,
+				struct ioctl_gntdev_dmabuf_imp_release __user *u)
+{
+	struct ioctl_gntdev_dmabuf_imp_release op;
+
+	if (copy_from_user(&op, u, sizeof(op)) != 0)
+		return -EFAULT;
+
+	return dmabuf_imp_release(priv, op.fd);
+}
+#endif
+
 static long gntdev_ioctl(struct file *flip,
 			 unsigned int cmd, unsigned long arg)
 {
@@ -1057,6 +1191,20 @@ static long gntdev_ioctl(struct file *flip,
 
 	case IOCTL_GNTDEV_GRANT_COPY:
 		return gntdev_ioctl_grant_copy(priv, ptr);
+
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	case IOCTL_GNTDEV_DMABUF_EXP_FROM_REFS:
+		return gntdev_ioctl_dmabuf_exp_from_refs(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_EXP_WAIT_RELEASED:
+		return gntdev_ioctl_dmabuf_exp_wait_released(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_IMP_TO_REFS:
+		return gntdev_ioctl_dmabuf_imp_to_refs(priv, ptr);
+
+	case IOCTL_GNTDEV_DMABUF_IMP_RELEASE:
+		return gntdev_ioctl_dmabuf_imp_release(priv, ptr);
+#endif
 
 	default:
 		pr_debug("priv %p, unknown cmd %x\n", priv, cmd);

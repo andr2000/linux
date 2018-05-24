@@ -196,6 +196,7 @@ int gntdev_dmabuf_exp_wait_released(struct gntdev_dmabuf_priv *priv, int fd,
 	dmabuf_exp_wait_obj_free(priv, obj);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_exp_wait_released);
 
 /* ------------------------------------------------------------------ */
 /* DMA buffer export support.                                         */
@@ -621,6 +622,7 @@ fail_put:
 	dma_buf_put(dma_buf);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_imp_to_refs);
 
 u32 *gntdev_dmabuf_imp_get_refs(struct gntdev_dmabuf *gntdev_dmabuf)
 {
@@ -629,6 +631,7 @@ u32 *gntdev_dmabuf_imp_get_refs(struct gntdev_dmabuf *gntdev_dmabuf)
 
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_imp_get_refs);
 
 /*
  * Find the hyper dma-buf by its file descriptor and remove
@@ -678,6 +681,7 @@ int gntdev_dmabuf_imp_release(struct gntdev_dmabuf_priv *priv, u32 fd)
 	dmabuf_imp_free_storage(gntdev_dmabuf);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_imp_release);
 
 struct gntdev_dmabuf_priv *gntdev_dmabuf_init(void)
 {
@@ -694,8 +698,10 @@ struct gntdev_dmabuf_priv *gntdev_dmabuf_init(void)
 
 	return priv;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_init);
 
 void gntdev_dmabuf_fini(struct gntdev_dmabuf_priv *priv)
 {
 	kfree(priv);
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_fini);

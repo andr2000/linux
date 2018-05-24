@@ -41,5 +41,6 @@ obj-$(CONFIG_XEN_SCSI_BACKEND)		+= xen-scsiback.o
 obj-$(CONFIG_XEN_AUTO_XLATE)		+= xlate_mmu.o
 xen-evtchn-y				:= evtchn.o
 xen-gntdev-y				:= gntdev.o
+xen-gntdev-$(CONFIG_XEN_GNTDEV_DMABUF)	+= gntdev-dmabuf.o
 xen-gntalloc-y				:= gntalloc.o
 xen-privcmd-y				:= privcmd.o

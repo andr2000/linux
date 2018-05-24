@@ -628,14 +628,37 @@ static const struct mmu_notifier_ops gntdev_mmu_ops = {
 
 /* ------------------------------------------------------------------ */
 
-static int gntdev_open(struct inode *inode, struct file *flip)
+void gntdev_free_context(struct gntdev_priv *priv)
+{
+	struct grant_map *map;
+
+	pr_debug("priv %p\n", priv);
+
+	mutex_lock(&priv->lock);
+	while (!list_empty(&priv->maps)) {
+		map = list_entry(priv->maps.next, struct grant_map, next);
+		list_del(&map->next);
+		gntdev_put_map(NULL /* already removed */, map);
+	}
+	WARN_ON(!list_empty(&priv->freeable_maps));
+
+	mutex_unlock(&priv->lock);
+
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+	gntdev_dmabuf_fini(priv->dmabuf_priv);
+#endif
+
+	kfree(priv);
+}
+EXPORT_SYMBOL_GPL(gntdev_free_context);
+
+struct gntdev_priv *gntdev_alloc_context(struct device *dev)
 {
 	struct gntdev_priv *priv;
-	int ret = 0;
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 
 	INIT_LIST_HEAD(&priv->maps);
 	INIT_LIST_HEAD(&priv->freeable_maps);
@@ -644,11 +667,39 @@ static int gntdev_open(struct inode *inode, struct file *flip)
 #ifdef CONFIG_XEN_GNTDEV_DMABUF
 	priv->dmabuf_priv = gntdev_dmabuf_init();
 	if (IS_ERR(priv->dmabuf_priv)) {
-		ret = PTR_ERR(priv->dmabuf_priv);
+		struct gntdev_priv *ret;
+
+		ret = ERR_CAST(priv->dmabuf_priv);
 		kfree(priv);
 		return ret;
 	}
 #endif
+
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	priv->dma_dev = dev;
+
+	/*
+	 * The device is not spawn from a device tree, so arch_setup_dma_ops
+	 * is not called, thus leaving the device with dummy DMA ops.
+	 * Fix this call of_dma_configure() with a NULL node to set
+	 * default DMA ops.
+	 */
+	of_dma_configure(priv->dma_dev, NULL);
+#endif
+	pr_debug("priv %p\n", priv);
+
+	return priv;
+}
+EXPORT_SYMBOL_GPL(gntdev_alloc_context);
+
+static int gntdev_open(struct inode *inode, struct file *flip)
+{
+	struct gntdev_priv *priv;
+	int ret = 0;
+
+	priv = gntdev_alloc_context(gntdev_miscdev.this_device);
+	if (IS_ERR(priv))
+		return PTR_ERR(priv);
 
 	if (use_ptemod) {
 		priv->mm = get_task_mm(current);
@@ -662,23 +713,11 @@ static int gntdev_open(struct inode *inode, struct file *flip)
 	}
 
 	if (ret) {
-		kfree(priv);
+		gntdev_free_context(priv);
 		return ret;
 	}
 
 	flip->private_data = priv;
-#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
-	priv->dma_dev = gntdev_miscdev.this_device;
-
-	/*
-	 * The device is not spawn from a device tree, so arch_setup_dma_ops
-	 * is not called, thus leaving the device with dummy DMA ops.
-	 * Fix this call of_dma_configure() with a NULL node to set
-	 * default DMA ops.
-	 */
-	of_dma_configure(priv->dma_dev, NULL);
-#endif
-	pr_debug("priv %p\n", priv);
 
 	return 0;
 }
@@ -686,27 +725,11 @@ static int gntdev_open(struct inode *inode, struct file *flip)
 static int gntdev_release(struct inode *inode, struct file *flip)
 {
 	struct gntdev_priv *priv = flip->private_data;
-	struct grant_map *map;
-
-	pr_debug("priv %p\n", priv);
-
-	mutex_lock(&priv->lock);
-	while (!list_empty(&priv->maps)) {
-		map = list_entry(priv->maps.next, struct grant_map, next);
-		list_del(&map->next);
-		gntdev_put_map(NULL /* already removed */, map);
-	}
-	WARN_ON(!list_empty(&priv->freeable_maps));
-	mutex_unlock(&priv->lock);
-
-#ifdef CONFIG_XEN_GNTDEV_DMABUF
-	gntdev_dmabuf_fini(priv->dmabuf_priv);
-#endif
 
 	if (use_ptemod)
 		mmu_notifier_unregister(&priv->mn, priv->mm);
 
-	kfree(priv);
+	gntdev_free_context(priv);
 	return 0;
 }
 
@@ -1163,6 +1186,7 @@ out:
 	gntdev_remove_map(priv, map);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(gntdev_dmabuf_exp_from_refs);
 
 /* ------------------------------------------------------------------ */
 /* DMA buffer IOCTL support.                                          */

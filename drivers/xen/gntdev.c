@@ -261,6 +261,16 @@ void gntdev_put_map(struct gntdev_priv *priv, struct gntdev_grant_map *map)
 	gntdev_free_map(map);
 }
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+void gntdev_remove_map(struct gntdev_priv *priv, struct gntdev_grant_map *map)
+{
+	mutex_lock(&priv->lock);
+	list_del(&map->next);
+	gntdev_put_map(NULL /* already removed */, map);
+	mutex_unlock(&priv->lock);
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 
 static int find_grant_ptes(pte_t *pte, pgtable_t token,

@@ -89,4 +89,8 @@ bool gntdev_account_mapped_pages(int count);
 
 int gntdev_map_grant_pages(struct gntdev_grant_map *map);
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+void gntdev_remove_map(struct gntdev_priv *priv, struct gntdev_grant_map *map);
+#endif
+
 #endif

@@ -18,7 +18,14 @@ struct gntdev_dmabuf;
 struct device;
 
 struct gntdev_dmabuf_export_args {
-	int dummy;
+	struct gntdev_priv *priv;
+	struct grant_map *map;
+	void (*release)(struct gntdev_priv *priv, struct grant_map *map);
+	struct gntdev_dmabuf_priv *dmabuf_priv;
+	struct device *dev;
+	int count;
+	struct page **pages;
+	u32 fd;
 };
 
 struct gntdev_dmabuf_priv *gntdev_dmabuf_init(void);

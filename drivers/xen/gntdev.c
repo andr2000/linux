@@ -318,6 +318,16 @@ static void gntdev_put_map(struct gntdev_priv *priv, struct grant_map *map)
 	gntdev_free_map(map);
 }
 
+#ifdef CONFIG_XEN_GNTDEV_DMABUF
+static void gntdev_remove_map(struct gntdev_priv *priv, struct grant_map *map)
+{
+	mutex_lock(&priv->lock);
+	list_del(&map->next);
+	gntdev_put_map(NULL /* already removed */, map);
+	mutex_unlock(&priv->lock);
+}
+#endif
+
 /* ------------------------------------------------------------------ */
 
 static int find_grant_ptes(pte_t *pte, pgtable_t token,
@@ -1070,12 +1080,88 @@ static long gntdev_ioctl_grant_copy(struct gntdev_priv *priv, void __user *u)
 /* DMA buffer export support.                                         */
 /* ------------------------------------------------------------------ */
 
+static struct grant_map *
+dmabuf_exp_alloc_backing_storage(struct gntdev_priv *priv, int dmabuf_flags,
+				 int count)
+{
+	struct grant_map *map;
+
+	if (unlikely(count <= 0))
+		return ERR_PTR(-EINVAL);
+
+	if ((dmabuf_flags & GNTDEV_DMA_FLAG_WC) &&
+	    (dmabuf_flags & GNTDEV_DMA_FLAG_COHERENT)) {
+		pr_err("Wrong dma-buf flags: either WC or coherent, not both\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	map = gntdev_alloc_map(priv, count, dmabuf_flags);
+	if (!map)
+		return ERR_PTR(-ENOMEM);
+
+	if (unlikely(atomic_add_return(count, &pages_mapped) > limit)) {
+		pr_err("can't map: over limit\n");
+		gntdev_put_map(NULL, map);
+		return ERR_PTR(-ENOMEM);
+	}
+	return map;
+}
+
 int gntdev_dmabuf_exp_from_refs(struct gntdev_priv *priv, int flags,
 				int count, u32 domid, u32 *refs, u32 *fd)
 {
-	/* XXX: this will need to work with gntdev's map, so leave it here. */
+	struct grant_map *map;
+	struct gntdev_dmabuf_export_args args;
+	int i, ret;
+
 	*fd = -1;
-	return -EINVAL;
+
+	if (use_ptemod) {
+		pr_err("Cannot provide dma-buf: use_ptemode %d\n",
+		       use_ptemod);
+		return -EINVAL;
+	}
+
+	map = dmabuf_exp_alloc_backing_storage(priv, flags, count);
+	if (IS_ERR(map))
+		return PTR_ERR(map);
+
+	for (i = 0; i < count; i++) {
+		map->grants[i].domid = domid;
+		map->grants[i].ref = refs[i];
+	}
+
+	mutex_lock(&priv->lock);
+	gntdev_add_map(priv, map);
+	mutex_unlock(&priv->lock);
+
+	map->flags |= GNTMAP_host_map;
+#if defined(CONFIG_X86)
+	map->flags |= GNTMAP_device_map;
+#endif
+
+	ret = map_grant_pages(map);
+	if (ret < 0)
+		goto out;
+
+	args.priv = priv;
+	args.map = map;
+	args.release = gntdev_remove_map;
+	args.dev = priv->dma_dev;
+	args.dmabuf_priv = priv->dmabuf_priv;
+	args.count = map->count;
+	args.pages = map->pages;
+
+	ret = gntdev_dmabuf_exp_from_pages(&args);
+	if (ret < 0)
+		goto out;
+
+	*fd = args.fd;
+	return 0;
+
+out:
+	gntdev_remove_map(priv, map);
+	return ret;
 }
 
 /* ------------------------------------------------------------------ */

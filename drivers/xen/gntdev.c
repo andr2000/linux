@@ -37,6 +37,9 @@
 #include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/refcount.h>
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+#include <linux/of_device.h>
+#endif
 
 #include <xen/xen.h>
 #include <xen/grant_table.h>
@@ -72,6 +75,11 @@ struct gntdev_priv {
 	struct mutex lock;
 	struct mm_struct *mm;
 	struct mmu_notifier mn;
+
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	/* Device for which DMA memory is allocated. */
+	struct device *dma_dev;
+#endif
 };
 
 struct unmap_notify {
@@ -96,9 +104,27 @@ struct grant_map {
 	struct gnttab_unmap_grant_ref *kunmap_ops;
 	struct page **pages;
 	unsigned long pages_vm_start;
+
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	/*
+	 * If dmabuf_vaddr is not NULL then this mapping is backed by DMA
+	 * capable memory.
+	 */
+
+	/* Device for which DMA memory is allocated. */
+	struct device *dma_dev;
+	/* Flags used to create this DMA buffer: GNTDEV_DMABUF_FLAG_XXX. */
+	bool dma_flags;
+	/* Virtual/CPU address of the DMA buffer. */
+	void *dma_vaddr;
+	/* Bus address of the DMA buffer. */
+	dma_addr_t dma_bus_addr;
+#endif
 };
 
 static int unmap_grant_pages(struct grant_map *map, int offset, int pages);
+
+static struct miscdevice gntdev_miscdev;
 
 /* ------------------------------------------------------------------ */
 
@@ -121,8 +147,26 @@ static void gntdev_free_map(struct grant_map *map)
 	if (map == NULL)
 		return;
 
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	if (map->dma_vaddr) {
+		struct gnttab_dma_alloc_args args;
+
+		args.dev = map->dma_dev;
+		args.coherent = map->dma_flags & GNTDEV_DMA_FLAG_COHERENT;
+		args.nr_pages = map->count;
+		args.pages = map->pages;
+		args.vaddr = map->dma_vaddr;
+		args.dev_bus_addr = map->dma_bus_addr;
+
+		gnttab_dma_free_pages(&args);
+	} else if (map->pages) {
+		gnttab_free_pages(map->count, map->pages);
+	}
+#else
 	if (map->pages)
 		gnttab_free_pages(map->count, map->pages);
+#endif
+
 	kfree(map->pages);
 	kfree(map->grants);
 	kfree(map->map_ops);
@@ -132,7 +176,8 @@ static void gntdev_free_map(struct grant_map *map)
 	kfree(map);
 }
 
-static struct grant_map *gntdev_alloc_map(struct gntdev_priv *priv, int count)
+static struct grant_map *gntdev_alloc_map(struct gntdev_priv *priv, int count,
+					  int dma_flags)
 {
 	struct grant_map *add;
 	int i;
@@ -155,8 +200,37 @@ static struct grant_map *gntdev_alloc_map(struct gntdev_priv *priv, int count)
 	    NULL == add->pages)
 		goto err;
 
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	add->dma_flags = dma_flags;
+
+	/*
+	 * Check if this mapping is requested to be backed
+	 * by a DMA buffer.
+	 */
+	if (dma_flags & (GNTDEV_DMA_FLAG_WC | GNTDEV_DMA_FLAG_COHERENT)) {
+		struct gnttab_dma_alloc_args args;
+
+		/* Remember the device, so we can free DMA memory. */
+		add->dma_dev = priv->dma_dev;
+
+		args.dev = priv->dma_dev;
+		args.coherent = dma_flags & GNTDEV_DMA_FLAG_COHERENT;
+		args.nr_pages = count;
+		args.pages = add->pages;
+
+		if (gnttab_dma_alloc_pages(&args))
+			goto err;
+
+		add->dma_vaddr = args.vaddr;
+		add->dma_bus_addr = args.dev_bus_addr;
+	} else {
+		if (gnttab_alloc_pages(count, add->pages))
+			goto err;
+	}
+#else
 	if (gnttab_alloc_pages(count, add->pages))
 		goto err;
+#endif
 
 	for (i = 0; i < count; i++) {
 		add->map_ops[i].handle = -1;
@@ -323,8 +397,19 @@ static int map_grant_pages(struct grant_map *map)
 		}
 
 		map->unmap_ops[i].handle = map->map_ops[i].handle;
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+		if (use_ptemod) {
+			map->kunmap_ops[i].handle = map->kmap_ops[i].handle;
+		} else if (map->dma_vaddr) {
+			unsigned long mfn;
+
+			mfn = __pfn_to_mfn(page_to_pfn(map->pages[i]));
+			map->unmap_ops[i].dev_bus_addr = __pfn_to_phys(mfn);
+		}
+#else
 		if (use_ptemod)
 			map->kunmap_ops[i].handle = map->kmap_ops[i].handle;
+#endif
 	}
 	return err;
 }
@@ -548,6 +633,17 @@ static int gntdev_open(struct inode *inode, struct file *flip)
 	}
 
 	flip->private_data = priv;
+#ifdef CONFIG_XEN_GRANT_DMA_ALLOC
+	priv->dma_dev = gntdev_miscdev.this_device;
+
+	/*
+	 * The device is not spawn from a device tree, so arch_setup_dma_ops
+	 * is not called, thus leaving the device with dummy DMA ops.
+	 * Fix this call of_dma_configure() with a NULL node to set
+	 * default DMA ops.
+	 */
+	of_dma_configure(priv->dma_dev, NULL);
+#endif
 	pr_debug("priv %p\n", priv);
 
 	return 0;
@@ -589,7 +685,7 @@ static long gntdev_ioctl_map_grant_ref(struct gntdev_priv *priv,
 		return -EINVAL;
 
 	err = -ENOMEM;
-	map = gntdev_alloc_map(priv, op.count);
+	map = gntdev_alloc_map(priv, op.count, 0 /* This is not a dma-buf. */);
 	if (!map)
 		return err;
 

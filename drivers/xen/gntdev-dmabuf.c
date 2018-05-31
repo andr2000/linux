@@ -367,10 +367,10 @@ static const struct dma_buf_ops dmabuf_exp_ops =  {
 	.map_dma_buf = dmabuf_exp_ops_map_dma_buf,
 	.unmap_dma_buf = dmabuf_exp_ops_unmap_dma_buf,
 	.release = dmabuf_exp_ops_release,
-	.map = dmabuf_exp_ops_kmap,
-	.map_atomic = dmabuf_exp_ops_kmap_atomic,
-	.unmap = dmabuf_exp_ops_kunmap,
-	.unmap_atomic = dmabuf_exp_ops_kunmap_atomic,
+	.kmap = dmabuf_exp_ops_kmap,
+	.kmap_atomic = dmabuf_exp_ops_kmap_atomic,
+	.kunmap = dmabuf_exp_ops_kunmap,
+	.kunmap_atomic = dmabuf_exp_ops_kunmap_atomic,
 	.mmap = dmabuf_exp_ops_mmap,
 };
 

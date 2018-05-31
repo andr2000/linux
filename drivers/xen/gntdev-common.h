@@ -14,6 +14,7 @@
 #include <linux/mm.h>
 #include <linux/mman.h>
 #include <linux/mmu_notifier.h>
+#include <linux/refcount.h>
 #include <linux/types.h>
 
 struct gntdev_dmabuf_priv;

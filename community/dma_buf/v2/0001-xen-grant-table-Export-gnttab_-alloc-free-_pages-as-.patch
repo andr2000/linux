@@ -1,0 +1,42 @@
+From ac63cdbbf99fe4199a2b0fdb8b1895ee2d9a7c4f Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Fri, 1 Jun 2018 13:14:53 +0300
+Subject: [PATCH v2 1/9] xen/grant-table: Export gnttab_{alloc|free}_pages as
+ GPL
+
+Only gnttab_{alloc|free}_pages are exported as EXPORT_SYMBOL
+while all the rest are exported as EXPORT_SYMBOL_GPL, thus
+effectively making it not possible for non-GPL driver modules
+to use grant table module. Export gnttab_{alloc|free}_pages as
+EXPORT_SYMBOL_GPL so all the exports are aligned.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/xen/grant-table.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/xen/grant-table.c b/drivers/xen/grant-table.c
+index 27be107d6480..ba36ff3e4903 100644
+--- a/drivers/xen/grant-table.c
++++ b/drivers/xen/grant-table.c
+@@ -799,7 +799,7 @@ int gnttab_alloc_pages(int nr_pages, struct page **pages)
+ 
+ 	return 0;
+ }
+-EXPORT_SYMBOL(gnttab_alloc_pages);
++EXPORT_SYMBOL_GPL(gnttab_alloc_pages);
+ 
+ /**
+  * gnttab_free_pages - free pages allocated by gnttab_alloc_pages()
+@@ -820,7 +820,7 @@ void gnttab_free_pages(int nr_pages, struct page **pages)
+ 	}
+ 	free_xenballooned_pages(nr_pages, pages);
+ }
+-EXPORT_SYMBOL(gnttab_free_pages);
++EXPORT_SYMBOL_GPL(gnttab_free_pages);
+ 
+ /* Handling of paged out grant targets (GNTST_eagain) */
+ #define MAX_DELAY 256
+-- 
+2.17.0
+

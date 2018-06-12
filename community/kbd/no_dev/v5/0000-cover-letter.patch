@@ -1,0 +1,46 @@
+From b6183f039d95fb1629c9f0524bb510be4c016395 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 12 Jun 2018 10:38:21 +0300
+Subject: [PATCH v5 0/3] Input: xen-kbdfront - allow better run-time configuration
+
+Hi, all!
+
+This patch series synchronizes Xen canonical protocol definitions
+which allow the last two patches in the series to update Xen
+kbdfront driver with a fix and v5 of the patch to allow better
+run-time configuration for xen-kbdfront.
+
+As xen-kbdfront patches rely on protocol changes from patch 1 I am
+sending these all together: Boris, Juergen, if you and Dmitry do not
+mind, can we have patch 1 applied through Dmitry's tree?
+
+Thank you,
+Oleksandr
+
+Changes since v4:
+- Added required changes to Xen protocols
+- Added a fix for multi-touch XenStore node's locations
+- No changes to "Input: xen-kbdfront - allow better run-time
+  configuration"
+
+Changes since v3:
+- do not connect backend if all virtual devices are disabled (Dmitry)
+
+Changes since v2:
+- based on XenStore kbdif features to control which devices are
+  exposed instead of module parameters.
+
+Oleksandr Andrushchenko (3):
+  xen: Sync up with the canonical protocol definitions in Xen
+  Input: xen-kbdfront - fix multi-touch XenStore node's locations
+  Input: xen-kbdfront - allow better run-time configuration
+
+ drivers/input/misc/xen-kbdfront.c  | 183 +++++++++++++++++------------
+ include/xen/interface/io/displif.h |   8 ++
+ include/xen/interface/io/kbdif.h   |  78 +++++++++---
+ include/xen/interface/io/sndif.h   |  10 +-
+ 4 files changed, 180 insertions(+), 99 deletions(-)
+
+-- 
+2.17.1
+

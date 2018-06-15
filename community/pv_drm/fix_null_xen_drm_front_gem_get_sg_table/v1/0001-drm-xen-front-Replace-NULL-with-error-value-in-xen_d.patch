@@ -1,0 +1,41 @@
+From 8aa3a7fe6f8e1d7e126b6acbcf349b6a9415ab13 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Fri, 15 Jun 2018 12:37:12 +0300
+Subject: [PATCH] drm/xen-front: Replace NULL with error value in
+ xen_drm_front_gem_get_sg_table
+
+Dan Carpenter has reported that there is the following static checker
+warning:
+	drivers/gpu/drm/drm_prime.c:317 drm_gem_map_dma_buf()
+	warn: 'sgt' can also be NULL
+
+314	sgt = obj->dev->driver->gem_prime_get_sg_table(obj);
+315
+316	if (!IS_ERR(sgt)) {
+317		if (!dma_map_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
+
+And one of the problematic functions is xen_drm_front_gem_get_sg_table.
+Fix this by replacing NULL with error value.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+---
+ drivers/gpu/drm/xen/xen_drm_front_gem.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_gem.c b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+index c85bfe7571cb..47ff019d3aef 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front_gem.c
++++ b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+@@ -179,7 +179,7 @@ struct sg_table *xen_drm_front_gem_get_sg_table(struct drm_gem_object *gem_obj)
+ 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+ 
+ 	if (!xen_obj->pages)
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 
+ 	return drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
+ }
+-- 
+2.17.1
+

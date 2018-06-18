@@ -1,0 +1,55 @@
+From 9d6aff9703fe5836a53fb25ab82240f5142f4029 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Fri, 15 Jun 2018 12:37:12 +0300
+Subject: [PATCH v2] drm: Replace NULL with error value in
+ drm_prime_pages_to_sg
+
+Dan Carpenter has reported that there is the following static checker
+warning:
+	drivers/gpu/drm/drm_prime.c:317 drm_gem_map_dma_buf()
+	warn: 'sgt' can also be NULL
+
+314	sgt = obj->dev->driver->gem_prime_get_sg_table(obj);
+315
+316	if (!IS_ERR(sgt)) {
+317		if (!dma_map_sg_attrs(attach->dev, sgt->sgl, sgt->nents, dir,
+
+Problematic functions are xen_drm_front_gem_get_sg_table and
+drm_gem_cma_prime_get_sg_table. Fix those by replacing NULL with error value.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+---
+ drivers/gpu/drm/drm_gem_cma_helper.c    | 2 +-
+ drivers/gpu/drm/xen/xen_drm_front_gem.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/drm_gem_cma_helper.c b/drivers/gpu/drm/drm_gem_cma_helper.c
+index 80a5115c3846..ce868ce288fb 100644
+--- a/drivers/gpu/drm/drm_gem_cma_helper.c
++++ b/drivers/gpu/drm/drm_gem_cma_helper.c
+@@ -436,7 +436,7 @@ struct sg_table *drm_gem_cma_prime_get_sg_table(struct drm_gem_object *obj)
+ 
+ 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
+ 	if (!sgt)
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 
+ 	ret = dma_get_sgtable(obj->dev->dev, sgt, cma_obj->vaddr,
+ 			      cma_obj->paddr, obj->size);
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_gem.c b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+index c85bfe7571cb..47ff019d3aef 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front_gem.c
++++ b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+@@ -179,7 +179,7 @@ struct sg_table *xen_drm_front_gem_get_sg_table(struct drm_gem_object *gem_obj)
+ 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+ 
+ 	if (!xen_obj->pages)
+-		return NULL;
++		return ERR_PTR(-ENOMEM);
+ 
+ 	return drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
+ }
+-- 
+2.17.1
+

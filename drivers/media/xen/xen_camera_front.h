@@ -11,8 +11,12 @@
 #ifndef __XEN_CAMERA_FRONT_H
 #define __XEN_CAMERA_FRONT_H
 
+#include "xen_camera_front_evtchnl.h"
+
 struct xen_camera_front_info {
 	struct xenbus_device *xb_dev;
+
+	struct xen_camera_front_evtchnl_pair evt_pair;
 };
 
 #endif /* __XEN_CAMERA_FRONT_H */

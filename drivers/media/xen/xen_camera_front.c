@@ -18,14 +18,23 @@
 #include <xen/interface/io/cameraif.h>
 
 #include "xen_camera_front.h"
+#include "xen_camera_front_evtchnl.h"
 
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
 {
+	xen_camera_front_evtchnl_free_all(front_info);
 }
 
 static int cameraback_initwait(struct xen_camera_front_info *front_info)
 {
-	return 0;
+	int ret;
+
+	/* Create all event channels and publish. */
+	ret = xen_camera_front_evtchnl_create_all(front_info);
+	if (ret < 0)
+		return ret;
+
+	return xen_camera_front_evtchnl_publish_all(front_info);
 }
 
 static int cameraback_connect(struct xen_camera_front_info *front_info)

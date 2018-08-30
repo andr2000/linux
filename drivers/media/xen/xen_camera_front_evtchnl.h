@@ -25,7 +25,7 @@ struct xen_camera_front_info;
 #endif
 
 /* Timeout in ms to wait for backend to respond. */
-#define VCAMERA_WAIT_BACK_MS	3000
+#define XEN_CAMERA_FRONT_WAIT_BACK_MS	3000
 
 enum xen_camera_front_evtchnl_state {
 	EVTCHNL_STATE_DISCONNECTED,

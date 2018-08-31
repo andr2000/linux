@@ -81,6 +81,7 @@ static int xen_camera_test(struct xen_camera_front_info *front_info)
 
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
 {
+	xen_camera_front_v4l2_fini(front_info);
 	xen_camera_front_evtchnl_free_all(front_info);
 }
 
@@ -98,7 +99,7 @@ static int cameraback_initwait(struct xen_camera_front_info *front_info)
 
 static int cameraback_connect(struct xen_camera_front_info *front_info)
 {
-	return 0;
+	return xen_camera_front_v4l2_init(front_info);
 }
 
 static void cameraback_disconnect(struct xen_camera_front_info *front_info)

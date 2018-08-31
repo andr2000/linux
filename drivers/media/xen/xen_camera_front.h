@@ -11,15 +11,23 @@
 #ifndef __XEN_CAMERA_FRONT_H
 #define __XEN_CAMERA_FRONT_H
 
+#include <media/v4l2-device.h>
+
 #include "xen_camera_front_evtchnl.h"
 
 struct xen_camera_front_info {
 	struct xenbus_device *xb_dev;
+	struct xen_camera_front_v4l2_info *v4l2_info;
 
 	struct xen_camera_front_evtchnl_pair evt_pair;
 
 	/* to protect data between backend IO code and interrupt handler */
 	spinlock_t io_lock;
+};
+
+struct xen_camera_front_v4l2_info {
+	struct xen_camera_front_info *front_info;
+	struct v4l2_device v4l2_dev;
 };
 
 #endif /* __XEN_CAMERA_FRONT_H */

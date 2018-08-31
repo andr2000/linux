@@ -19,6 +19,7 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_evtchnl.h"
+#include "xen_camera_front_v4l2.h"
 
 static struct xencamera_req *
 be_prepare_req(struct xen_camera_front_evtchnl *evtchnl, u8 operation)

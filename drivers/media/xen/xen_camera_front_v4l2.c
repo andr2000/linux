@@ -31,6 +31,9 @@
 static int ioctl_querycap(struct file *file, void *fh,
 			  struct v4l2_capability *cap)
 {
+	strlcpy(cap->driver, KBUILD_MODNAME, sizeof(cap->driver));
+	strlcpy(cap->card, "V4L2 para-virtualized camera", sizeof(cap->card));
+	strlcpy(cap->bus_info, "xen_bus", sizeof(cap->bus_info));
 	return 0;
 }
 
@@ -207,6 +210,9 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 	v4l2_info->front_info = front_info;
 	front_info->v4l2_info = v4l2_info;
+
+	strlcpy(v4l2_info->v4l2_dev.name, XENCAMERA_DRIVER_NAME,
+		sizeof(v4l2_info->v4l2_dev.name));
 
 	ret = v4l2_device_register(dev, &v4l2_info->v4l2_dev);
 	if (ret < 0)

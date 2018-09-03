@@ -11,6 +11,7 @@
 #ifndef __XEN_CAMERA_FRONT_H
 #define __XEN_CAMERA_FRONT_H
 
+#include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/videobuf2-v4l2.h>
 
@@ -30,6 +31,7 @@ struct xen_camera_front_v4l2_info {
 	struct xen_camera_front_info *front_info;
 	struct v4l2_device v4l2_dev;
 	struct video_device vdev;
+	struct v4l2_ctrl_handler ctrl_handler;
 	/* ioctl serialization mutex. */
 	struct mutex lock;
 

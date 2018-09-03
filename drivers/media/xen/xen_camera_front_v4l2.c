@@ -233,7 +233,7 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 			  V4L2_CID_HUE, -128, 127, 1, 0);
 	if (hdl->error) {
 		ret = hdl->error;
-		goto fail_ctrl;
+		goto fail;
 	}
 	v4l2_info->v4l2_dev.ctrl_handler = hdl;
 
@@ -265,17 +265,15 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 	ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);
 	if (ret < 0)
-		goto fail_unregister;
+		goto fail;
 
 	dev_info(dev, "V4L2 " XENCAMERA_DRIVER_NAME " driver loaded\n");
 
 	return 0;
 
-fail_ctrl:
+fail:
 	v4l2_ctrl_handler_free(&v4l2_info->ctrl_handler);
 	v4l2_device_unregister(&v4l2_info->v4l2_dev);
-
-fail_unregister:
 	video_unregister_device(&front_info->v4l2_info->vdev);
 	return ret;
 }

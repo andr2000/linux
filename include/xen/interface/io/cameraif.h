@@ -358,6 +358,9 @@
 #define XENCAMERA_CTRL_SATURATION      0x02
 #define XENCAMERA_CTRL_HUE             0x03
 
+/* Number of supported controls. */
+#define XENCAMERA_MAX_CTRL             4
+
 /*
  ******************************************************************************
  *                                 EVENT CODES

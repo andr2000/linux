@@ -47,6 +47,14 @@ again:
 			/* fall through */
 		case XENCAMERA_OP_GET_BUF_DETAILS:
 			/* fall through */
+		case XENCAMERA_OP_GET_CTRL_DETAILS:
+			/*
+			 * The requests above all expect data in the response,
+			 * so we need to make a copy and then proceeed as
+			 * usually.
+			 */
+			channel->u.req.resp = *resp;
+			/* fall through */
 		case XENCAMERA_OP_BUF_CREATE:
 			/* fall through */
 		case XENCAMERA_OP_BUF_DESTROY:
@@ -55,10 +63,7 @@ again:
 			/* fall through */
 		case XENCAMERA_OP_STREAM_STOP:
 			/* fall through */
-		case XENCAMERA_OP_GET_CTRL_DETAILS:
-			/* fall through */
 		case XENCAMERA_OP_SET_CTRL:
-			/* fall through */
 			channel->u.req.resp_status = resp->status;
 			complete(&channel->u.req.completion);
 			break;

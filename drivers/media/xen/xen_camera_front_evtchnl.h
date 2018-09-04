@@ -60,6 +60,12 @@ struct xen_camera_front_evtchnl {
 
 			/* Latest response status. */
 			int resp_status;
+
+			/*
+			 * This will hold a copy of the response for those
+			 * requests expecting data to be sent back.
+			 */
+			struct xencamera_resp resp;
 		} req;
 		struct {
 			struct xencamera_event_page *page;

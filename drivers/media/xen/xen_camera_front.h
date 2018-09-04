@@ -15,6 +15,7 @@
 #include <media/v4l2-device.h>
 #include <media/videobuf2-v4l2.h>
 
+#include "xen_camera_front_cfg.h"
 #include "xen_camera_front_evtchnl.h"
 
 struct xen_camera_front_info {
@@ -25,6 +26,8 @@ struct xen_camera_front_info {
 
 	/* To protect data between backend IO code and interrupt handler. */
 	spinlock_t io_lock;
+
+	struct xen_camera_front_cfg_card cfg;
 };
 
 struct xen_camera_front_v4l2_info {

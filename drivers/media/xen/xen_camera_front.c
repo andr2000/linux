@@ -54,7 +54,8 @@ static int be_stream_wait_io(struct xen_camera_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
-static int xen_camera_test(struct xen_camera_front_info *front_info)
+static int be_read_control(struct xen_camera_front_info *front_info, int index,
+			   struct xencamera_get_ctrl_details_resp *resp)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -68,7 +69,8 @@ static int xen_camera_test(struct xen_camera_front_info *front_info)
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
-	req = be_prepare_req(evtchnl, XENCAMERA_OP_SET_CONFIG);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_GET_CTRL_DETAILS);
+	req->req.get_ctrl_details.index = index;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
@@ -76,8 +78,48 @@ static int xen_camera_test(struct xen_camera_front_info *front_info)
 	if (ret == 0)
 		ret = be_stream_wait_io(evtchnl);
 
+	*resp = evtchnl->u.req.resp.resp.ctrl_details;
+
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
 	return ret;
+}
+
+static int be_read_control_details(struct xen_camera_front_info *front_info)
+{
+	struct xen_camera_front_cfg_card *cfg = &front_info->cfg;
+	struct xencamera_get_ctrl_details_resp resp;
+	int i, ret;
+
+	cfg->num_controls = 0;
+	for (i = 0; i < XENCAMERA_MAX_CTRL; i++) {
+		ret = be_read_control(front_info, i, &resp);
+		/*
+		 * We enumerate assigned controls here until EINVAL is
+		 * returned by the backend meaning that the requested control
+		 * with that index is not supported/assigned to the frontend.
+		 */
+		if (ret == -EINVAL)
+			break;
+
+		if (ret < 0)
+			return ret;
+
+		ret = xen_camera_front_cfg_to_v4l2_cid(resp.type);
+		if (ret < 0)
+			return -EINVAL;
+
+		cfg->ctrl[i].v4l2_cid = ret;
+		cfg->ctrl[i].minimum = resp.min;
+		cfg->ctrl[i].maximum = resp.max;
+		cfg->ctrl[i].default_value = resp.def_val;
+		cfg->ctrl[i].step = resp.step;
+
+		cfg->num_controls++;
+	}
+
+	dev_info(&front_info->xb_dev->dev, "Assigned %d control(s)\n",
+		 cfg->num_controls);
+	return 0;
 }
 
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
@@ -100,6 +142,18 @@ static int cameraback_initwait(struct xen_camera_front_info *front_info)
 
 static int cameraback_connect(struct xen_camera_front_info *front_info)
 {
+	int ret;
+
+	xen_camera_front_evtchnl_pair_set_connected(&front_info->evt_pair,
+						    true);
+	/*
+	 * Event channels are all set now, so we can read detailed
+	 * configuration for each assigned control.
+	 */
+	ret = be_read_control_details(front_info);
+	if (ret < 0)
+		return ret;
+
 	return xen_camera_front_v4l2_init(front_info);
 }
 
@@ -154,9 +208,6 @@ static void cameraback_changed(struct xenbus_device *xb_dev,
 			xenbus_dev_fatal(xb_dev, ret, "initializing frontend");
 		else
 			xenbus_switch_state(xb_dev, XenbusStateConnected);
-
-		xen_camera_front_evtchnl_pair_set_connected(&front_info->evt_pair, true);
-		xen_camera_test(front_info);
 		break;
 
 	case XenbusStateClosing:

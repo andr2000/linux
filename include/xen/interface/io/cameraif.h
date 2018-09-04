@@ -910,6 +910,7 @@ struct xencamera_req {
         struct xencamera_config config;
         struct xencamera_buf_create_req buf_create;
         struct xencamera_buf_destroy_req buf_destroy;
+        struct xencamera_get_ctrl_details_req get_ctrl_details;
         struct xencamera_set_ctrl_req set_ctrl;
         uint8_t reserved[56];
     } req;

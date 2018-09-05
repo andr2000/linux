@@ -686,7 +686,7 @@ struct xencamera_get_ctrl_details_req {
  * +----------------+----------------+----------------+----------------+
  * |               id                |  _OP_SET_CTRL  |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
- * |      index     |                     reserved                     | 12
+ * |       type     |                     reserved                     | 12
  * +----------------+----------------+----------------+----------------+
  * |                               value                               | 16
  * +----------------+----------------+----------------+----------------+
@@ -699,11 +699,11 @@ struct xencamera_get_ctrl_details_req {
  *
  * See response format for this request.
  *
- * index - uint8_t, index of the control.
+ * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
  * value - int32_t, new value of the control.
  */
 struct xencamera_set_ctrl_req {
-    uint8_t index;
+    uint8_t type;
     uint8_t reserved[3];
     int32_t value;
 };

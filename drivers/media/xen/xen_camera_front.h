@@ -41,4 +41,7 @@ struct xen_camera_front_v4l2_info {
 	struct vb2_queue queue;
 };
 
+int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
+				 int v4l2_cid, signed int value);
+
 #endif /* __XEN_CAMERA_FRONT_H */

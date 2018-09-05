@@ -54,6 +54,62 @@ static int be_stream_wait_io(struct xen_camera_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
+static int to_xen_ctrl_type(int v4l2_cid)
+{
+	switch (v4l2_cid) {
+	case V4L2_CID_BRIGHTNESS:
+		return XENCAMERA_CTRL_BRIGHTNESS;
+
+	case V4L2_CID_CONTRAST:
+		return XENCAMERA_CTRL_CONTRAST;
+
+	case V4L2_CID_SATURATION:
+		return XENCAMERA_CTRL_SATURATION;
+
+	case V4L2_CID_HUE:
+		return XENCAMERA_CTRL_HUE;
+
+	default:
+		break;
+	}
+
+	return -EINVAL;
+}
+
+int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
+				 int v4l2_cid, signed int value)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret, xen_type;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	xen_type = to_xen_ctrl_type(v4l2_cid);
+	if (xen_type < 0)
+		return xen_type;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_SET_CTRL);
+
+	req->req.set_ctrl.type = xen_type;
+	req->req.set_ctrl.value = value;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
 static int be_read_control(struct xen_camera_front_info *front_info, int index,
 			   struct xencamera_get_ctrl_details_resp *resp)
 {
@@ -227,6 +283,9 @@ static void cameraback_changed(struct xenbus_device *xb_dev,
 			break;
 
 		cameraback_disconnect(front_info);
+		break;
+
+	default:
 		break;
 	}
 }

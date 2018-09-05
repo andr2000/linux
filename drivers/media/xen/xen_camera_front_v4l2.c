@@ -169,26 +169,25 @@ static const struct v4l2_file_operations fops = {
 
 static int s_ctrl(struct v4l2_ctrl *ctrl)
 {
-	/*struct skeleton *skel =
-		container_of(ctrl->handler, struct skeleton, ctrl_handler);*/
-
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		container_of(ctrl->handler, struct xen_camera_front_v4l2_info,
+			     ctrl_handler);
 	switch (ctrl->id) {
 	case V4L2_CID_BRIGHTNESS:
-		/* TODO: set brightness to ctrl->val */
-		break;
+		/* fall-through */
 	case V4L2_CID_CONTRAST:
-		/* TODO: set contrast to ctrl->val */
-		break;
+		/* fall-through */
 	case V4L2_CID_SATURATION:
-		/* TODO: set saturation to ctrl->val */
-		break;
+		/* fall-through */
 	case V4L2_CID_HUE:
-		/* TODO: set hue to ctrl->val */
-		break;
+		return xen_camera_front_set_control(v4l2_info->front_info,
+						    ctrl->id, ctrl->val);
+
 	default:
-		return -EINVAL;
+		break;
 	}
-	return 0;
+
+	return -EINVAL;
 }
 
 static const struct v4l2_ctrl_ops ctrl_ops = {

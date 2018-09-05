@@ -195,12 +195,36 @@ static const struct v4l2_ctrl_ops ctrl_ops = {
 	.s_ctrl = s_ctrl,
 };
 
+static int init_controls(struct xen_camera_front_info *front_info)
+{
+	struct xen_camera_front_cfg_card *cfg = &front_info->cfg;
+	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+	struct v4l2_ctrl_handler *hdl = &v4l2_info->ctrl_handler;
+	int i, ret;
+
+	v4l2_ctrl_handler_init(hdl, cfg->num_controls);
+
+	for (i = 0; i < cfg->num_controls; i++)
+		v4l2_ctrl_new_std(hdl, &ctrl_ops,
+				  cfg->ctrl[i].v4l2_cid,
+				  cfg->ctrl[i].minimum,
+				  cfg->ctrl[i].maximum,
+				  cfg->ctrl[i].step,
+				  cfg->ctrl[i].default_value);
+	if (hdl->error) {
+		ret = hdl->error;
+		v4l2_ctrl_handler_free(&v4l2_info->ctrl_handler);
+		return ret;
+	}
+	v4l2_info->v4l2_dev.ctrl_handler = hdl;
+	return 0;
+}
+
 int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 {
 	struct device *dev = &front_info->xb_dev->dev;
 	struct xen_camera_front_v4l2_info *v4l2_info;
 	struct video_device *vdev;
-	struct v4l2_ctrl_handler *hdl;
 	struct vb2_queue *q;
 	int ret;
 
@@ -220,22 +244,12 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 	mutex_init(&v4l2_info->lock);
 
-	/* Add the controls */
-	hdl = &v4l2_info->ctrl_handler;
-	v4l2_ctrl_handler_init(hdl, 4);
-	v4l2_ctrl_new_std(hdl, &ctrl_ops,
-			  V4L2_CID_BRIGHTNESS, 0, 255, 1, 127);
-	v4l2_ctrl_new_std(hdl, &ctrl_ops,
-			  V4L2_CID_CONTRAST, 0, 255, 1, 16);
-	v4l2_ctrl_new_std(hdl, &ctrl_ops,
-			  V4L2_CID_SATURATION, 0, 255, 1, 127);
-	v4l2_ctrl_new_std(hdl, &ctrl_ops,
-			  V4L2_CID_HUE, -128, 127, 1, 0);
-	if (hdl->error) {
-		ret = hdl->error;
-		goto fail;
+	/* Add the controls if any. */
+	if (front_info->cfg.num_controls) {
+		ret = init_controls(front_info);
+		if (ret < 0)
+			goto fail_unregister_v4l2;
 	}
-	v4l2_info->v4l2_dev.ctrl_handler = hdl;
 
 	/* Initialize the vb2 queue. */
 	q = &v4l2_info->queue;
@@ -272,19 +286,22 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	return 0;
 
 fail:
-	v4l2_ctrl_handler_free(&v4l2_info->ctrl_handler);
-	v4l2_device_unregister(&v4l2_info->v4l2_dev);
 	video_unregister_device(&front_info->v4l2_info->vdev);
+fail_unregister_v4l2:
+	v4l2_device_unregister(&v4l2_info->v4l2_dev);
 	return ret;
 }
 
 void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 {
-	if (!front_info->v4l2_info)
+	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+
+	if (!v4l2_info)
 		return;
 
-	video_unregister_device(&front_info->v4l2_info->vdev);
-	v4l2_ctrl_handler_free(&front_info->v4l2_info->ctrl_handler);
-	v4l2_device_unregister(&front_info->v4l2_info->v4l2_dev);
+	video_unregister_device(&v4l2_info->vdev);
+	if (v4l2_info->v4l2_dev.ctrl_handler)
+		v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
+	v4l2_device_unregister(&v4l2_info->v4l2_dev);
 }
 

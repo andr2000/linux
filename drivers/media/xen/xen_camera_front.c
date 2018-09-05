@@ -114,6 +114,8 @@ static int be_read_control_details(struct xen_camera_front_info *front_info)
 		cfg->ctrl[i].default_value = resp.def_val;
 		cfg->ctrl[i].step = resp.step;
 
+		dev_info(&front_info->xb_dev->dev, "Control CID %x\n", ret);
+
 		cfg->num_controls++;
 	}
 

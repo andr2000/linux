@@ -29,6 +29,4 @@ struct xen_camera_front_cfg_card {
 	struct xen_camera_front_cfg_ctrl ctrl[XENCAMERA_MAX_CTRL];
 };
 
-int xen_camera_front_cfg_to_v4l2_cid(int xen_type);
-
 #endif /* __XEN_CAMERA_FRONT_CFG_H */

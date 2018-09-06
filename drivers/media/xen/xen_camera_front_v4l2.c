@@ -28,6 +28,50 @@
 #include "xen_camera_front.h"
 #include "xen_camera_front_v4l2.h"
 
+struct cfg_control_ids {
+	u32 xen_type;
+	u32 v4l2_cid;
+};
+
+static const struct cfg_control_ids CFG_CONTROL_IDS[] = {
+	{
+		.xen_type = XENCAMERA_CTRL_BRIGHTNESS,
+		.v4l2_cid = V4L2_CID_BRIGHTNESS,
+	},
+	{
+		.xen_type = XENCAMERA_CTRL_CONTRAST,
+		.v4l2_cid = V4L2_CID_CONTRAST,
+	},
+	{
+		.xen_type = XENCAMERA_CTRL_SATURATION,
+		.v4l2_cid = V4L2_CID_SATURATION,
+	},
+	{
+		.xen_type = XENCAMERA_CTRL_HUE,
+		.v4l2_cid = V4L2_CID_HUE
+	},
+};
+
+int xen_camera_front_v4l2_to_v4l2_cid(int xen_type)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(CFG_CONTROL_IDS); i++)
+		if (CFG_CONTROL_IDS[i].xen_type == xen_type)
+			return CFG_CONTROL_IDS[i].v4l2_cid;
+	return -EINVAL;
+}
+
+int xen_camera_front_v4l2_to_xen_type(int v4l2_cid)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(CFG_CONTROL_IDS); i++)
+		if (CFG_CONTROL_IDS[i].v4l2_cid == v4l2_cid)
+			return CFG_CONTROL_IDS[i].xen_type;
+	return -EINVAL;
+}
+
 static int ioctl_querycap(struct file *file, void *fh,
 			  struct v4l2_capability *cap)
 {

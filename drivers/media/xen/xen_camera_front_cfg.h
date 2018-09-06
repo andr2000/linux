@@ -24,9 +24,31 @@ struct xen_camera_front_cfg_ctrl {
 	s32 step;
 };
 
+struct xen_camera_front_cfg_frame_rate {
+	u32 numerator;
+	u32 denominator;
+};
+
+struct xen_camera_front_cfg_resolution {
+	int width;
+	int height;
+	int num_frame_rates;
+	struct xen_camera_front_cfg_frame_rate *frame_rate;
+};
+
+struct xen_camera_front_cfg_format {
+	u32 pixel_format;
+	int num_resolutions;
+	struct xen_camera_front_cfg_resolution *resolution;
+};
+
 struct xen_camera_front_cfg_card {
+	int num_formats;
+	struct xen_camera_front_cfg_format *format;
 	int num_controls;
 	struct xen_camera_front_cfg_ctrl ctrl[XENCAMERA_MAX_CTRL];
 };
+
+int xen_camera_front_cfg_init(struct xen_camera_front_info *front_info);
 
 #endif /* __XEN_CAMERA_FRONT_CFG_H */

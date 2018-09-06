@@ -226,6 +226,13 @@ static int ioctl_dv_timings_cap(struct file *file, void *fh,
 static int ioctl_enum_input(struct file *file, void *fh,
 			    struct v4l2_input *inp)
 {
+	if (inp->index > 0)
+		return -EINVAL;
+
+	strlcpy(inp->name, "Xen PV camera", sizeof(inp->name));
+
+	inp->type = V4L2_INPUT_TYPE_CAMERA;
+
 	return 0;
 }
 

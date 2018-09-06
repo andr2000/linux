@@ -77,7 +77,7 @@ static int ioctl_querycap(struct file *file, void *fh,
 {
 	strlcpy(cap->driver, KBUILD_MODNAME, sizeof(cap->driver));
 	strlcpy(cap->card, "V4L2 para-virtualized camera", sizeof(cap->card));
-	strlcpy(cap->bus_info, "xen_bus", sizeof(cap->bus_info));
+	strlcpy(cap->bus_info, "platform:xen_bus", sizeof(cap->bus_info));
 	return 0;
 }
 

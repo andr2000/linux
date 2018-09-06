@@ -168,6 +168,10 @@ static int cameraback_initwait(struct xen_camera_front_info *front_info)
 {
 	int ret;
 
+	ret = xen_camera_front_cfg_init(front_info);
+	if (ret < 0)
+		return ret;
+
 	/* Create all event channels and publish. */
 	ret = xen_camera_front_evtchnl_create_all(front_info);
 	if (ret < 0)

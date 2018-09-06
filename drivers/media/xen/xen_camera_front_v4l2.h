@@ -17,4 +17,8 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info);
 
 void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info);
 
+int xen_camera_front_v4l2_to_v4l2_cid(int xen_type);
+
+int xen_camera_front_v4l2_to_xen_type(int v4l2_cid);
+
 #endif /*__XEN_CAMERA_FRONT_V4L2_H */

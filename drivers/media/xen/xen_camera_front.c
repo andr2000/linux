@@ -54,28 +54,6 @@ static int be_stream_wait_io(struct xen_camera_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
-static int to_xen_ctrl_type(int v4l2_cid)
-{
-	switch (v4l2_cid) {
-	case V4L2_CID_BRIGHTNESS:
-		return XENCAMERA_CTRL_BRIGHTNESS;
-
-	case V4L2_CID_CONTRAST:
-		return XENCAMERA_CTRL_CONTRAST;
-
-	case V4L2_CID_SATURATION:
-		return XENCAMERA_CTRL_SATURATION;
-
-	case V4L2_CID_HUE:
-		return XENCAMERA_CTRL_HUE;
-
-	default:
-		break;
-	}
-
-	return -EINVAL;
-}
-
 int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
 				 int v4l2_cid, signed int value)
 {
@@ -88,7 +66,7 @@ int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
 	if (unlikely(!evtchnl))
 		return -EIO;
 
-	xen_type = to_xen_ctrl_type(v4l2_cid);
+	xen_type = xen_camera_front_v4l2_to_xen_type(v4l2_cid);
 	if (xen_type < 0)
 		return xen_type;
 
@@ -160,7 +138,7 @@ static int be_read_control_details(struct xen_camera_front_info *front_info)
 		if (ret < 0)
 			return ret;
 
-		ret = xen_camera_front_cfg_to_v4l2_cid(resp.type);
+		ret = xen_camera_front_v4l2_to_v4l2_cid(resp.type);
 		if (ret < 0)
 			return -EINVAL;
 

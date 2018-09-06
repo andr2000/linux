@@ -102,6 +102,79 @@ static int ioctl_g_fmt_vid_cap(struct file *file,
 static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
 				  struct v4l2_fmtdesc *f)
 {
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
+
+	if (f->index >= cfg->num_formats)
+		return -EINVAL;
+
+	f->pixelformat = cfg->format[f->index].pixel_format;
+	return 0;
+}
+
+static struct xen_camera_front_cfg_format *
+get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
+{
+	int i;
+
+	for (i = 0; i < cfg->num_formats; i++) {
+		struct xen_camera_front_cfg_format *format = &cfg->format[i];
+
+		if (format->pixel_format == pixel_format)
+			return format;
+	}
+	return NULL;
+}
+
+int ioctl_enum_framesizes(struct file *file, void *fh,
+			  struct v4l2_frmsizeenum *fsize)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
+	struct xen_camera_front_cfg_format *format;
+
+	format = get_format(cfg, fsize->pixel_format);
+	if (!format || (fsize->index >= format->num_resolutions))
+		return -EINVAL;
+
+	fsize->type = V4L2_FRMSIZE_TYPE_DISCRETE;
+	fsize->discrete.width = format->resolution[fsize->index].width;
+	fsize->discrete.height = format->resolution[fsize->index].height;
+	return 0;
+}
+
+int ioctl_enum_frameintervals(struct file *file, void *fh,
+			      struct v4l2_frmivalenum *fival)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
+	struct xen_camera_front_cfg_format *format;
+	struct xen_camera_front_cfg_resolution *resolution = NULL;
+	int i;
+
+	format = get_format(cfg, fival->pixel_format);
+	if (!format)
+		return -EINVAL;
+
+	for (i = 0; i < format->num_resolutions; i++) {
+		struct xen_camera_front_cfg_resolution *r =
+			&format->resolution[i];
+
+		if ((r->width == fival->width) &&
+		    (r->height == fival->height)) {
+			resolution = r;
+			break;
+		}
+	}
+
+	if (!resolution || (fival->index >= resolution->num_frame_rates))
+		return -EINVAL;
+
+	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
+	fival->discrete.numerator =
+		resolution->frame_rate[fival->index].numerator;
+	fival->discrete.denominator =
+		resolution->frame_rate[fival->index].denominator;
 	return 0;
 }
 
@@ -172,6 +245,9 @@ static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_s_fmt_vid_cap = ioctl_s_fmt_vid_cap,
 	.vidioc_g_fmt_vid_cap = ioctl_g_fmt_vid_cap,
 	.vidioc_enum_fmt_vid_cap = ioctl_enum_fmt_vid_cap,
+
+	.vidioc_enum_framesizes = ioctl_enum_framesizes,
+	.vidioc_enum_frameintervals = ioctl_enum_frameintervals,
 
 	.vidioc_g_std = ioctl_g_std,
 	.vidioc_s_std = ioctl_s_std,

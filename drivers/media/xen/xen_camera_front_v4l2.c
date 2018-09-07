@@ -185,20 +185,19 @@ static int ioctl_enum_input(struct file *file, void *fh,
 		return -EINVAL;
 
 	strlcpy(inp->name, "Xen PV camera", sizeof(inp->name));
-
 	inp->type = V4L2_INPUT_TYPE_CAMERA;
-
 	return 0;
 }
 
 static int ioctl_g_input(struct file *file, void *fh, unsigned int *i)
 {
+	*i = 0;
 	return 0;
 }
 
 static int ioctl_s_input(struct file *file, void *fh, unsigned int i)
 {
-	return 0;
+	return (i > 0) ? -EINVAL : 0;
 }
 
 static const struct v4l2_ioctl_ops ioctl_ops = {

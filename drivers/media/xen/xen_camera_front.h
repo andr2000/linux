@@ -39,6 +39,7 @@ struct xen_camera_front_v4l2_info {
 	struct mutex lock;
 
 	struct vb2_queue queue;
+	struct list_head buf_list;
 };
 
 int xen_camera_front_set_control(struct xen_camera_front_info *front_info,

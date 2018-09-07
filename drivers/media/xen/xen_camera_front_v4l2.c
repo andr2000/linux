@@ -178,51 +178,6 @@ int ioctl_enum_frameintervals(struct file *file, void *fh,
 	return 0;
 }
 
-static int ioctl_g_std(struct file *file, void *fh, v4l2_std_id *norm)
-{
-	return 0;
-}
-
-static int ioctl_s_std(struct file *file, void *fh, v4l2_std_id norm)
-{
-	return 0;
-}
-
-static int ioctl_querystd(struct file *file, void *fh, v4l2_std_id *a)
-{
-	return 0;
-}
-
-static int ioctl_s_dv_timings(struct file *file, void *fh,
-			      struct v4l2_dv_timings *timings)
-{
-	return 0;
-}
-
-static int ioctl_g_dv_timings(struct file *file, void *fh,
-			      struct v4l2_dv_timings *timings)
-{
-	return 0;
-}
-
-static int ioctl_query_dv_timings(struct file *file, void *fh,
-				  struct v4l2_dv_timings *timings)
-{
-	return 0;
-}
-
-static int ioctl_enum_dv_timings(struct file *file, void *fh,
-				 struct v4l2_enum_dv_timings *timings)
-{
-	return 0;
-}
-
-static int ioctl_dv_timings_cap(struct file *file, void *fh,
-				struct v4l2_dv_timings_cap *cap)
-{
-	return 0;
-}
-
 static int ioctl_enum_input(struct file *file, void *fh,
 			    struct v4l2_input *inp)
 {
@@ -255,16 +210,6 @@ static const struct v4l2_ioctl_ops ioctl_ops = {
 
 	.vidioc_enum_framesizes = ioctl_enum_framesizes,
 	.vidioc_enum_frameintervals = ioctl_enum_frameintervals,
-
-	.vidioc_g_std = ioctl_g_std,
-	.vidioc_s_std = ioctl_s_std,
-	.vidioc_querystd = ioctl_querystd,
-
-	.vidioc_s_dv_timings = ioctl_s_dv_timings,
-	.vidioc_g_dv_timings = ioctl_g_dv_timings,
-	.vidioc_enum_dv_timings = ioctl_enum_dv_timings,
-	.vidioc_query_dv_timings = ioctl_query_dv_timings,
-	.vidioc_dv_timings_cap = ioctl_dv_timings_cap,
 
 	.vidioc_enum_input = ioctl_enum_input,
 	.vidioc_g_input = ioctl_g_input,
@@ -399,8 +344,6 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	vdev->lock = &v4l2_info->lock;
 	vdev->queue = q;
 	vdev->v4l2_dev = &v4l2_info->v4l2_dev;
-	/* Supported SDTV standards, if any */
-//	vdev->tvnorms = SKEL_TVNORMS;
 	video_set_drvdata(vdev, v4l2_info);
 
 	ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);

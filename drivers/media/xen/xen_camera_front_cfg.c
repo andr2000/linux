@@ -194,6 +194,12 @@ int xen_camera_front_cfg_init(struct xen_camera_front_info *front_info)
 	int num_formats;
 	int i, ret;
 
+	if (xenbus_read_unsigned(xb_dev->nodename,
+				 XENCAMERA_FIELD_BE_ALLOC, 0)) {
+		dev_info(dev, "Backend can provide camera buffers\n");
+		cfg->be_alloc = true;
+	}
+
 	cfg->num_formats = 0;
 	/* Find out how many formats are configured. */
 	dir_nodes = xenbus_directory(XBT_NIL, xb_dev->nodename,

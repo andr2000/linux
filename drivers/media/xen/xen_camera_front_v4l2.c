@@ -21,12 +21,19 @@
 #include <media/v4l2-event.h>
 #include <media/videobuf2-v4l2.h>
 
+#include <media/videobuf2-dma-contig.h>
+
 #include <xen/xenbus.h>
 
 #include <xen/interface/io/cameraif.h>
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_v4l2.h"
+
+struct xen_camera_buffer {
+	struct vb2_buffer vb;
+	struct list_head list;
+};
 
 struct cfg_control_ids {
 	u32 xen_type;
@@ -71,6 +78,79 @@ int xen_camera_front_v4l2_to_xen_type(int v4l2_cid)
 			return CFG_CONTROL_IDS[i].xen_type;
 	return -EINVAL;
 }
+
+/*
+ * Setup the constraints of the queue: besides setting the number of planes
+ * per buffer and the size and allocation context of each plane, it also
+ * checks if sufficient buffers have been allocated. Usually 3 is a good
+ * minimum number: many DMA engines need a minimum of 2 buffers in the
+ * queue and you need to have another available for userspace processing.
+ */
+static int queue_setup(struct vb2_queue *vq,
+		       unsigned int *nbuffers, unsigned int *nplanes,
+		       unsigned int sizes[], struct device *alloc_devs[])
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+
+	return 0;
+}
+
+/*
+ * Prepare the buffer for queueing to the DMA engine: check and set the
+ * payload size.
+ */
+static int buffer_prepare(struct vb2_buffer *vb)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		vb2_get_drv_priv(vb->vb2_queue);
+	return 0;
+}
+
+/*
+ * Queue this buffer to the DMA engine.
+ */
+static void buffer_queue(struct vb2_buffer *vb)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		vb2_get_drv_priv(vb->vb2_queue);
+}
+
+/*
+ * Start streaming. First check if the minimum number of buffers have been
+ * queued. If not, then return -ENOBUFS and the vb2 framework will call
+ * this function again the next time a buffer has been queued until enough
+ * buffers are available to actually start the DMA engine.
+ */
+static int start_streaming(struct vb2_queue *vq, unsigned int count)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+
+	return 0;
+}
+
+/*
+ * Stop the DMA engine. Any remaining buffers in the DMA queue are dequeued
+ * and passed on to the vb2 framework marked as STATE_ERROR.
+ */
+static void stop_streaming(struct vb2_queue *vq)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+}
+
+/*
+ * The vb2 queue ops. Note that since q->lock is set we can use the standard
+ * vb2_ops_wait_prepare/finish helper functions. If q->lock would be NULL,
+ * then this driver would have to provide these ops.
+ */
+static const struct vb2_ops qops = {
+	.queue_setup		= queue_setup,
+	.buf_prepare		= buffer_prepare,
+	.buf_queue		= buffer_queue,
+	.start_streaming	= start_streaming,
+	.stop_streaming		= stop_streaming,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
+};
 
 static int ioctl_querycap(struct file *file, void *fh,
 			  struct v4l2_capability *cap)
@@ -322,7 +402,32 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	}
 
 	/* Initialize the vb2 queue. */
+	INIT_LIST_HEAD(&v4l2_info->buf_list);
+
 	q = &v4l2_info->queue;
+
+	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_READ;
+	q->dev = dev;
+	q->drv_priv = v4l2_info;
+	q->buf_struct_size = sizeof(struct xen_camera_buffer);
+	q->ops = &qops;
+	q->mem_ops = &vb2_dma_contig_memops;
+	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
+	q->min_buffers_needed = 2;
+	/*
+	 * The serialization lock for the streaming ioctls. This is the same
+	 * as the main serialization lock, but if some of the non-streaming
+	 * ioctls could take a long time to execute, then you might want to
+	 * have a different lock here to prevent VIDIOC_DQBUF from being
+	 * blocked while waiting for another action to finish. This is
+	 * generally not needed for PCI devices, but USB devices usually do
+	 * want a separate lock here.
+	 */
+	q->lock = &v4l2_info->lock;
+	ret = vb2_queue_init(q);
+	if (ret)
+		goto fail_unregister_ctrl;
 
 	vdev = &v4l2_info->vdev;
 	strlcpy(vdev->name, KBUILD_MODNAME, sizeof(vdev->name));
@@ -355,6 +460,9 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 fail:
 	video_unregister_device(&front_info->v4l2_info->vdev);
+fail_unregister_ctrl:
+	v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
+	v4l2_info->v4l2_dev.ctrl_handler = NULL;
 fail_unregister_v4l2:
 	v4l2_device_unregister(&v4l2_info->v4l2_dev);
 	return ret;

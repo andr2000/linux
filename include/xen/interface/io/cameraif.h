@@ -88,10 +88,10 @@
  *---------------------------- Device 0 configuration -------------------------
  *
  * /local/domain/1/device/vcamera/0/controls = "contrast,hue"
- * /local/domain/1/device/vcamera/0/formats/YUYV/640x480 = "30/1,15/1,15/2"
- * /local/domain/1/device/vcamera/0/formats/YUYV/1920x1080 = "15/2"
- * /local/domain/1/device/vcamera/0/formats/BGRA/640x480 = "15/1,15/2"
- * /local/domain/1/device/vcamera/0/formats/BGRA/1200x720 = "15/2"
+ * /local/domain/1/device/vcamera/0/formats/YUYV/640x480/frame-rates = "30/1,15/1"
+ * /local/domain/1/device/vcamera/0/formats/YUYV/1920x1080/frame-rates = "15/2"
+ * /local/domain/1/device/vcamera/0/formats/BGRA/640x480/frame-rates = "15/1,15/2"
+ * /local/domain/1/device/vcamera/0/formats/BGRA/1200x720/frame-rates = "15/2"
  * /local/domain/1/device/vcamera/0/unique-id = "0"
  * /local/domain/1/device/vcamera/0/req-ring-ref = "2832"
  * /local/domain/1/device/vcamera/0/req-event-channel = "15"
@@ -101,8 +101,8 @@
  *---------------------------- Device 1 configuration -------------------------
  *
  * /local/domain/1/device/vcamera/1/controls = "brightness,saturation,hue"
- * /local/domain/1/device/vcamera/1/formats/YUYV/640x480 = "30/1,15/1,15/2"
- * /local/domain/1/device/vcamera/1/formats/YUYV/1920x1080 = "15/2"
+ * /local/domain/1/device/vcamera/1/formats/YUYV/640x480/frame-rates = "30/1,15/2"
+ * /local/domain/1/device/vcamera/1/formats/YUYV/1920x1080/frame-rates = "15/2"
  * /local/domain/1/device/vcamera/1/unique-id = "1"
  * /local/domain/1/device/vcamera/1/req-ring-ref = "2833"
  * /local/domain/1/device/vcamera/1/req-event-channel = "17"
@@ -173,12 +173,17 @@
  *      ordering requirement.
  *
  * formats
- *      Values:         <format, char[4]>
+ *      Values:         <format, char[7]>
  *
  *      Formats are organized as a set of directories one per each
- *      supported pixel format. The name of the directory is an upper case
- *      string of the corresponding FOURCC string label. The next level of
+ *      supported pixel format. The name of the directory is the
+ *      corresponding FOURCC string label. The next level of
  *      the directory under <formats> represents supported resolutions.
+ *      If the format represents a big-endian variant of a little
+ *      endian format, then the "-BE" suffix must be added. E.g. 'AR15' vs
+ *      'AR15-BE'.
+ *      If FOURCC string label has spaces then those are only allowed to
+ *      be at the end of the label and must be trimmed.
  *
  * resolution
  *      Values:         <width, uint32_t>x<height, uint32_t>
@@ -194,17 +199,6 @@
  *      List of XENCAMERA_FRAME_RATE_SEPARATOR separated supported frame rates
  *      of the camera expressed as numerator and denominator of the
  *      corresponding frame rate.
- *
- * The format of the <formats> directory tree with resolutions and frame rates
- * must be structured in the following format:
- *
- * .../vcamera/<dev-id>/<format[i]>/<resolution[j]>/<frame-rates[k]>
- *
- * where
- *  i - i-th supported pixel format
- *  j - j-th supported resolution for i-th pixel format
- *  k - k-th supported frame rate for i-th pixel format and j-th
- *      resolution
  *
  *------------------- Camera Request Transport Parameters ---------------------
  *
@@ -344,22 +338,66 @@
  *                             REQUEST CODES
  ******************************************************************************
  */
-#define XENCAMERA_OP_SET_CONFIG        0x00
-#define XENCAMERA_OP_GET_BUF_DETAILS   0x01
-#define XENCAMERA_OP_BUF_CREATE        0x02
-#define XENCAMERA_OP_BUF_DESTROY       0x03
-#define XENCAMERA_OP_STREAM_START      0x04
-#define XENCAMERA_OP_STREAM_STOP       0x05
-#define XENCAMERA_OP_GET_CTRL_DETAILS  0x06
-#define XENCAMERA_OP_SET_CTRL          0x07
+#define XENCAMERA_OP_CONFIG_SET        0x00
+#define XENCAMERA_OP_CONFIG_GET        0x01
+#define XENCAMERA_OP_BUF_GET_LAYOUT    0x02
+#define XENCAMERA_OP_BUF_REQUEST       0x03
+#define XENCAMERA_OP_BUF_CREATE        0x04
+#define XENCAMERA_OP_BUF_DESTROY       0x05
+#define XENCAMERA_OP_BUF_QUEUE         0x06
+#define XENCAMERA_OP_BUF_DEQUEUE       0x07
+#define XENCAMERA_OP_CTRL_ENUM         0x08
+#define XENCAMERA_OP_CTRL_SET          0x09
+#define XENCAMERA_OP_CTRL_GET          0x0a
+#define XENCAMERA_OP_STREAM_START      0x0b
+#define XENCAMERA_OP_STREAM_STOP       0x0c
 
-#define XENCAMERA_CTRL_BRIGHTNESS      0x00
-#define XENCAMERA_CTRL_CONTRAST        0x01
-#define XENCAMERA_CTRL_SATURATION      0x02
-#define XENCAMERA_CTRL_HUE             0x03
+#define XENCAMERA_CTRL_BRIGHTNESS      0
+#define XENCAMERA_CTRL_CONTRAST        1
+#define XENCAMERA_CTRL_SATURATION      2
+#define XENCAMERA_CTRL_HUE             3
 
 /* Number of supported controls. */
 #define XENCAMERA_MAX_CTRL             4
+
+/* Control is read-only. */
+#define XENCAMERA_CTRL_FLG_RO          (1 << 0)
+/* Control is write-only. */
+#define XENCAMERA_CTRL_FLG_WO          (1 << 1)
+/* Control's value is volatile. */
+#define XENCAMERA_CTRL_FLG_VOLATILE    (1 << 2)
+
+/* Supported color spaces. */
+#define XENCAMERA_COLORSPACE_DEFAULT   0
+#define XENCAMERA_COLORSPACE_SMPTE170M 1
+#define XENCAMERA_COLORSPACE_REC709    2
+#define XENCAMERA_COLORSPACE_SRGB      3
+#define XENCAMERA_COLORSPACE_OPRGB     4
+#define XENCAMERA_COLORSPACE_BT2020    5
+#define XENCAMERA_COLORSPACE_DCI_P3    6
+
+/* Color space transfer function. */
+#define XENCAMERA_XFER_FUNC_DEFAULT    0
+#define XENCAMERA_XFER_FUNC_709        1
+#define XENCAMERA_XFER_FUNC_SRGB       2
+#define XENCAMERA_XFER_FUNC_OPRGB      3
+#define XENCAMERA_XFER_FUNC_NONE       4
+#define XENCAMERA_XFER_FUNC_DCI_P3     5
+#define XENCAMERA_XFER_FUNC_SMPTE2084  6
+
+/* Color space Y’CbCr encoding. */
+#define XENCAMERA_YCBCR_ENC_IGNORE           0
+#define XENCAMERA_YCBCR_ENC_601              1
+#define XENCAMERA_YCBCR_ENC_709              2
+#define XENCAMERA_YCBCR_ENC_XV601            3
+#define XENCAMERA_YCBCR_ENC_XV709            4
+#define XENCAMERA_YCBCR_ENC_BT2020           5
+#define XENCAMERA_YCBCR_ENC_BT2020_CONST_LUM 6
+
+/* Quantization range. */
+#define XENCAMERA_QUANTIZATION_DEFAULT       0
+#define XENCAMERA_QUANTIZATION_FULL_RANGE    1
+#define XENCAMERA_QUANTIZATION_LIM_RANGE     2
 
 /*
  ******************************************************************************
@@ -367,6 +405,10 @@
  ******************************************************************************
  */
 #define XENCAMERA_EVT_FRAME_AVAIL      0x00
+#define XENCAMERA_EVT_CTRL_CHANGE      0x01
+
+/* Resolution has changed. */
+#define XENCAMERA_EVT_CFG_FLG_RESOL    (1 << 0)
 
 /*
  ******************************************************************************
@@ -377,7 +419,7 @@
 
 #define XENCAMERA_LIST_SEPARATOR       ","
 #define XENCAMERA_RESOLUTION_SEPARATOR "x"
-#define XENCAMERA_FRAME_RATE_SEPARATOR "/"
+#define XENCAMERA_FRACTION_SEPARATOR   "/"
 
 #define XENCAMERA_FIELD_BE_VERSIONS    "versions"
 #define XENCAMERA_FIELD_FE_VERSION     "version"
@@ -387,6 +429,7 @@
 #define XENCAMERA_FIELD_EVT_CHANNEL    "evt-event-channel"
 #define XENCAMERA_FIELD_CONTROLS       "controls"
 #define XENCAMERA_FIELD_FORMATS        "formats"
+#define XENCAMERA_FIELD_FRAME_RATES    "frame-rates"
 #define XENCAMERA_FIELD_BE_ALLOC       "be-alloc"
 #define XENCAMERA_FIELD_UNIQUE_ID      "unique-id"
 
@@ -394,6 +437,8 @@
 #define XENCAMERA_CTRL_CONTRAST_STR    "contrast"
 #define XENCAMERA_CTRL_SATURATION_STR  "saturation"
 #define XENCAMERA_CTRL_HUE_STR         "hue"
+
+#define XENCAMERA_FOURCC_BIGENDIAN_STR "-BE"
 
 /* Maximum number of buffer planes supported. */
 #define XENCAMERA_MAX_PLANE            4
@@ -414,6 +459,16 @@
  *   because of the fact it is already in use/reserved by the PV console.
  * - all references in this document to page sizes must be treated
  *   as pages of size XEN_PAGE_SIZE unless otherwise noted.
+ * - all FOURCC mappings used for configuration and messaging are
+ *   Linux V4L2 ones: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/include/uapi/linux/videodev2.h
+ *   with the following exceptions:
+ *     - characters are allowed in [0x20; 0x7f] range
+ *     - when used for XenStore configuration entries the following
+ *       are not allowed:
+ *       - '/', '\', ' ' (space), '<', '>', ':', '"', '|', '?', '*'
+ *       - if trailing spaces are part of the FOURCC code then those must be
+ *         trimmed
+ *
  *
  ******************************************************************************
  *       Description of the protocol between frontend and backend driver
@@ -433,7 +488,7 @@
  *     The corresponding frame rate (Hz) is calculated as:
  *       frame_rate = frame_rate_numer / frame_rate_denom
  *   - buffer index is a zero based index of the buffer. Must be less than
- *     the value of XENCAMERA_OP_SET_CONFIG.num_bufs response:
+ *     the value of XENCAMERA_OP_CONFIG_SET.num_bufs response:
  *       - index - uint8_t, index of the buffer.
  *
  *
@@ -451,11 +506,11 @@
  *   operation - uint8_t, operation code, XENCAMERA_OP_XXX.
  *
  *
- * Request configuration set/reset - request to set or reset.
- * the configuration/mode of the camera:
+ * Request to set configuration - request to set the configuration/mode
+ * of the camera:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                | _OP_SET_CONFIG |   reserved     | 4
+ * |               id                | _OP_CONFIG_SET |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
@@ -465,26 +520,102 @@
  * +----------------+----------------+----------------+----------------+
  * |                               height                              | 20
  * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_numer                         | 24
+ * |                             colorspace                            | 24
  * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_denom                         | 28
+ * |                             xfer_func                             | 28
  * +----------------+----------------+----------------+----------------+
- * |    num_bufs    |                     reserved                     | 32
+ * |                             ycbcr_enc                             | 32
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 36
+ * |                            quantization                           | 36
+ * +----------------+----------------+----------------+----------------+
+ * |                       displ_asp_ratio_numer                       | 40
+ * +----------------+----------------+----------------+----------------+
+ * |                       displ_asp_ratio_denom                       | 44
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_numer                         | 48
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_denom                         | 52
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 56
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
  * |                              reserved                             | 64
  * +----------------+----------------+----------------+----------------+
  *
- * Pass all zeros to reset, otherwise command is treated as configuration set.
- *
  * pixel_format - uint32_t, pixel format to be used, FOURCC code.
  * width - uint32_t, width in pixels.
  * height - uint32_t, height in pixels.
+ * colorspace - uint32_t, this supplements pixel_format parameter,
+ *   one of the XENCAMERA_COLORSPACE_XXX.
+ * xfer_func - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_XFER_FUNC_XXX.
+ * ycbcr_enc - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_YCBCR_ENC_XXX. Please note, that ycbcr_enc is only
+ *   valid for YCbCr pixelformats and should be ignored otherwise.
+ * quantization - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_QUANTIZATION_XXX.
+ * displ_asp_ratio_numer - uint32_t, numerator of the display aspect ratio.
+ * displ_asp_ratio_denom - uint32_t, denominator of the display aspect ratio.
  * frame_rate_numer - uint32_t, numerator of the frame rate.
  * frame_rate_denom - uint32_t, denominator of the frame rate.
+ *
+ * See response format for this request.
+ *
+ * Notes:
+ *  - frontend must check the corresponding response in order to see
+ *    if the values reported back by the backend do match the desired ones
+ *    and can be accepted.
+ *  - frontend may send multiple XENCAMERA_OP_CONFIG_SET requests before
+ *    sending XENCAMERA_OP_STREAM_START request to update or tune the
+ *    configuration.
+ */
+struct xencamera_config {
+    uint32_t pixel_format;
+    uint32_t width;
+    uint32_t height;
+    uint32_t colorspace;
+    uint32_t xfer_func;
+    uint32_t ycbcr_enc;
+    uint32_t quantization;
+    uint32_t displ_asp_ratio_numer;
+    uint32_t displ_asp_ratio_denom;
+    uint32_t frame_rate_numer;
+    uint32_t frame_rate_denom;
+};
+
+/*
+ * Request current configuration of the camera:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _OP_CONFIG_GET |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                              reserved                             | 8
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                              reserved                             | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * See response format for this request.
+ *
+ *
+ * Request number of buffers to be used:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _OP_BUF_REQUEST|   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |    num_bufs    |                     reserved                     | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
  * num_bufs - uint8_t, desired number of buffers to be used.
  *
  * See response format for this request.
@@ -493,31 +624,29 @@
  *  - frontend must check the corresponding response in order to see
  *    if the values reported back by the backend do match the desired ones
  *    and can be accepted.
- *  - frontend may send multiple XENCAMERA_OP_SET_CONFIG requests before
+ *  - frontend may send multiple XENCAMERA_OP_BUF_REQUEST requests before
  *    sending XENCAMERA_OP_STREAM_START request to update or tune the
  *    configuration.
+ *  - after this request camera configuration cannot be changed, unless
+ *    streaming is stopped and buffers destroyed
+ *  - passing zero num_bufs in this request (after streaming has stopped
+ *    and all buffers destroyed) unblocks camera configuration changes
  */
-struct xencamera_config {
-    uint32_t pixel_format;
-    uint32_t width;
-    uint32_t height;
-    uint32_t frame_rate_nom;
-    uint32_t frame_rate_denom;
+struct xencamera_buf_request {
     uint8_t num_bufs;
 };
 
 /*
- * Request buffer details - request camera buffer's memory layout.
- * detailed description:
+ * Request camera buffer's layout:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                |_GET_BUF_DETAILS|   reserved     | 4
+ * |               id                | _BUF_GET_LAYOUT|   reserved     | 4
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 8
+ * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * See response format for this request.
@@ -598,7 +727,7 @@ struct xencamera_buf_create_req {
  *
  * Number of grant_ref_t entries in the whole page directory is not
  * passed, but instead can be calculated as:
- *   num_grefs_total = (XENCAMERA_OP_GET_BUF_DETAILS.size + XEN_PAGE_SIZE - 1) /
+ *   num_grefs_total = (XENCAMERA_OP_BUF_REQUEST.size + XEN_PAGE_SIZE - 1) /
  *       XEN_PAGE_SIZE
  */
 struct xencamera_page_directory {
@@ -624,10 +753,131 @@ struct xencamera_page_directory {
  * +----------------+----------------+----------------+----------------+
  *
  * index - uint8_t, index of the buffer to be destroyed.
+ *
+ *
+ * Request queueing of the buffer for backend use:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _OP_BUF_QUEUE  |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |      index     |                     reserved                     | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * Notes:
+ *  - frontends must not access the buffer content after this request until
+ *    response to XENCAMERA_OP_BUF_DEQUEUE has been received.
+ *  - buffers must be queued to the backend before destroying them with
+ *    XENCAMERA_OP_BUF_DESTROY.
+ *
+ * index - uint8_t, index of the buffer to be queued.
+ *
+ *
+ * Request dequeueing of the buffer for frontend use:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                |_OP_BUF_DEQUEUE |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |      index     |                     reserved                     | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * Notes:
+ *  - frontend is allowed to access the buffer content after the corresponding
+ *    response to this request.
+ *
+ * index - uint8_t, index of the buffer to be queued.
+ *
+ *
+ * Request camera control details:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _OP_CTRL_ENUM  |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |      index     |                     reserved                     | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * See response format for this request.
+ *
+ * index - uint8_t, index of the control to be queried.
  */
-
-struct xencamera_buf_destroy_req {
+struct xencamera_index {
     uint8_t index;
+};
+
+/*
+ * Request camera control change:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                |  _OP_SET_CTRL  |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |       type     |                     reserved                     | 8
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |                          value low 32-bit                         | 20
+ * +----------------+----------------+----------------+----------------+
+ * |                          value high 32-bit                        | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 28
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
+ * value - int64_t, new value of the control.
+ */
+struct xencamera_ctrl_value {
+    uint8_t type;
+    uint8_t reserved[7];
+    int64_t value;
+};
+
+/*
+ * Request camera control state:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                |  _OP_GET_CTRL  |   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |       type     |                     reserved                     | 8
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 12
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * See response format for this request.
+ *
+ * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
+ */
+struct xencamera_get_ctrl_req {
+    uint8_t type;
 };
 
 /*
@@ -657,58 +907,6 @@ struct xencamera_buf_destroy_req {
  * +----------------+----------------+----------------+----------------+
  *
  *
- * Request camera control details:
- *         0                1                 2               3        octet
- * +----------------+----------------+----------------+----------------+
- * |               id                |GET_CTRL_DETAILS|   reserved     | 4
- * +----------------+----------------+----------------+----------------+
- * |      index     |                     reserved                     | 12
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 16
- * +----------------+----------------+----------------+----------------+
- * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 64
- * +----------------+----------------+----------------+----------------+
- *
- * See response format for this request.
- *
- * index - uint8_t, index of the control to be queried.
- */
-struct xencamera_get_ctrl_details_req {
-    uint8_t index;
-};
-
-/*
- *
- * Request camera control change:
- *         0                1                 2               3        octet
- * +----------------+----------------+----------------+----------------+
- * |               id                |  _OP_SET_CTRL  |   reserved     | 4
- * +----------------+----------------+----------------+----------------+
- * |       type     |                     reserved                     | 12
- * +----------------+----------------+----------------+----------------+
- * |                               value                               | 16
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 20
- * +----------------+----------------+----------------+----------------+
- * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 64
- * +----------------+----------------+----------------+----------------+
- *
- * See response format for this request.
- *
- * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
- * value - int32_t, new value of the control.
- */
-struct xencamera_set_ctrl_req {
-    uint8_t type;
-    uint8_t reserved[3];
-    int32_t value;
-};
-
-/*
  *---------------------------------- Responses --------------------------------
  *
  * All response packets have the same length (64 octets).
@@ -726,10 +924,11 @@ struct xencamera_set_ctrl_req {
  * status - int32_t, response status, zero on success and -XEN_EXX on failure.
  *
  *
- * Set configuration response - response for XENCAMERA_OP_SET_CONFIG:
+ * Set/get configuration response - response for XENCAMERA_OP_CONFIG_SET
+ * and XENCAMERA_OP_CONFIG_GET
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                | _OP_SET_CONFIG |    reserved    | 4
+ * |               id                | _OP_CONFIG_?ET |    reserved    | 4
  * +----------------+----------------+----------------+----------------+
  * |                               status                              | 8
  * +----------------+----------------+----------------+----------------+
@@ -739,13 +938,23 @@ struct xencamera_set_ctrl_req {
  * +----------------+----------------+----------------+----------------+
  * |                               height                              | 20
  * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_numer                         | 24
+ * |                             colorspace                            | 24
  * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_denom                         | 28
+ * |                             xfer_func                             | 28
  * +----------------+----------------+----------------+----------------+
- * |    num_bufs    |                     reserved                     | 32
+ * |                             ycbcr_enc                             | 32
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 36
+ * |                            quantization                           | 36
+ * +----------------+----------------+----------------+----------------+
+ * |                       displ_asp_ratio_numer                       | 40
+ * +----------------+----------------+----------------+----------------+
+ * |                       displ_asp_ratio_denom                       | 44
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_numer                         | 48
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_denom                         | 52
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 56
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
@@ -753,20 +962,20 @@ struct xencamera_set_ctrl_req {
  * +----------------+----------------+----------------+----------------+
  *
  * Meaning of the corresponding values in this response is the same as for
- * XENCAMERA_OP_SET_CONFIG request.
+ * XENCAMERA_OP_CONFIG_SET request.
  *
  *
- * Request buffer details response - response for XENCAMERA_OP_GET_BUF_DETAILS
+ * Request buffer response - response for XENCAMERA_OP_BUF_GET_LAYOUT
  * request:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                |_GET_BUF_DETAILS|    reserved    | 4
+ * |               id                |_BUF_GET_LAYOUT |    reserved    | 4
  * +----------------+----------------+----------------+----------------+
  * |                               status                              | 8
  * +----------------+----------------+----------------+----------------+
- * |                                size                               | 12
+ * |   num_planes   |                     reserved                     | 12
  * +----------------+----------------+----------------+----------------+
- * |   num_planes   |                     reserved                     | 16
+ * |                                size                               | 16
  * +----------------+----------------+----------------+----------------+
  * |                          plane_offset[0]                          | 20
  * +----------------+----------------+----------------+----------------+
@@ -784,18 +993,18 @@ struct xencamera_set_ctrl_req {
  * +----------------+----------------+----------------+----------------+
  * |                           plane_size[3]                           | 48
  * +----------------+----------------+----------------+----------------+
- * |         plane_stride[0]         |         plane_stride[1]         | 52
+ * |                          plane_stride[0]                          | 52
  * +----------------+----------------+----------------+----------------+
- * |         plane_stride[2]         |         plane_stride[3]         | 56
+ * |                          plane_stride[1]                          | 56
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 60
+ * |                          plane_stride[2]                          | 60
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                          plane_stride[3]                          | 64
  * +----------------+----------------+----------------+----------------+
  *
+ * num_planes - uint8_t, number of planes of the buffer.
  * size - uint32_t, overall size of the buffer including sizes of the
  *   individual planes and padding if applicable.
- * num_planes - uint8_t, number of planes for this buffer.
  * plane_offset - array of uint32_t, offset of the corresponding plane
  *   in octets from the buffer start.
  * plane_size - array of uint32_t, size in octets of the corresponding plane
@@ -803,34 +1012,64 @@ struct xencamera_set_ctrl_req {
  * plane_stride - array of uint32_t, size in octets occupied by the
  *   corresponding single image line including padding if applicable.
  */
-struct xencamera_buf_details_resp {
-    uint32_t size;
+struct xencamera_buf_get_layout_resp {
     uint8_t num_planes;
     uint8_t reserved[3];
+    uint32_t size;
     uint32_t plane_offset[XENCAMERA_MAX_PLANE];
     uint32_t plane_size[XENCAMERA_MAX_PLANE];
-    uint16_t plane_stride[XENCAMERA_MAX_PLANE];
+    uint32_t plane_stride[XENCAMERA_MAX_PLANE];
 };
 
 /*
- * Get control details response - response for XENCAMERA_OP_GET_CTRL_DETAILS:
+ * Request buffer response - response for XENCAMERA_OP_BUF_REQUEST
+ * request:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                |GET_CTRL_DETAILS|    reserved    | 4
+ * |               id                |_OP_BUF_REQUEST |    reserved    | 4
  * +----------------+----------------+----------------+----------------+
  * |                               status                              | 8
  * +----------------+----------------+----------------+----------------+
- * |     index      |      type      |             reserved            | 12
+ * |   num_buffers  |                     reserved                     | 12
  * +----------------+----------------+----------------+----------------+
- * |                                min                                | 16
+ * |                             reserved                              | 16
  * +----------------+----------------+----------------+----------------+
- * |                                max                                | 20
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                                step                               | 24
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
- * |                              def_val                              | 28
+ *
+ * num_buffers - uint8_t, number of buffers to be used.
+ *
+ *
+ * Control enumerate response - response for XENCAMERA_OP_CTRL_ENUM:
+ *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 36
+ * |               id                | _OP_CTRL_ENUM  |    reserved    | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                               status                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |     index      |      type      |            reserved             | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                               flags                               | 16
+ * +----------------+----------------+----------------+----------------+
+ * |                          min low 32-bits                          | 20
+ * +----------------+----------------+----------------+----------------+
+ * |                          min high 32-bits                         | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                          max low 32-bits                          | 28
+ * +----------------+----------------+----------------+----------------+
+ * |                          max high 32-bits                         | 32
+ * +----------------+----------------+----------------+----------------+
+ * |                         step low 32-bits                          | 36
+ * +----------------+----------------+----------------+----------------+
+ * |                         step high 32-bits                         | 40
+ * +----------------+----------------+----------------+----------------+
+ * |                        def_val low 32-bits                        | 44
+ * +----------------+----------------+----------------+----------------+
+ * |                        def_val high 32-bits                       | 48
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 52
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
@@ -839,20 +1078,51 @@ struct xencamera_buf_details_resp {
  *
  * index - uint8_t, index of the camera control in response.
  * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
- * min - int32_t, minimum value of the control.
- * max - int32_t, maximum value of the control.
- * step - int32_t, minimum size in which control value can be changed.
- * def_val - int32_t, default value of the control.
+ * flags - uint32_t, flags of the control, one of the XENCAMERA_CTRL_FLG_XXX.
+ * min - int64_t, minimum value of the control.
+ * max - int64_t, maximum value of the control.
+ * step - int64_t, minimum size in which control value can be changed.
+ * def_val - int64_t, default value of the control.
  */
-struct xencamera_get_ctrl_details_resp {
+struct xencamera_ctrl_enum_resp {
     uint8_t index;
     uint8_t type;
     uint8_t reserved[2];
-    int32_t min;
-    int32_t max;
-    int32_t step;
-    int32_t def_val;
+    uint32_t flags;
+    int64_t min;
+    int64_t max;
+    int64_t step;
+    int64_t def_val;
 };
+
+/*
+ * Get control response - response for XENCAMERA_OP_CTRL_GET:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _OP_CTRL_GET   |    reserved    | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                               status                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |       type     |                     reserved                     | 8
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |                          value low 32-bit                         | 20
+ * +----------------+----------------+----------------+----------------+
+ * |                          value high 32-bit                        | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 28
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
+ * value - int64_t, new value of the control.
+ */
 
 /*
  *----------------------------------- Events ----------------------------------
@@ -887,6 +1157,12 @@ struct xencamera_get_ctrl_details_resp {
  * +----------------+----------------+----------------+----------------+
  * |                              reserved                             | 20
  * +----------------+----------------+----------------+----------------+
+ * |                        seq_num low 32-bits                        | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                        seq_num high 32-bits                       | 28
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 20
+ * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
  * |                              reserved                             | 64
@@ -894,13 +1170,52 @@ struct xencamera_get_ctrl_details_resp {
  *
  * index - uint8_t, index of the buffer that contains new captured frame.
  * used_sz - uint32_t, number of octets this frame has. This can be less
- * than the XENCAMERA_OP_GET_BUF_DETAILS.size for compressed formats.
+ * than the XENCAMERA_OP_BUF_REQUEST.size (response) for compressed formats.
+ * seq_num - uint64_t, sequential number of the frame. Must be
+ *   monotonically increasing. If skips are detected in seq_num then that
+ *   means that the frames in-between were dropped.
  */
 struct xencamera_frame_avail_evt {
     uint8_t index;
-    uint8_t reserved[3];
+    uint8_t reserved0[3];
     uint32_t used_sz;
+    uint8_t reserved1[4];
+    uint64_t seq_num;
 };
+
+/*
+ * Control change event- event from back to front when camera control
+ * has changed:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                |_EVT_CTRL_CHANGE|   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |       type     |                     reserved                     | 8
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 16
+ * +----------------+----------------+----------------+----------------+
+ * |                          value low 32-bit                         | 20
+ * +----------------+----------------+----------------+----------------+
+ * |                          value high 32-bit                        | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 28
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * type - uint8_t, type of the control, one of the XENCAMERA_CTRL_XXX.
+ * value - int64_t, new value of the control.
+ *
+ * Notes:
+ *  - this event is not sent for write-only controls
+ *  - this event is not sent to the originator of the control change
+ *  - this event is not sent when frontend first connects, e.g. initial
+ *    control state must be explicitly queried
+ */
 
 struct xencamera_req {
     uint16_t id;
@@ -908,10 +1223,11 @@ struct xencamera_req {
     uint8_t reserved[5];
     union {
         struct xencamera_config config;
+        struct xencamera_buf_request buf_request;
         struct xencamera_buf_create_req buf_create;
-        struct xencamera_buf_destroy_req buf_destroy;
-        struct xencamera_get_ctrl_details_req get_ctrl_details;
-        struct xencamera_set_ctrl_req set_ctrl;
+        struct xencamera_index index;
+        struct xencamera_ctrl_value ctrl_value;
+        struct xencamera_get_ctrl_req get_ctrl;
         uint8_t reserved[56];
     } req;
 };
@@ -923,8 +1239,10 @@ struct xencamera_resp {
     int32_t status;
     union {
         struct xencamera_config config;
-        struct xencamera_buf_details_resp buf_details;
-        struct xencamera_get_ctrl_details_resp ctrl_details;
+        struct xencamera_buf_get_layout_resp buf_layout;
+        struct xencamera_buf_request buf_request;
+        struct xencamera_ctrl_enum_resp ctrl_enum;
+        struct xencamera_ctrl_value ctrl_value;
         uint8_t reserved1[56];
     } resp;
 };
@@ -935,6 +1253,7 @@ struct xencamera_evt {
     uint8_t reserved[5];
     union {
         struct xencamera_frame_avail_evt frame_avail;
+        struct xencamera_ctrl_value ctrl_value;
         uint8_t reserved[56];
     } evt;
 };

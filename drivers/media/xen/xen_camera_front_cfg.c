@@ -14,7 +14,7 @@
 
 #include "xen_camera_front.h"
 
-static int cfg_read_resolution(struct xenbus_device *xb_dev,
+static int cfg_read_framerates(struct xenbus_device *xb_dev,
 			       struct xen_camera_front_cfg_resolution *res,
 			       const char *xenstore_base_path,
 			       const char *name)
@@ -22,12 +22,18 @@ static int cfg_read_resolution(struct xenbus_device *xb_dev,
 	struct device *dev = &xb_dev->dev;
 	char *list, *tmp;
 	char *cur_frame_rate;
+	char *xs_frame_rate_base_path;
 	int num_frame_rates, i, ret, len;
 
-	list = xenbus_read(XBT_NIL, xenstore_base_path, name, &len);
+	xs_frame_rate_base_path = kasprintf(GFP_KERNEL, "%s/%s",
+					    xenstore_base_path, name);
+
+	list = xenbus_read(XBT_NIL, xs_frame_rate_base_path,
+			   XENCAMERA_FIELD_FRAME_RATES, &len);
 	if (IS_ERR(list)) {
 		dev_err(dev, "No frame rates configured at %s/%s\n",
-			xenstore_base_path, name);
+			xs_frame_rate_base_path, XENCAMERA_FIELD_FRAME_RATES);
+		kfree(xs_frame_rate_base_path);
 		return PTR_ERR(list);
 	}
 
@@ -81,6 +87,7 @@ static int cfg_read_resolution(struct xenbus_device *xb_dev,
 	ret = 0;
 
 fail:
+	kfree(xs_frame_rate_base_path);
 	kfree(list);
 	return ret;
 }
@@ -133,8 +140,8 @@ static int cfg_read_format(struct xenbus_device *xb_dev,
 			ret = -EINVAL;
 			goto fail;
 		}
-		ret = cfg_read_resolution(xb_dev, &fmt->resolution[i],
-			       xs_res_base_path, dir_nodes[i]);
+		ret = cfg_read_framerates(xb_dev, &fmt->resolution[i],
+					  xs_res_base_path, dir_nodes[i]);
 		if (ret < 0)
 			goto fail;
 

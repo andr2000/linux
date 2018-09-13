@@ -43,11 +43,16 @@ again:
 		if (resp->id != channel->evt_id)
 			continue;
 		switch (resp->operation) {
-		case XENCAMERA_OP_SET_CONFIG:
+
+		case XENCAMERA_OP_CONFIG_SET:
 			/* fall through */
-		case XENCAMERA_OP_GET_BUF_DETAILS:
+		case XENCAMERA_OP_CONFIG_GET:
 			/* fall through */
-		case XENCAMERA_OP_GET_CTRL_DETAILS:
+		case XENCAMERA_OP_BUF_REQUEST:
+			/* fall through */
+		case XENCAMERA_OP_CTRL_ENUM:
+			/* fall through */
+		case XENCAMERA_OP_CTRL_GET:
 			/*
 			 * The requests above all expect data in the response,
 			 * so we need to make a copy and then proceeed as
@@ -59,11 +64,15 @@ again:
 			/* fall through */
 		case XENCAMERA_OP_BUF_DESTROY:
 			/* fall through */
+		case XENCAMERA_OP_BUF_QUEUE:
+			/* fall through */
+		case XENCAMERA_OP_BUF_DEQUEUE:
+			/* fall through */
+		case XENCAMERA_OP_CTRL_SET:
+			/* fall through */
 		case XENCAMERA_OP_STREAM_START:
 			/* fall through */
 		case XENCAMERA_OP_STREAM_STOP:
-			/* fall through */
-		case XENCAMERA_OP_SET_CTRL:
 			channel->u.req.resp_status = resp->status;
 			complete(&channel->u.req.completion);
 			break;

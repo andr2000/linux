@@ -15,8 +15,6 @@
 #include <xen/xen.h>
 #include <xen/xenbus.h>
 
-#include <xen/interface/io/cameraif.h>
-
 #include "xen_camera_front.h"
 #include "xen_camera_front_evtchnl.h"
 #include "xen_camera_front_v4l2.h"
@@ -54,8 +52,68 @@ static int be_stream_wait_io(struct xen_camera_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
+int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
+				struct xencamera_config *cfg,
+				struct xencamera_config *resp)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_CONFIG_SET);
+	req->req.config = *cfg;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	*resp = evtchnl->u.req.resp.resp.config;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
+int xen_camera_front_get_config(struct xen_camera_front_info *front_info,
+				struct xencamera_config *resp)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_CONFIG_GET);
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	*resp = evtchnl->u.req.resp.resp.config;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
 int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
-				 int v4l2_cid, signed int value)
+				 int v4l2_cid, s64 value)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -73,10 +131,10 @@ int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
-	req = be_prepare_req(evtchnl, XENCAMERA_OP_SET_CTRL);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_CTRL_SET);
 
-	req->req.set_ctrl.type = xen_type;
-	req->req.set_ctrl.value = value;
+	req->req.ctrl_value.type = xen_type;
+	req->req.ctrl_value.value = value;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
@@ -88,8 +146,43 @@ int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
 	return ret;
 }
 
-static int be_read_control(struct xen_camera_front_info *front_info, int index,
-			   struct xencamera_get_ctrl_details_resp *resp)
+int xen_camera_front_get_control(struct xen_camera_front_info *front_info,
+				 int v4l2_cid, s64 *value)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret, xen_type;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	xen_type = xen_camera_front_v4l2_to_xen_type(v4l2_cid);
+	if (xen_type < 0)
+		return xen_type;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_CTRL_GET);
+
+	req->req.get_ctrl.type = xen_type;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	*value = evtchnl->u.req.resp.resp.ctrl_value.value;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
+static int be_enum_control(struct xen_camera_front_info *front_info, int index,
+			   struct xencamera_ctrl_enum_resp *resp)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -103,8 +196,8 @@ static int be_read_control(struct xen_camera_front_info *front_info, int index,
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
-	req = be_prepare_req(evtchnl, XENCAMERA_OP_GET_CTRL_DETAILS);
-	req->req.get_ctrl_details.index = index;
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_CTRL_ENUM);
+	req->req.index.index = index;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
@@ -112,21 +205,21 @@ static int be_read_control(struct xen_camera_front_info *front_info, int index,
 	if (ret == 0)
 		ret = be_stream_wait_io(evtchnl);
 
-	*resp = evtchnl->u.req.resp.resp.ctrl_details;
+	*resp = evtchnl->u.req.resp.resp.ctrl_enum;
 
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
 	return ret;
 }
 
-static int be_read_control_details(struct xen_camera_front_info *front_info)
+static int be_enum_controls(struct xen_camera_front_info *front_info)
 {
 	struct xen_camera_front_cfg_card *cfg = &front_info->cfg;
-	struct xencamera_get_ctrl_details_resp resp;
+	struct xencamera_ctrl_enum_resp resp;
 	int i, ret;
 
 	cfg->num_controls = 0;
 	for (i = 0; i < XENCAMERA_MAX_CTRL; i++) {
-		ret = be_read_control(front_info, i, &resp);
+		ret = be_enum_control(front_info, i, &resp);
 		/*
 		 * We enumerate assigned controls here until EINVAL is
 		 * returned by the backend meaning that the requested control
@@ -143,6 +236,7 @@ static int be_read_control_details(struct xen_camera_front_info *front_info)
 			return -EINVAL;
 
 		cfg->ctrl[i].v4l2_cid = ret;
+		cfg->ctrl[i].flags = resp.flags;
 		cfg->ctrl[i].minimum = resp.min;
 		cfg->ctrl[i].maximum = resp.max;
 		cfg->ctrl[i].default_value = resp.def_val;
@@ -156,6 +250,69 @@ static int be_read_control_details(struct xen_camera_front_info *front_info)
 	dev_info(&front_info->xb_dev->dev, "Assigned %d control(s)\n",
 		 cfg->num_controls);
 	return 0;
+}
+
+int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
+				 int num_bufs)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_BUF_REQUEST);
+
+	req->req.buf_request.num_bufs = num_bufs;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	num_bufs = evtchnl->u.req.resp.resp.buf_request.num_bufs;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	if (ret < 0)
+		return ret;
+
+	return num_bufs;
+}
+
+int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
+				    struct xencamera_buf_get_layout_resp *resp)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_BUF_GET_LAYOUT);
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	*resp = evtchnl->u.req.resp.resp.buf_layout;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
 }
 
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
@@ -190,7 +347,7 @@ static int cameraback_connect(struct xen_camera_front_info *front_info)
 	 * Event channels are all set now, so we can read detailed
 	 * configuration for each assigned control.
 	 */
-	ret = be_read_control_details(front_info);
+	ret = be_enum_controls(front_info);
 	if (ret < 0)
 		return ret;
 

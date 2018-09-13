@@ -37,6 +37,7 @@ static int cfg_read_resolution(struct xenbus_device *xb_dev,
 		goto fail;
 	}
 
+	/* TODO: the below looks not solid. */
 	/*
 	 * At the first pass find out how many frame rates are there.
 	 * At the second pass read frame rates, validate and store.
@@ -63,7 +64,7 @@ static int cfg_read_resolution(struct xenbus_device *xb_dev,
 		int cnt, num, denom;
 
 		cnt = sscanf(cur_frame_rate,
-			     "%d" XENCAMERA_FRAME_RATE_SEPARATOR "%d",
+			     "%d" XENCAMERA_FRACTION_SEPARATOR "%d",
 			     &num, &denom);
 		if (cnt != 2) {
 			dev_err(dev, "Wrong frame rate %s\n", cur_frame_rate);
@@ -174,7 +175,7 @@ static void cfg_dump(struct xen_camera_front_info *front_info)
 
 			for (rate = 0; rate < resolution->num_frame_rates;
 			     rate++) {
-				struct xen_camera_front_cfg_frame_rate *fr =
+				struct xen_camera_front_cfg_fract *fr =
 					&resolution->frame_rate[rate];
 
 				dev_info(dev, "\t\tFrame rate [%d] %d/%d\n",

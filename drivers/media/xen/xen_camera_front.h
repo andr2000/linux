@@ -15,6 +15,8 @@
 #include <media/v4l2-device.h>
 #include <media/videobuf2-v4l2.h>
 
+#include <xen/interface/io/cameraif.h>
+
 #include "xen_camera_front_cfg.h"
 #include "xen_camera_front_evtchnl.h"
 
@@ -42,7 +44,23 @@ struct xen_camera_front_v4l2_info {
 	struct list_head buf_list;
 };
 
+int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
+				struct xencamera_config *cfg,
+				struct xencamera_config *resp);
+
+int xen_camera_front_get_config(struct xen_camera_front_info *front_info,
+				struct xencamera_config *resp);
+
 int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
-				 int v4l2_cid, signed int value);
+				 int v4l2_cid, s64 value);
+
+int xen_camera_front_get_control(struct xen_camera_front_info *front_info,
+				 int v4l2_cid, s64 *value);
+
+int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
+				    struct xencamera_buf_get_layout_resp *resp);
+
+int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
+				 int num_bufs);
 
 #endif /* __XEN_CAMERA_FRONT_H */

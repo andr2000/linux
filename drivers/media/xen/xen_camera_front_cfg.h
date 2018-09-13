@@ -18,22 +18,23 @@ struct xen_camera_front_info;
 struct xen_camera_front_cfg_ctrl {
 	u32 v4l2_cid;
 
-	s32 minimum;
-	s32 maximum;
-	s32 default_value;
-	s32 step;
+	u16 flags;
+	s64 minimum;
+	s64 maximum;
+	s64 default_value;
+	s64 step;
 };
 
-struct xen_camera_front_cfg_frame_rate {
+struct xen_camera_front_cfg_fract {
 	u32 numerator;
 	u32 denominator;
 };
 
 struct xen_camera_front_cfg_resolution {
-	int width;
-	int height;
+	u32 width;
+	u32 height;
 	int num_frame_rates;
-	struct xen_camera_front_cfg_frame_rate *frame_rate;
+	struct xen_camera_front_cfg_fract *frame_rate;
 };
 
 struct xen_camera_front_cfg_format {

@@ -35,48 +35,158 @@ struct xen_camera_buffer {
 	struct list_head list;
 };
 
-struct cfg_control_ids {
-	u32 xen_type;
-	u32 v4l2_cid;
+struct xen_to_v4l2 {
+	int xen;
+	int v4l2;
 };
 
-static const struct cfg_control_ids CFG_CONTROL_IDS[] = {
+static const struct xen_to_v4l2 XEN_TYPE_TO_V4L2_CID[] = {
 	{
-		.xen_type = XENCAMERA_CTRL_BRIGHTNESS,
-		.v4l2_cid = V4L2_CID_BRIGHTNESS,
+		.xen = XENCAMERA_CTRL_BRIGHTNESS,
+		.v4l2 = V4L2_CID_BRIGHTNESS,
 	},
 	{
-		.xen_type = XENCAMERA_CTRL_CONTRAST,
-		.v4l2_cid = V4L2_CID_CONTRAST,
+		.xen = XENCAMERA_CTRL_CONTRAST,
+		.v4l2 = V4L2_CID_CONTRAST,
 	},
 	{
-		.xen_type = XENCAMERA_CTRL_SATURATION,
-		.v4l2_cid = V4L2_CID_SATURATION,
+		.xen = XENCAMERA_CTRL_SATURATION,
+		.v4l2 = V4L2_CID_SATURATION,
 	},
 	{
-		.xen_type = XENCAMERA_CTRL_HUE,
-		.v4l2_cid = V4L2_CID_HUE
+		.xen = XENCAMERA_CTRL_HUE,
+		.v4l2 = V4L2_CID_HUE
 	},
 };
 
-int xen_camera_front_v4l2_to_v4l2_cid(int xen_type)
+static const struct xen_to_v4l2 XEN_COLORSPACE_TO_V4L2[] = {
+	{
+		.xen = XENCAMERA_COLORSPACE_SMPTE170M,
+		.v4l2 = V4L2_COLORSPACE_SMPTE170M,
+	},
+	{
+		.xen = XENCAMERA_COLORSPACE_REC709,
+		.v4l2 = V4L2_COLORSPACE_REC709,
+	},
+	{
+		.xen = XENCAMERA_COLORSPACE_SRGB,
+		.v4l2 = V4L2_COLORSPACE_SRGB,
+	},
+	{
+		.xen = XENCAMERA_COLORSPACE_OPRGB,
+		.v4l2 = V4L2_COLORSPACE_ADOBERGB,
+	},
+	{
+		.xen = XENCAMERA_COLORSPACE_BT2020,
+		.v4l2 = V4L2_COLORSPACE_BT2020,
+	},
+	{
+		.xen = XENCAMERA_COLORSPACE_DCI_P3,
+		.v4l2 = V4L2_COLORSPACE_DCI_P3,
+	},
+};
+
+static const struct xen_to_v4l2 XEN_XFER_FUNC_TO_V4L2[] = {
+	{
+		.xen = XENCAMERA_YCBCR_ENC_IGNORE,
+		.v4l2 = V4L2_XFER_FUNC_DEFAULT,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_709,
+		.v4l2 = V4L2_XFER_FUNC_709,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_SRGB,
+		.v4l2 = V4L2_XFER_FUNC_SRGB,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_OPRGB,
+		.v4l2 = V4L2_XFER_FUNC_ADOBERGB,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_NONE,
+		.v4l2 = V4L2_XFER_FUNC_NONE,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_DCI_P3,
+		.v4l2 = V4L2_XFER_FUNC_DCI_P3,
+	},
+	{
+		.xen = XENCAMERA_XFER_FUNC_SMPTE2084,
+		.v4l2 = V4L2_XFER_FUNC_SMPTE2084,
+	},
+};
+
+static const struct xen_to_v4l2 XEN_YCBCR_ENC_TO_V4L2[] = {
+	{
+		.xen = XENCAMERA_YCBCR_ENC_601,
+		.v4l2 = V4L2_YCBCR_ENC_601,
+	},
+	{
+		.xen = XENCAMERA_YCBCR_ENC_709,
+		.v4l2 = V4L2_YCBCR_ENC_709,
+	},
+	{
+		.xen = XENCAMERA_YCBCR_ENC_XV601,
+		.v4l2 = V4L2_YCBCR_ENC_XV601,
+	},
+	{
+		.xen = XENCAMERA_YCBCR_ENC_XV709,
+		.v4l2 = V4L2_YCBCR_ENC_XV709,
+	},
+	{
+		.xen = XENCAMERA_YCBCR_ENC_BT2020,
+		.v4l2 = V4L2_YCBCR_ENC_BT2020,
+	},
+	{
+		.xen = XENCAMERA_YCBCR_ENC_BT2020_CONST_LUM,
+		.v4l2 = V4L2_YCBCR_ENC_BT2020_CONST_LUM,
+	},
+};
+
+static const struct xen_to_v4l2 XEN_QUANTIZATION_TO_V4L2[] = {
+	{
+		.xen = XENCAMERA_QUANTIZATION_FULL_RANGE,
+		.v4l2 = V4L2_QUANTIZATION_FULL_RANGE,
+	},
+	{
+		.xen = XENCAMERA_QUANTIZATION_LIM_RANGE,
+		.v4l2 = V4L2_QUANTIZATION_LIM_RANGE,
+	},
+};
+
+static int xen_to_v4l2(int xen, const struct xen_to_v4l2 *table,
+		       size_t table_sz)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(CFG_CONTROL_IDS); i++)
-		if (CFG_CONTROL_IDS[i].xen_type == xen_type)
-			return CFG_CONTROL_IDS[i].v4l2_cid;
+	for (i = 0; i < table_sz; i++)
+		if (table[i].xen == xen)
+			return table[i].v4l2;
 	return -EINVAL;
+}
+
+static int v4l2_to_xen(int v4l2, const struct xen_to_v4l2 *table,
+		       size_t table_sz)
+{
+	int i;
+
+	for (i = 0; i < table_sz; i++)
+		if (table[i].v4l2 == v4l2)
+			return table[i].xen;
+	return -EINVAL;
+}
+
+int xen_camera_front_v4l2_to_v4l2_cid(int xen_type)
+{
+	return xen_to_v4l2(xen_type, XEN_TYPE_TO_V4L2_CID,
+			   ARRAY_SIZE(XEN_TYPE_TO_V4L2_CID));
 }
 
 int xen_camera_front_v4l2_to_xen_type(int v4l2_cid)
 {
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(CFG_CONTROL_IDS); i++)
-		if (CFG_CONTROL_IDS[i].v4l2_cid == v4l2_cid)
-			return CFG_CONTROL_IDS[i].xen_type;
-	return -EINVAL;
+	return v4l2_to_xen(v4l2_cid, XEN_TYPE_TO_V4L2_CID,
+			   ARRAY_SIZE(XEN_TYPE_TO_V4L2_CID));
 }
 
 /*
@@ -161,37 +271,6 @@ static int ioctl_querycap(struct file *file, void *fh,
 	return 0;
 }
 
-static int ioctl_try_fmt_vid_cap(struct file *file, void *fh,
-				 struct v4l2_format *f)
-{
-	return 0;
-}
-
-static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
-			       struct v4l2_format *f)
-{
-	return 0;
-}
-
-static int ioctl_g_fmt_vid_cap(struct file *file,
-			       void *fh, struct v4l2_format *f)
-{
-	return 0;
-}
-
-static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
-				  struct v4l2_fmtdesc *f)
-{
-	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
-
-	if (f->index >= cfg->num_formats)
-		return -EINVAL;
-
-	f->pixelformat = cfg->format[f->index].pixel_format;
-	return 0;
-}
-
 static struct xen_camera_front_cfg_format *
 get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
 {
@@ -204,6 +283,196 @@ get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
 			return format;
 	}
 	return NULL;
+}
+
+static struct xen_camera_front_cfg_resolution *
+get_resolution(struct xen_camera_front_cfg_format *format,
+	       int width, int height)
+{
+	int i;
+
+	for (i = 0; i < format->num_resolutions; i++) {
+		struct xen_camera_front_cfg_resolution *r =
+			&format->resolution[i];
+
+		if ((r->width == width) && (r->height == height))
+			return r;
+	}
+	return NULL;
+}
+
+static int xen_cfg_to_v4l2_fmt(struct xen_camera_front_v4l2_info *v4l2_info,
+			       struct xencamera_config *cfg,
+			       struct v4l2_format *f)
+{
+	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	int ret;
+
+	mp->width = cfg->width;
+	mp->height = cfg->height;
+	mp->pixelformat = cfg->pixel_format;
+
+	/* Always progressive image. */
+	mp->field = V4L2_FIELD_NONE;
+
+	ret = xen_to_v4l2(cfg->colorspace, XEN_COLORSPACE_TO_V4L2,
+			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	mp->colorspace = ret;
+
+	ret = xen_to_v4l2(cfg->xfer_func, XEN_XFER_FUNC_TO_V4L2,
+			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	mp->xfer_func = ret;
+
+	ret = xen_to_v4l2(cfg->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
+			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	mp->ycbcr_enc = ret;
+
+	ret = xen_to_v4l2(cfg->quantization, XEN_QUANTIZATION_TO_V4L2,
+			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	mp->quantization = ret;
+
+	return 0;
+}
+
+static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
+			       struct v4l2_format *f,
+			       struct xencamera_config *cfg)
+{
+	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	int ret;
+
+	cfg->width = mp->width;
+	cfg->height = mp->height;
+	cfg->pixel_format = mp->pixelformat;
+
+	ret = v4l2_to_xen(mp->colorspace, XEN_COLORSPACE_TO_V4L2,
+			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	cfg->colorspace = ret;
+
+	ret = v4l2_to_xen(mp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
+			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	cfg->xfer_func = ret;
+
+	ret = v4l2_to_xen(mp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
+			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	cfg->ycbcr_enc = ret;
+
+	ret = v4l2_to_xen(mp->quantization, XEN_QUANTIZATION_TO_V4L2,
+			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
+	if (ret < 0)
+		return ret;
+	cfg->quantization = ret;
+
+	return 0;
+}
+
+static int xen_buf_to_mplane(struct xen_camera_front_info *front_info,
+			     struct v4l2_pix_format_mplane *mp)
+{
+	struct xencamera_buf_get_layout_resp buf_layout;
+	int ret, p;
+
+	ret =  xen_camera_front_get_buf_layout(front_info, &buf_layout);
+	if (ret < 0)
+		return ret;
+
+	mp->num_planes = buf_layout.num_planes;
+
+	for (p = 0; p < mp->num_planes; p++) {
+		mp->plane_fmt[p].bytesperline = buf_layout.plane_stride[p];
+		mp->plane_fmt[p].sizeimage = buf_layout.plane_size[p];
+	}
+	return 0;
+}
+
+static int ioctl_try_fmt_vid_cap_mplane(struct file *file, void *fh,
+					struct v4l2_format *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	struct xen_camera_front_cfg_format *format;
+	struct xen_camera_front_cfg_resolution *resolution;
+
+	/* First check local config if we support what was requested. */
+	format = get_format(&v4l2_info->front_info->cfg, mp->pixelformat);
+	if (!format)
+		return -EINVAL;
+
+	resolution = get_resolution(format, mp->width, mp->height);
+	if (!resolution)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int ioctl_s_fmt_vid_cap_mplane(struct file *file, void *fh,
+				      struct v4l2_format *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xencamera_config cfg;
+	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	int ret;
+
+	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, &cfg);
+	if (ret < 0)
+		return ret;
+
+	/* Ask the backend to validate and set the configuration. */
+	ret = xen_camera_front_set_config(v4l2_info->front_info, &cfg, &cfg);
+	if (ret < 0)
+		return ret;
+
+	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, &cfg, f);
+	if (ret < 0)
+		return ret;
+
+	return xen_buf_to_mplane(v4l2_info->front_info, mp);
+}
+
+static int ioctl_g_fmt_vid_cap_mplane(struct file *file,
+				      void *fh, struct v4l2_format *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xencamera_config cfg;
+	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	int ret;
+
+	ret = xen_camera_front_get_config(v4l2_info->front_info, &cfg);
+	if (ret < 0)
+		return ret;
+
+	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, &cfg, f);
+	if (ret < 0)
+		return ret;
+
+	return xen_buf_to_mplane(v4l2_info->front_info, mp);
+}
+
+static int ioctl_enum_fmt_vid_cap_mplane(struct file *file, void *fh,
+					 struct v4l2_fmtdesc *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
+
+	if (f->index >= cfg->num_formats)
+		return -EINVAL;
+
+	f->pixelformat = cfg->format[f->index].pixel_format;
+	return 0;
 }
 
 int ioctl_enum_framesizes(struct file *file, void *fh,
@@ -229,24 +498,13 @@ int ioctl_enum_frameintervals(struct file *file, void *fh,
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
 	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
 	struct xen_camera_front_cfg_format *format;
-	struct xen_camera_front_cfg_resolution *resolution = NULL;
-	int i;
+	struct xen_camera_front_cfg_resolution *resolution;
 
 	format = get_format(cfg, fival->pixel_format);
 	if (!format)
 		return -EINVAL;
 
-	for (i = 0; i < format->num_resolutions; i++) {
-		struct xen_camera_front_cfg_resolution *r =
-			&format->resolution[i];
-
-		if ((r->width == fival->width) &&
-		    (r->height == fival->height)) {
-			resolution = r;
-			break;
-		}
-	}
-
+	resolution = get_resolution(format, fival->width, fival->height);
 	if (!resolution || (fival->index >= resolution->num_frame_rates))
 		return -EINVAL;
 
@@ -282,10 +540,10 @@ static int ioctl_s_input(struct file *file, void *fh, unsigned int i)
 
 static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_querycap = ioctl_querycap,
-	.vidioc_try_fmt_vid_cap = ioctl_try_fmt_vid_cap,
-	.vidioc_s_fmt_vid_cap = ioctl_s_fmt_vid_cap,
-	.vidioc_g_fmt_vid_cap = ioctl_g_fmt_vid_cap,
-	.vidioc_enum_fmt_vid_cap = ioctl_enum_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap_mplane = ioctl_try_fmt_vid_cap_mplane,
+	.vidioc_s_fmt_vid_cap_mplane = ioctl_s_fmt_vid_cap_mplane,
+	.vidioc_g_fmt_vid_cap_mplane = ioctl_g_fmt_vid_cap_mplane,
+	.vidioc_enum_fmt_vid_cap_mplane = ioctl_enum_fmt_vid_cap_mplane,
 
 	.vidioc_enum_framesizes = ioctl_enum_framesizes,
 	.vidioc_enum_frameintervals = ioctl_enum_frameintervals,
@@ -406,7 +664,11 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 	q = &v4l2_info->queue;
 
-	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	/*
+	 * We only support multiplane operation even for
+	 * single plane buffers.
+	 */
+	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_READ;
 	q->dev = dev;
 	q->drv_priv = v4l2_info;

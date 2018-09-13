@@ -380,8 +380,8 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 	return 0;
 }
 
-static int xen_buf_to_mplane(struct xen_camera_front_info *front_info,
-			     struct v4l2_pix_format_mplane *mp)
+static int get_buf_layout_to_mplane(struct xen_camera_front_info *front_info,
+				    struct v4l2_pix_format_mplane *mp)
 {
 	struct xencamera_buf_get_layout_resp buf_layout;
 	int ret, p;
@@ -399,24 +399,11 @@ static int xen_buf_to_mplane(struct xen_camera_front_info *front_info,
 	return 0;
 }
 
-static int ioctl_try_fmt_vid_cap_mplane(struct file *file, void *fh,
-					struct v4l2_format *f)
+static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
+			       struct v4l2_format *f)
 {
-	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
-	struct xen_camera_front_cfg_format *format;
-	struct xen_camera_front_cfg_resolution *resolution;
-
-	/* First check local config if we support what was requested. */
-	format = get_format(&v4l2_info->front_info->cfg, mp->pixelformat);
-	if (!format)
-		return -EINVAL;
-
-	resolution = get_resolution(format, mp->width, mp->height);
-	if (!resolution)
-		return -EINVAL;
-
-	return 0;
+	/* TODO: not implemented. */
+	return -EINVAL;
 }
 
 static int ioctl_s_fmt_vid_cap_mplane(struct file *file, void *fh,
@@ -440,7 +427,14 @@ static int ioctl_s_fmt_vid_cap_mplane(struct file *file, void *fh,
 	if (ret < 0)
 		return ret;
 
-	return xen_buf_to_mplane(v4l2_info->front_info, mp);
+	return get_buf_layout_to_mplane(v4l2_info->front_info, mp);
+}
+
+static int ioctl_g_fmt_vid_cap(struct file *file,
+			       void *fh, struct v4l2_format *f)
+{
+	/* TODO: not implemented. */
+	return -EINVAL;
 }
 
 static int ioctl_g_fmt_vid_cap_mplane(struct file *file,
@@ -459,7 +453,14 @@ static int ioctl_g_fmt_vid_cap_mplane(struct file *file,
 	if (ret < 0)
 		return ret;
 
-	return xen_buf_to_mplane(v4l2_info->front_info, mp);
+	return get_buf_layout_to_mplane(v4l2_info->front_info, mp);
+}
+
+static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
+				  struct v4l2_fmtdesc *f)
+{
+	/* TODO: not implemented. */
+	return -EINVAL;
 }
 
 static int ioctl_enum_fmt_vid_cap_mplane(struct file *file, void *fh,
@@ -540,9 +541,20 @@ static int ioctl_s_input(struct file *file, void *fh, unsigned int i)
 
 static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_querycap = ioctl_querycap,
-	.vidioc_try_fmt_vid_cap_mplane = ioctl_try_fmt_vid_cap_mplane,
+	/*
+	 * vidioc_try_fmt_vid_cap is not supported intentionally due to
+	 * possible race conditions when frontends in different VMs
+	 * may try configuration and then this configuration becomes
+	 * unavailble, because some other frontend allocates buffers
+	 * and starts streaming with different settings.
+	 */
+	.vidioc_s_fmt_vid_cap = ioctl_s_fmt_vid_cap,
 	.vidioc_s_fmt_vid_cap_mplane = ioctl_s_fmt_vid_cap_mplane,
+
+	.vidioc_g_fmt_vid_cap = ioctl_g_fmt_vid_cap,
 	.vidioc_g_fmt_vid_cap_mplane = ioctl_g_fmt_vid_cap_mplane,
+
+	.vidioc_enum_fmt_vid_cap = ioctl_enum_fmt_vid_cap,
 	.vidioc_enum_fmt_vid_cap_mplane = ioctl_enum_fmt_vid_cap_mplane,
 
 	.vidioc_enum_framesizes = ioctl_enum_framesizes,
@@ -700,7 +712,9 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	vdev->release = video_device_release_empty;
 	vdev->fops = &fops;
 	vdev->ioctl_ops = &ioctl_ops;
-	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
+	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE |
+			    V4L2_CAP_VIDEO_CAPTURE_MPLANE |
+			    V4L2_CAP_READWRITE |
 			    V4L2_CAP_STREAMING;
 	/*
 	 * The main serialization lock. All ioctls are serialized by this

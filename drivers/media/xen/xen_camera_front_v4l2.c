@@ -305,39 +305,39 @@ static int xen_cfg_to_v4l2_fmt(struct xen_camera_front_v4l2_info *v4l2_info,
 			       struct xencamera_config *cfg,
 			       struct v4l2_format *f)
 {
-	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
-	mp->width = cfg->width;
-	mp->height = cfg->height;
-	mp->pixelformat = cfg->pixel_format;
+	sp->width = cfg->width;
+	sp->height = cfg->height;
+	sp->pixelformat = cfg->pixel_format;
 
 	/* Always progressive image. */
-	mp->field = V4L2_FIELD_NONE;
+	sp->field = V4L2_FIELD_NONE;
 
 	ret = xen_to_v4l2(cfg->colorspace, XEN_COLORSPACE_TO_V4L2,
 			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	mp->colorspace = ret;
+	sp->colorspace = ret;
 
 	ret = xen_to_v4l2(cfg->xfer_func, XEN_XFER_FUNC_TO_V4L2,
 			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	mp->xfer_func = ret;
+	sp->xfer_func = ret;
 
 	ret = xen_to_v4l2(cfg->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
 			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	mp->ycbcr_enc = ret;
+	sp->ycbcr_enc = ret;
 
 	ret = xen_to_v4l2(cfg->quantization, XEN_QUANTIZATION_TO_V4L2,
 			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	mp->quantization = ret;
+	sp->quantization = ret;
 
 	return 0;
 }
@@ -346,32 +346,32 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 			       struct v4l2_format *f,
 			       struct xencamera_config *cfg)
 {
-	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
-	cfg->width = mp->width;
-	cfg->height = mp->height;
-	cfg->pixel_format = mp->pixelformat;
+	cfg->width = sp->width;
+	cfg->height = sp->height;
+	cfg->pixel_format = sp->pixelformat;
 
-	ret = v4l2_to_xen(mp->colorspace, XEN_COLORSPACE_TO_V4L2,
+	ret = v4l2_to_xen(sp->colorspace, XEN_COLORSPACE_TO_V4L2,
 			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	cfg->colorspace = ret;
 
-	ret = v4l2_to_xen(mp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
+	ret = v4l2_to_xen(sp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
 			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	cfg->xfer_func = ret;
 
-	ret = v4l2_to_xen(mp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
+	ret = v4l2_to_xen(sp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
 			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	cfg->ycbcr_enc = ret;
 
-	ret = v4l2_to_xen(mp->quantization, XEN_QUANTIZATION_TO_V4L2,
+	ret = v4l2_to_xen(sp->quantization, XEN_QUANTIZATION_TO_V4L2,
 			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
 	if (ret < 0)
 		return ret;
@@ -380,38 +380,29 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 	return 0;
 }
 
-static int get_buf_layout_to_mplane(struct xen_camera_front_info *front_info,
-				    struct v4l2_pix_format_mplane *mp)
+static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
+				    struct v4l2_pix_format *sp)
 {
 	struct xencamera_buf_get_layout_resp buf_layout;
-	int ret, p;
+	int ret;
 
 	ret =  xen_camera_front_get_buf_layout(front_info, &buf_layout);
 	if (ret < 0)
 		return ret;
 
-	mp->num_planes = buf_layout.num_planes;
+	WARN_ON(buf_layout.num_planes != 1);
 
-	for (p = 0; p < mp->num_planes; p++) {
-		mp->plane_fmt[p].bytesperline = buf_layout.plane_stride[p];
-		mp->plane_fmt[p].sizeimage = buf_layout.plane_size[p];
-	}
+	sp->bytesperline = buf_layout.plane_stride[0];
+	sp->sizeimage = buf_layout.plane_size[0];
 	return 0;
 }
 
 static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 			       struct v4l2_format *f)
 {
-	/* TODO: not implemented. */
-	return -EINVAL;
-}
-
-static int ioctl_s_fmt_vid_cap_mplane(struct file *file, void *fh,
-				      struct v4l2_format *f)
-{
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
 	struct xencamera_config cfg;
-	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
 	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, &cfg);
@@ -427,22 +418,15 @@ static int ioctl_s_fmt_vid_cap_mplane(struct file *file, void *fh,
 	if (ret < 0)
 		return ret;
 
-	return get_buf_layout_to_mplane(v4l2_info->front_info, mp);
+	return xen_buf_layout_to_format(v4l2_info->front_info, sp);
 }
 
 static int ioctl_g_fmt_vid_cap(struct file *file,
 			       void *fh, struct v4l2_format *f)
 {
-	/* TODO: not implemented. */
-	return -EINVAL;
-}
-
-static int ioctl_g_fmt_vid_cap_mplane(struct file *file,
-				      void *fh, struct v4l2_format *f)
-{
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
 	struct xencamera_config cfg;
-	struct v4l2_pix_format_mplane *mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
 	ret = xen_camera_front_get_config(v4l2_info->front_info, &cfg);
@@ -453,18 +437,11 @@ static int ioctl_g_fmt_vid_cap_mplane(struct file *file,
 	if (ret < 0)
 		return ret;
 
-	return get_buf_layout_to_mplane(v4l2_info->front_info, mp);
+	return xen_buf_layout_to_format(v4l2_info->front_info, sp);
 }
 
 static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
 				  struct v4l2_fmtdesc *f)
-{
-	/* TODO: not implemented. */
-	return -EINVAL;
-}
-
-static int ioctl_enum_fmt_vid_cap_mplane(struct file *file, void *fh,
-					 struct v4l2_fmtdesc *f)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
 	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
@@ -549,13 +526,8 @@ static const struct v4l2_ioctl_ops ioctl_ops = {
 	 * and starts streaming with different settings.
 	 */
 	.vidioc_s_fmt_vid_cap = ioctl_s_fmt_vid_cap,
-	.vidioc_s_fmt_vid_cap_mplane = ioctl_s_fmt_vid_cap_mplane,
-
 	.vidioc_g_fmt_vid_cap = ioctl_g_fmt_vid_cap,
-	.vidioc_g_fmt_vid_cap_mplane = ioctl_g_fmt_vid_cap_mplane,
-
 	.vidioc_enum_fmt_vid_cap = ioctl_enum_fmt_vid_cap,
-	.vidioc_enum_fmt_vid_cap_mplane = ioctl_enum_fmt_vid_cap_mplane,
 
 	.vidioc_enum_framesizes = ioctl_enum_framesizes,
 	.vidioc_enum_frameintervals = ioctl_enum_frameintervals,
@@ -680,7 +652,7 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	 * We only support multiplane operation even for
 	 * single plane buffers.
 	 */
-	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_READ;
 	q->dev = dev;
 	q->drv_priv = v4l2_info;
@@ -713,9 +685,8 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	vdev->fops = &fops;
 	vdev->ioctl_ops = &ioctl_ops;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE |
-			    V4L2_CAP_VIDEO_CAPTURE_MPLANE |
-			    V4L2_CAP_READWRITE |
-			    V4L2_CAP_STREAMING;
+		V4L2_CAP_READWRITE |
+		V4L2_CAP_STREAMING;
 	/*
 	 * The main serialization lock. All ioctls are serialized by this
 	 * lock. Exception: if q->lock is set, then the streaming ioctls

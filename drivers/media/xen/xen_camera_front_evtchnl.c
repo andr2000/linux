@@ -48,6 +48,8 @@ again:
 			/* fall through */
 		case XENCAMERA_OP_CONFIG_GET:
 			/* fall through */
+		case XENCAMERA_OP_BUF_GET_LAYOUT:
+			/* fall through */
 		case XENCAMERA_OP_BUF_REQUEST:
 			/* fall through */
 		case XENCAMERA_OP_CTRL_ENUM:

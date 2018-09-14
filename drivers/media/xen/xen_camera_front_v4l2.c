@@ -61,6 +61,10 @@ static const struct xen_to_v4l2 XEN_TYPE_TO_V4L2_CID[] = {
 
 static const struct xen_to_v4l2 XEN_COLORSPACE_TO_V4L2[] = {
 	{
+		.xen = XENCAMERA_COLORSPACE_DEFAULT,
+		.v4l2 = V4L2_COLORSPACE_DEFAULT,
+	},
+	{
 		.xen = XENCAMERA_COLORSPACE_SMPTE170M,
 		.v4l2 = V4L2_COLORSPACE_SMPTE170M,
 	},
@@ -88,7 +92,7 @@ static const struct xen_to_v4l2 XEN_COLORSPACE_TO_V4L2[] = {
 
 static const struct xen_to_v4l2 XEN_XFER_FUNC_TO_V4L2[] = {
 	{
-		.xen = XENCAMERA_YCBCR_ENC_IGNORE,
+		.xen = XENCAMERA_XFER_FUNC_DEFAULT,
 		.v4l2 = V4L2_XFER_FUNC_DEFAULT,
 	},
 	{
@@ -119,6 +123,10 @@ static const struct xen_to_v4l2 XEN_XFER_FUNC_TO_V4L2[] = {
 
 static const struct xen_to_v4l2 XEN_YCBCR_ENC_TO_V4L2[] = {
 	{
+		.xen = XENCAMERA_YCBCR_ENC_IGNORE,
+		.v4l2 = V4L2_YCBCR_ENC_DEFAULT,
+	},
+	{
 		.xen = XENCAMERA_YCBCR_ENC_601,
 		.v4l2 = V4L2_YCBCR_ENC_601,
 	},
@@ -145,6 +153,10 @@ static const struct xen_to_v4l2 XEN_YCBCR_ENC_TO_V4L2[] = {
 };
 
 static const struct xen_to_v4l2 XEN_QUANTIZATION_TO_V4L2[] = {
+	{
+		.xen = XENCAMERA_QUANTIZATION_DEFAULT,
+		.v4l2 = V4L2_QUANTIZATION_DEFAULT,
+	},
 	{
 		.xen = XENCAMERA_QUANTIZATION_FULL_RANGE,
 		.v4l2 = V4L2_QUANTIZATION_FULL_RANGE,

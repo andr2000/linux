@@ -201,6 +201,23 @@ int xen_camera_front_v4l2_to_xen_type(int v4l2_cid)
 			   ARRAY_SIZE(XEN_TYPE_TO_V4L2_CID));
 }
 
+static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
+				    struct v4l2_pix_format *sp)
+{
+	struct xencamera_buf_get_layout_resp buf_layout;
+	int ret;
+
+	ret =  xen_camera_front_get_buf_layout(front_info, &buf_layout);
+	if (ret < 0)
+		return ret;
+
+	WARN_ON(buf_layout.num_planes != 1);
+
+	sp->bytesperline = buf_layout.plane_stride[0];
+	sp->sizeimage = buf_layout.plane_size[0];
+	return 0;
+}
+
 /*
  * Setup the constraints of the queue: besides setting the number of planes
  * per buffer and the size and allocation context of each plane, it also
@@ -213,6 +230,21 @@ static int queue_setup(struct vb2_queue *vq,
 		       unsigned int sizes[], struct device *alloc_devs[])
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+	struct v4l2_pix_format sp;
+	int ret;
+
+	ret = xen_buf_layout_to_format(v4l2_info->front_info, &sp);
+	if (ret < 0)
+		return ret;
+
+	if (vq->num_buffers + *nbuffers < 2)
+		*nbuffers = 2;
+
+	if (*nplanes)
+		return sizes[0] < sp.sizeimage ? -EINVAL : 0;
+
+	*nplanes = 1;
+	sizes[0] = sp.sizeimage;
 
 	return 0;
 }
@@ -389,23 +421,6 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 		return ret;
 	cfg->quantization = ret;
 
-	return 0;
-}
-
-static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
-				    struct v4l2_pix_format *sp)
-{
-	struct xencamera_buf_get_layout_resp buf_layout;
-	int ret;
-
-	ret =  xen_camera_front_get_buf_layout(front_info, &buf_layout);
-	if (ret < 0)
-		return ret;
-
-	WARN_ON(buf_layout.num_planes != 1);
-
-	sp->bytesperline = buf_layout.plane_stride[0];
-	sp->sizeimage = buf_layout.plane_size[0];
 	return 0;
 }
 

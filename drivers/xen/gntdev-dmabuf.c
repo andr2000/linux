@@ -320,7 +320,12 @@ static void dmabuf_exp_remove_map(struct gntdev_priv *priv,
 {
 	mutex_lock(&priv->lock);
 	list_del(&map->next);
+#ifdef XT_CMA_NO_GRANT_MAP
+	/* XXX: This will leak map!!! */
 	gntdev_put_map(NULL /* already removed */, map);
+#else
+	printk("------------------ Will not unmap grants!\n");
+#endif
 	mutex_unlock(&priv->lock);
 }
 
@@ -500,9 +505,13 @@ static int dmabuf_exp_from_refs(struct gntdev_priv *priv, int flags,
 	map->flags |= GNTMAP_device_map;
 #endif
 
+#ifdef XT_CMA_NO_GRANT_MAP
 	ret = gntdev_map_grant_pages(map);
 	if (ret < 0)
 		goto out;
+#else
+	printk("------------------ Will not map grants!\n");
+#endif
 
 	args.priv = priv;
 	args.map = map;

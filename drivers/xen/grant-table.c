@@ -766,13 +766,13 @@ int gnttab_dma_alloc_pages(struct gnttab_dma_alloc_args *args)
 
 	size = args->nr_pages << PAGE_SHIFT;
 	if (args->coherent)
-		args->vaddr = dma_alloc_coherent(args->dev, size,
-						 &args->dev_bus_addr,
-						 GFP_KERNEL | __GFP_NOWARN);
+		args->vaddr = xt_cma_dma_alloc_coherent(args->dev, size,
+							&args->dev_bus_addr,
+							GFP_KERNEL | __GFP_NOWARN);
 	else
-		args->vaddr = dma_alloc_wc(args->dev, size,
-					   &args->dev_bus_addr,
-					   GFP_KERNEL | __GFP_NOWARN);
+		args->vaddr = xt_cma_dma_alloc_wc(args->dev, size,
+						  &args->dev_bus_addr,
+						  GFP_KERNEL | __GFP_NOWARN);
 	if (!args->vaddr) {
 		pr_debug("Failed to allocate DMA buffer of size %zu\n", size);
 		return -ENOMEM;
@@ -785,12 +785,9 @@ int gnttab_dma_alloc_pages(struct gnttab_dma_alloc_args *args)
 
 		args->pages[i] = page;
 		args->frames[i] = xen_page_to_gfn(page);
-#ifdef XT_CMA_NO_GRANT_MAP
 		xenmem_reservation_scrub_page(page);
-#endif
 	}
 
-#ifdef XT_CMA_NO_GRANT_MAP
 	xenmem_reservation_va_mapping_reset(args->nr_pages, args->pages);
 
 	ret = xenmem_reservation_decrease(args->nr_pages, args->frames);
@@ -803,7 +800,7 @@ int gnttab_dma_alloc_pages(struct gnttab_dma_alloc_args *args)
 	ret = gnttab_pages_set_private(args->nr_pages, args->pages);
 	if (ret < 0)
 		goto fail;
-#endif
+
 	return 0;
 
 fail:
@@ -821,7 +818,6 @@ int gnttab_dma_free_pages(struct gnttab_dma_alloc_args *args)
 	size_t size;
 	int i, ret;
 
-#ifdef XT_CMA_NO_GRANT_MAP
 	gnttab_pages_clear_private(args->nr_pages, args->pages);
 
 	for (i = 0; i < args->nr_pages; i++)
@@ -837,14 +833,14 @@ int gnttab_dma_free_pages(struct gnttab_dma_alloc_args *args)
 
 	xenmem_reservation_va_mapping_update(args->nr_pages, args->pages,
 					     args->frames);
-#endif
+
 	size = args->nr_pages << PAGE_SHIFT;
 	if (args->coherent)
-		dma_free_coherent(args->dev, size,
-				  args->vaddr, args->dev_bus_addr);
+		xt_cma_dma_free_coherent(args->dev, size,
+					 args->vaddr, args->dev_bus_addr);
 	else
-		dma_free_wc(args->dev, size,
-			    args->vaddr, args->dev_bus_addr);
+		xt_cma_dma_free_wc(args->dev, size,
+				   args->vaddr, args->dev_bus_addr);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gnttab_dma_free_pages);

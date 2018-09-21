@@ -214,7 +214,11 @@
 &gpio5			{ xen,passthrough; };
 &gpio6			{ xen,passthrough; };
 &gpio7			{ xen,passthrough; };
-&gsx			{ xen,passthrough; };
+&gsx			{
+	interrupts = <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 120 IRQ_TYPE_LEVEL_HIGH>;
+	xen,passthrough;
+};
 &hdmi0			{ xen,passthrough; };
 &i2c2			{ xen,passthrough; };
 &i2c4			{ xen,passthrough; };

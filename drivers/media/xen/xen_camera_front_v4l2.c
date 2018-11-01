@@ -432,6 +432,13 @@ static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
+	/*
+	 * It is not allowed to change the format while buffers for use with
+	 * streaming have already been allocated.
+	 */
+	if (vb2_is_busy(&v4l2_info->queue))
+		return -EBUSY;
+
 	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, &cfg);
 	if (ret < 0)
 		return ret;

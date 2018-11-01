@@ -682,12 +682,8 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 
 	q = &v4l2_info->queue;
 
-	/*
-	 * We only support multiplane operation even for
-	 * single plane buffers.
-	 */
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_READ;
+	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_USERPTR;
 	q->dev = dev;
 	q->drv_priv = v4l2_info;
 	q->buf_struct_size = sizeof(struct xen_camera_buffer);
@@ -718,9 +714,7 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	vdev->release = video_device_release_empty;
 	vdev->fops = &fops;
 	vdev->ioctl_ops = &ioctl_ops;
-	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE |
-		V4L2_CAP_READWRITE |
-		V4L2_CAP_STREAMING;
+	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
 	/*
 	 * The main serialization lock. All ioctls are serialized by this
 	 * lock. Exception: if q->lock is set, then the streaming ioctls

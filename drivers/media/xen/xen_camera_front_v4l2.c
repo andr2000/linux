@@ -21,7 +21,7 @@
 #include <media/v4l2-event.h>
 #include <media/videobuf2-v4l2.h>
 
-#include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 
 #include <xen/xenbus.h>
 
@@ -31,9 +31,14 @@
 #include "xen_camera_front_v4l2.h"
 
 struct xen_camera_buffer {
-	struct vb2_buffer vb;
-	struct list_head list;
+	struct vb2_v4l2_buffer vb;
 };
+
+static struct xen_camera_buffer *
+to_xen_camera_buffer(struct vb2_buffer *vb)
+{
+	return container_of(vb, struct xen_camera_buffer, vb.vb2_buf);
+}
 
 struct xen_to_v4l2 {
 	int xen;
@@ -233,6 +238,7 @@ static int queue_setup(struct vb2_queue *vq,
 	struct v4l2_pix_format sp;
 	int ret;
 
+	printk("%s\n", __FUNCTION__);
 	ret = xen_buf_layout_to_format(v4l2_info->front_info, &sp);
 	if (ret < 0)
 		return ret;
@@ -244,10 +250,52 @@ static int queue_setup(struct vb2_queue *vq,
 		return sizes[0] < sp.sizeimage ? -EINVAL : 0;
 
 	*nplanes = 1;
+
 	sizes[0] = sp.sizeimage;
 
 	return 0;
 }
+
+/*
+ * Called once after allocating a buffer (in MMAP case)
+ * or after acquiring a new USERPTR buffer; drivers may
+ * perform additional buffer-related initialization;
+ * initialization failure (return != 0) will prevent
+ * queue setup from completing successfully; optional.
+ */
+static int buffer_init(struct vb2_buffer *vb)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		vb2_get_drv_priv(vb->vb2_queue);
+	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
+	struct sg_table *sgt;
+
+	printk("%s\n", __FUNCTION__);
+
+	/* We only support a single plane. */
+	sgt = vb2_dma_sg_plane_desc(vb, 0);
+	if (!sgt)
+		return -EFAULT;
+
+	printk("%s nents %d DMA addr %llx\n", __FUNCTION__,
+	       sgt->nents, sg_dma_address(sgt->sgl));
+
+	return 0;
+}
+
+/*
+ * Called once before the buffer is freed; drivers may
+ * perform any additional cleanup; optional.
+ */
+static void buffer_cleanup(struct vb2_buffer *vb)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		vb2_get_drv_priv(vb->vb2_queue);
+
+	printk("%s\n", __FUNCTION__);
+}
+
+
 
 /*
  * Prepare the buffer for queueing to the DMA engine: check and set the
@@ -257,6 +305,7 @@ static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	printk("%s\n", __FUNCTION__);
 	return 0;
 }
 
@@ -267,6 +316,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	printk("%s\n", __FUNCTION__);
 }
 
 /*
@@ -279,6 +329,8 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 
+	printk("%s\n", __FUNCTION__);
+
 	return 0;
 }
 
@@ -289,6 +341,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 static void stop_streaming(struct vb2_queue *vq)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+	printk("%s\n", __FUNCTION__);
 }
 
 /*
@@ -300,6 +353,9 @@ static const struct vb2_ops qops = {
 	.queue_setup		= queue_setup,
 	.buf_prepare		= buffer_prepare,
 	.buf_queue		= buffer_queue,
+	.buf_init		= buffer_init,
+	.buf_cleanup		= buffer_cleanup,
+
 	.start_streaming	= start_streaming,
 	.stop_streaming		= stop_streaming,
 	.wait_prepare		= vb2_ops_wait_prepare,
@@ -688,7 +744,12 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	q->drv_priv = v4l2_info;
 	q->buf_struct_size = sizeof(struct xen_camera_buffer);
 	q->ops = &qops;
-	q->mem_ops = &vb2_dma_contig_memops;
+	/*
+	 * It is easier for us to work with vb2_dma_sg_memops
+	 * rather than vb2_dma_contig_memops as this might relax
+	 * requirements for memory subsystem.
+	 */
+	q->mem_ops = &vb2_dma_sg_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->min_buffers_needed = 2;
 	/*

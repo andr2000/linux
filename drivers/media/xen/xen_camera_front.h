@@ -19,6 +19,7 @@
 
 #include "xen_camera_front_cfg.h"
 #include "xen_camera_front_evtchnl.h"
+#include "xen_camera_front_shbuf.h"
 
 struct xen_camera_front_info {
 	struct xenbus_device *xb_dev;
@@ -30,6 +31,9 @@ struct xen_camera_front_info {
 	spinlock_t io_lock;
 
 	struct xen_camera_front_cfg_card cfg;
+
+	/* camera buffers */
+	struct list_head cbuf_list;
 };
 
 struct xen_camera_front_v4l2_info {
@@ -41,7 +45,8 @@ struct xen_camera_front_v4l2_info {
 	struct mutex lock;
 
 	struct vb2_queue queue;
-	struct list_head buf_list;
+	/* Size of a camera buffer. */
+	size_t v4l2_buffer_sz;
 };
 
 int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
@@ -62,5 +67,11 @@ int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 
 int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 				 int num_bufs);
+
+int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
+				u8 index, u64 size, struct sg_table *sgt);
+
+int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
+				 u8 index);
 
 #endif /* __XEN_CAMERA_FRONT_H */

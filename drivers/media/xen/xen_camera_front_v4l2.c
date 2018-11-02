@@ -257,6 +257,9 @@ static int queue_setup(struct vb2_queue *vq,
 
 	sizes[0] = sp.sizeimage;
 
+	/* Remember the negotiated buffer size. */
+	v4l2_info->v4l2_buffer_sz = sp.sizeimage;
+
 	return 0;
 }
 
@@ -273,18 +276,16 @@ static int buffer_init(struct vb2_buffer *vb)
 		vb2_get_drv_priv(vb->vb2_queue);
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	struct sg_table *sgt;
+	int ret;
 
 	printk("%s\n", __FUNCTION__);
-
 	/* We only support a single plane. */
 	sgt = vb2_dma_sg_plane_desc(vb, 0);
 	if (!sgt)
 		return -EFAULT;
 
-	printk("%s nents %d DMA addr %llx\n", __FUNCTION__,
-	       sgt->nents, sg_dma_address(sgt->sgl));
-
-	return 0;
+	return xen_camera_front_buf_create(v4l2_info->front_info, vb->index,
+					   v4l2_info->v4l2_buffer_sz, sgt);
 }
 
 /*
@@ -295,8 +296,14 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	int ret;
 
 	printk("%s\n", __FUNCTION__);
+	ret = xen_camera_front_buf_destroy(v4l2_info->front_info, vb->index);
+	if (ret < 0)
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Failed to cleanup buffer with index %d: %d\n",
+			vb->index, ret);
 }
 
 /*
@@ -736,8 +743,6 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	}
 
 	/* Initialize the vb2 queue. */
-	INIT_LIST_HEAD(&v4l2_info->buf_list);
-
 	q = &v4l2_info->queue;
 
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;

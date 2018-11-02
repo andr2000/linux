@@ -18,7 +18,69 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_evtchnl.h"
+#include "xen_camera_front_shbuf.h"
 #include "xen_camera_front_v4l2.h"
+
+struct xen_camera_front_cbuf {
+	struct list_head list;
+	/* This is V4L2 buffer index. */
+	u8 index;
+	struct xen_camera_front_shbuf *shbuf;
+};
+
+static int cbuf_add_to_list(struct xen_camera_front_info *front_info,
+			    struct xen_camera_front_shbuf *shbuf,
+			    u8 index)
+{
+	struct xen_camera_front_cbuf *cbuf;
+
+	cbuf = kzalloc(sizeof(*cbuf), GFP_KERNEL);
+	if (!cbuf)
+		return -ENOMEM;
+
+	cbuf->index = index;
+	cbuf->shbuf = shbuf;
+	list_add(&cbuf->list, &front_info->cbuf_list);
+	return 0;
+}
+
+static struct xen_camera_front_cbuf *cbuf_get(struct list_head *cbuf_list,
+					      u8 index)
+{
+	struct xen_camera_front_cbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, cbuf_list, list)
+		if (buf->index == index)
+			return buf;
+
+	return NULL;
+}
+
+static void cbuf_free(struct list_head *cbuf_list, u8 index)
+{
+	struct xen_camera_front_cbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, cbuf_list, list)
+		if (buf->index == index) {
+			list_del(&buf->list);
+			xen_camera_front_shbuf_unmap(buf->shbuf);
+			xen_camera_front_shbuf_free(buf->shbuf);
+			kfree(buf);
+			break;
+		}
+}
+
+static void cbuf_free_all(struct list_head *cbuf_list)
+{
+	struct xen_camera_front_cbuf *buf, *q;
+
+	list_for_each_entry_safe(buf, q, cbuf_list, list) {
+		list_del(&buf->list);
+		xen_camera_front_shbuf_unmap(buf->shbuf);
+		xen_camera_front_shbuf_free(buf->shbuf);
+		kfree(buf);
+	}
+}
 
 static struct xencamera_req *
 be_prepare_req(struct xen_camera_front_evtchnl *evtchnl, u8 operation)
@@ -287,6 +349,112 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 	return num_bufs;
 }
 
+int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
+				u8 index, u64 size, struct sg_table *sgt)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xen_camera_front_shbuf *shbuf;
+	struct xencamera_req *req;
+	struct xen_camera_front_shbuf_cfg buf_cfg;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	memset(&buf_cfg, 0, sizeof(buf_cfg));
+	buf_cfg.xb_dev = front_info->xb_dev;
+	buf_cfg.sgt = sgt;
+	buf_cfg.size = size;
+	buf_cfg.be_alloc = front_info->cfg.be_alloc;
+
+	shbuf = xen_camera_front_shbuf_alloc(&buf_cfg);
+	if (IS_ERR(shbuf))
+		return PTR_ERR(shbuf);
+
+	ret = cbuf_add_to_list(front_info, shbuf, index);
+	if (ret < 0) {
+		xen_camera_front_shbuf_free(shbuf);
+		return ret;
+	}
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_BUF_CREATE);
+	req->req.buf_create.gref_directory =
+		xen_camera_front_shbuf_get_dir_start(shbuf);
+	req->req.buf_create.index = index;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret < 0)
+		goto fail;
+
+	ret = be_stream_wait_io(evtchnl);
+	if (ret < 0)
+		goto fail;
+
+	ret = xen_camera_front_shbuf_map(shbuf);
+	if (ret < 0)
+		goto fail;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return 0;
+
+fail:
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	cbuf_free(&front_info->cbuf_list, index);
+	return ret;
+}
+
+int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
+				 u8 index)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	bool be_alloc;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	be_alloc = front_info->cfg.be_alloc;
+
+	/*
+	 * For the backend allocated buffer release references now, so backend
+	 * can free the buffer.
+	 */
+	if (be_alloc)
+		cbuf_free(&front_info->cbuf_list, index);
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_BUF_DESTROY);
+	req->req.index.index = index;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	/*
+	 * Do this regardless of communication status with the backend:
+	 * if we cannot remove remote resources remove what we can locally.
+	 */
+	if (!be_alloc)
+		cbuf_free(&front_info->cbuf_list, index);
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
 int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 				    struct xencamera_buf_get_layout_resp *resp)
 {
@@ -458,6 +626,7 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 
 	front_info->xb_dev = xb_dev;
 	spin_lock_init(&front_info->io_lock);
+	INIT_LIST_HEAD(&front_info->cbuf_list);
 	dev_set_drvdata(&xb_dev->dev, front_info);
 
 	return xenbus_switch_state(xb_dev, XenbusStateInitialising);

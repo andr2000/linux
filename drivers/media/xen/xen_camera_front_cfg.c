@@ -43,7 +43,6 @@ static int cfg_read_framerates(struct xenbus_device *xb_dev,
 		goto fail;
 	}
 
-	/* TODO: the below looks not solid. */
 	/*
 	 * At the first pass find out how many frame rates are there.
 	 * At the second pass read frame rates, validate and store.

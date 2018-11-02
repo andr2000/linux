@@ -455,6 +455,47 @@ int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
 	return ret;
 }
 
+static int buf_queue_helper(struct xen_camera_front_info *front_info,
+			    int index, u8 op)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, op);
+
+	req->req.index.index = index;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
+int xen_camera_front_buf_queue(struct xen_camera_front_info *front_info,
+			       int index)
+{
+	return buf_queue_helper(front_info, index, XENCAMERA_OP_BUF_QUEUE);
+}
+
+int xen_camera_front_buf_dequeue(struct xen_camera_front_info *front_info,
+				 int index)
+{
+	return buf_queue_helper(front_info, index, XENCAMERA_OP_BUF_DEQUEUE);
+}
+
 int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 				    struct xencamera_buf_get_layout_resp *resp)
 {

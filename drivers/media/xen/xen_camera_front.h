@@ -78,4 +78,10 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
 				 u8 index);
 
+int xen_camera_front_buf_queue(struct xen_camera_front_info *front_info,
+			       int index);
+
+int xen_camera_front_buf_dequeue(struct xen_camera_front_info *front_info,
+				 int index);
+
 #endif /* __XEN_CAMERA_FRONT_H */

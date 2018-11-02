@@ -306,14 +306,21 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 }
 
 /*
- * Prepare the buffer for queueing to the DMA engine: check and set the
- * payload size.
+ * Called every time the buffer is queued from userspace
+ * and from the VIDIOC_PREPARE_BUF() ioctl; drivers may
+ * perform any initialization required before each
+ * hardware operation in this callback; drivers can
+ * access/modify the buffer here as it is still synced for
+ * the CPU; drivers that support VIDIOC_CREATE_BUFS() must
+ * also validate the buffer size; if an error is returned,
+ * the buffer will not be queued in driver; optional.
  */
 static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
 	unsigned long size = v4l2_info->v4l2_buffer_sz;
+	int ret;
 
 	printk("%s\n", __FUNCTION__);
 	if (vb2_plane_size(vb, 0) < size) {
@@ -324,11 +331,50 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	}
 
 	vb2_set_plane_payload(vb, 0, size);
-	return 0;
+
+	ret = xen_camera_front_buf_queue(v4l2_info->front_info, vb->index);
+	if (ret < 0)
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Failed to queue buffer with index %d: %d\n",
+			vb->index, ret);
+	return ret;
 }
 
 /*
- * Queue this buffer to the DMA engine.
+ * Called before every dequeue of the buffer back to
+ * userspace; the buffer is synced for the CPU, so drivers
+ * can access/modify the buffer contents; drivers may
+ * perform any operations required before userspace
+ * accesses the buffer; optional. The buffer state can be
+ * one of the following: %DONE and %ERROR occur while
+ * streaming is in progress, and the %PREPARED state occurs
+ * when the queue has been canceled and all pending
+ * buffers are being returned to their default %DEQUEUED
+ * state. Typically you only have to do something if the
+ * state is %VB2_BUF_STATE_DONE, since in all other cases
+ * the buffer contents will be ignored anyway.
+ */
+static void buffer_finish(struct vb2_buffer *vb)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info =
+		vb2_get_drv_priv(vb->vb2_queue);
+	int ret;
+
+	ret = xen_camera_front_buf_dequeue(v4l2_info->front_info, vb->index);
+	if (ret < 0)
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Failed to dequeue buffer with index %d: %d\n",
+			vb->index, ret);
+}
+
+/*
+ * Passes buffer vb to the driver; driver may start
+ * hardware operation on this buffer; driver should give
+ * the buffer back by calling vb2_buffer_done() function;
+ * it is allways called after calling VIDIOC_STREAMON()
+ * ioctl; might be called before @start_streaming callback
+ * if user pre-queued buffers before calling
+ * VIDIOC_STREAMON().
  */
 static void buffer_queue(struct vb2_buffer *vb)
 {
@@ -399,6 +445,7 @@ static const struct vb2_ops qops = {
 	.queue_setup		= queue_setup,
 	.buf_prepare		= buffer_prepare,
 	.buf_queue		= buffer_queue,
+	.buf_finish		= buffer_finish,
 	.buf_init		= buffer_init,
 	.buf_cleanup		= buffer_cleanup,
 

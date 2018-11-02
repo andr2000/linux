@@ -226,9 +226,7 @@ static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
 /*
  * Setup the constraints of the queue: besides setting the number of planes
  * per buffer and the size and allocation context of each plane, it also
- * checks if sufficient buffers have been allocated. Usually 3 is a good
- * minimum number: many DMA engines need a minimum of 2 buffers in the
- * queue and you need to have another available for userspace processing.
+ * checks if sufficient buffers have been allocated.
  */
 static int queue_setup(struct vb2_queue *vq,
 		       unsigned int *nbuffers, unsigned int *nplanes,
@@ -245,6 +243,12 @@ static int queue_setup(struct vb2_queue *vq,
 
 	if (vq->num_buffers + *nbuffers < 2)
 		*nbuffers = 2;
+
+	/* Check if backend can handle that many buffers. */
+	ret = xen_camera_front_buf_request(v4l2_info->front_info, *nbuffers);
+	if (ret < 0)
+		return ret;
+	*nbuffers = ret;
 
 	if (*nplanes)
 		return sizes[0] < sp.sizeimage ? -EINVAL : 0;
@@ -294,8 +298,6 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 
 	printk("%s\n", __FUNCTION__);
 }
-
-
 
 /*
  * Prepare the buffer for queueing to the DMA engine: check and set the

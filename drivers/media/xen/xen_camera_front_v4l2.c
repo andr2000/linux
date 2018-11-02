@@ -32,6 +32,7 @@
 
 struct xen_camera_buffer {
 	struct vb2_v4l2_buffer vb;
+	struct list_head list;
 };
 
 static struct xen_camera_buffer *
@@ -274,9 +275,7 @@ static int buffer_init(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
-	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	struct sg_table *sgt;
-	int ret;
 
 	printk("%s\n", __FUNCTION__);
 	/* We only support a single plane. */
@@ -314,7 +313,17 @@ static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	unsigned long size = v4l2_info->v4l2_buffer_sz;
+
 	printk("%s\n", __FUNCTION__);
+	if (vb2_plane_size(vb, 0) < size) {
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Buffer too small (%lu < %lu)\n",
+			vb2_plane_size(vb, 0), size);
+		return -EINVAL;
+	}
+
+	vb2_set_plane_payload(vb, 0, size);
 	return 0;
 }
 
@@ -325,7 +334,28 @@ static void buffer_queue(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
+	unsigned long flags;
+
 	printk("%s\n", __FUNCTION__);
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_add_tail(&xen_buf->list, &v4l2_info->buf_list);
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
+static void return_all_buffers(struct xen_camera_front_v4l2_info *v4l2_info,
+			       enum vb2_buffer_state state)
+{
+	struct xen_camera_buffer *buf, *node;
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
+		vb2_buffer_done(&buf->vb.vb2_buf, state);
+		list_del(&buf->list);
+	}
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
 }
 
 /*
@@ -337,10 +367,15 @@ static void buffer_queue(struct vb2_buffer *vb)
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+	int ret = 0;
 
 	printk("%s\n", __FUNCTION__);
 
-	return 0;
+	v4l2_info->sequence = 0;
+
+	if (ret)
+		return_all_buffers(v4l2_info, VB2_BUF_STATE_QUEUED);
+	return ret;
 }
 
 /*
@@ -350,7 +385,9 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 static void stop_streaming(struct vb2_queue *vq)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
+
 	printk("%s\n", __FUNCTION__);
+	return_all_buffers(v4l2_info, VB2_BUF_STATE_ERROR);
 }
 
 /*
@@ -772,6 +809,9 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	ret = vb2_queue_init(q);
 	if (ret)
 		goto fail_unregister_ctrl;
+
+	INIT_LIST_HEAD(&v4l2_info->buf_list);
+	spin_lock_init(&v4l2_info->qlock);
 
 	vdev = &v4l2_info->vdev;
 	strlcpy(vdev->name, KBUILD_MODNAME, sizeof(vdev->name));

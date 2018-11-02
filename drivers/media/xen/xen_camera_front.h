@@ -45,6 +45,10 @@ struct xen_camera_front_v4l2_info {
 	struct mutex lock;
 
 	struct vb2_queue queue;
+	spinlock_t qlock;
+	struct list_head buf_list;
+	unsigned sequence;
+
 	/* Size of a camera buffer. */
 	size_t v4l2_buffer_sz;
 };

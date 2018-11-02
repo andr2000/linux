@@ -528,6 +528,7 @@ int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
 {
 	xen_camera_front_v4l2_fini(front_info);
+	cbuf_free_all(&front_info->cbuf_list);
 	xen_camera_front_evtchnl_free_all(front_info);
 }
 

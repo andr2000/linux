@@ -905,6 +905,11 @@ void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 	if (!v4l2_info)
 		return;
 
+	/* TODO: queue might not be initialized because of init errors. */
+	if (vb2_is_busy(&v4l2_info->queue))
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Unplugging while streaming!!!!\n");
+
 	video_unregister_device(&v4l2_info->vdev);
 	if (v4l2_info->v4l2_dev.ctrl_handler)
 		v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);

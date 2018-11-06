@@ -79,7 +79,6 @@ void xen_camera_front_shbuf_free(struct xen_camera_front_shbuf *buf)
 	kfree(buf->grefs);
 	kfree(buf->directory);
 	kvfree(buf->pages);
-	kfree(buf);
 }
 
 /*
@@ -397,15 +396,10 @@ static const struct xen_camera_front_shbuf_ops local_ops = {
 	.grant_refs_for_buffer = guest_grant_refs_for_buffer,
 };
 
-struct xen_camera_front_shbuf *
-xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg)
+int xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg)
 {
-	struct xen_camera_front_shbuf *buf;
+	struct xen_camera_front_shbuf *buf = cfg->buf;
 	int ret;
-
-	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
-	if (!buf)
-		return ERR_PTR(-ENOMEM);
 
 	if (cfg->be_alloc)
 		buf->ops = &backend_ops;
@@ -428,9 +422,9 @@ xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg)
 
 	buf->ops->fill_page_dir(buf);
 
-	return buf;
+	return 0;
 
 fail:
 	xen_camera_front_shbuf_free(buf);
-	return ERR_PTR(ret);
+	return ret;
 }

@@ -21,65 +21,10 @@
 #include "xen_camera_front_shbuf.h"
 #include "xen_camera_front_v4l2.h"
 
-struct xen_camera_front_cbuf {
-	struct list_head list;
-	/* This is V4L2 buffer index. */
-	u8 index;
-	struct xen_camera_front_shbuf *shbuf;
-};
-
-static int cbuf_add_to_list(struct xen_camera_front_info *front_info,
-			    struct xen_camera_front_shbuf *shbuf,
-			    u8 index)
+void xen_camera_front_destroy_shbuf(struct xen_camera_front_shbuf *shbuf)
 {
-	struct xen_camera_front_cbuf *cbuf;
-
-	cbuf = kzalloc(sizeof(*cbuf), GFP_KERNEL);
-	if (!cbuf)
-		return -ENOMEM;
-
-	cbuf->index = index;
-	cbuf->shbuf = shbuf;
-	list_add(&cbuf->list, &front_info->cbuf_list);
-	return 0;
-}
-
-static struct xen_camera_front_cbuf *cbuf_get(struct list_head *cbuf_list,
-					      u8 index)
-{
-	struct xen_camera_front_cbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, cbuf_list, list)
-		if (buf->index == index)
-			return buf;
-
-	return NULL;
-}
-
-static void cbuf_free(struct list_head *cbuf_list, u8 index)
-{
-	struct xen_camera_front_cbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, cbuf_list, list)
-		if (buf->index == index) {
-			list_del(&buf->list);
-			xen_camera_front_shbuf_unmap(buf->shbuf);
-			xen_camera_front_shbuf_free(buf->shbuf);
-			kfree(buf);
-			break;
-		}
-}
-
-static void cbuf_free_all(struct list_head *cbuf_list)
-{
-	struct xen_camera_front_cbuf *buf, *q;
-
-	list_for_each_entry_safe(buf, q, cbuf_list, list) {
-		list_del(&buf->list);
-		xen_camera_front_shbuf_unmap(buf->shbuf);
-		xen_camera_front_shbuf_free(buf->shbuf);
-		kfree(buf);
-	}
+	xen_camera_front_shbuf_unmap(shbuf);
+	xen_camera_front_shbuf_free(shbuf);
 }
 
 static struct xencamera_req *
@@ -350,10 +295,10 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 }
 
 int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
+				struct xen_camera_front_shbuf *shbuf,
 				u8 index, u64 size, struct sg_table *sgt)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
-	struct xen_camera_front_shbuf *shbuf;
 	struct xencamera_req *req;
 	struct xen_camera_front_shbuf_cfg buf_cfg;
 	unsigned long flags;
@@ -365,19 +310,14 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 
 	memset(&buf_cfg, 0, sizeof(buf_cfg));
 	buf_cfg.xb_dev = front_info->xb_dev;
+	buf_cfg.buf = shbuf;
 	buf_cfg.sgt = sgt;
 	buf_cfg.size = size;
 	buf_cfg.be_alloc = front_info->cfg.be_alloc;
 
-	shbuf = xen_camera_front_shbuf_alloc(&buf_cfg);
-	if (IS_ERR(shbuf))
-		return PTR_ERR(shbuf);
-
-	ret = cbuf_add_to_list(front_info, shbuf, index);
-	if (ret < 0) {
-		xen_camera_front_shbuf_free(shbuf);
+	ret = xen_camera_front_shbuf_alloc(&buf_cfg);
+	if (ret < 0)
 		return ret;
-	}
 
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
@@ -406,11 +346,12 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 
 fail:
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
-	cbuf_free(&front_info->cbuf_list, index);
+	xen_camera_front_destroy_shbuf(shbuf);
 	return ret;
 }
 
 int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
+				 struct xen_camera_front_shbuf *shbuf,
 				 u8 index)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
@@ -430,7 +371,7 @@ int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
 	 * can free the buffer.
 	 */
 	if (be_alloc)
-		cbuf_free(&front_info->cbuf_list, index);
+		xen_camera_front_destroy_shbuf(shbuf);
 
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
@@ -449,14 +390,14 @@ int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
 	 * if we cannot remove remote resources remove what we can locally.
 	 */
 	if (!be_alloc)
-		cbuf_free(&front_info->cbuf_list, index);
+		xen_camera_front_destroy_shbuf(shbuf);
 
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
 	return ret;
 }
 
 static int buf_queue_helper(struct xen_camera_front_info *front_info,
-			    int index, u8 op)
+			    u8 index, u8 op)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -485,13 +426,13 @@ static int buf_queue_helper(struct xen_camera_front_info *front_info,
 }
 
 int xen_camera_front_buf_queue(struct xen_camera_front_info *front_info,
-			       int index)
+			       u8 index)
 {
 	return buf_queue_helper(front_info, index, XENCAMERA_OP_BUF_QUEUE);
 }
 
 int xen_camera_front_buf_dequeue(struct xen_camera_front_info *front_info,
-				 int index)
+				 u8 index)
 {
 	return buf_queue_helper(front_info, index, XENCAMERA_OP_BUF_DEQUEUE);
 }
@@ -528,7 +469,6 @@ int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
 {
 	xen_camera_front_v4l2_fini(front_info);
-	cbuf_free_all(&front_info->cbuf_list);
 	xen_camera_front_evtchnl_free_all(front_info);
 }
 
@@ -668,7 +608,6 @@ static int xen_drv_probe(struct xenbus_device *xb_dev,
 
 	front_info->xb_dev = xb_dev;
 	spin_lock_init(&front_info->io_lock);
-	INIT_LIST_HEAD(&front_info->cbuf_list);
 	dev_set_drvdata(&xb_dev->dev, front_info);
 
 	return xenbus_switch_state(xb_dev, XenbusStateInitialising);

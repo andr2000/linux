@@ -44,14 +44,14 @@ struct xen_camera_front_shbuf {
 };
 
 struct xen_camera_front_shbuf_cfg {
+	struct xen_camera_front_shbuf *buf;
 	struct xenbus_device *xb_dev;
 	size_t size;
 	struct sg_table *sgt;
 	bool be_alloc;
 };
 
-struct xen_camera_front_shbuf *
-xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg);
+int xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg);
 
 grant_ref_t
 xen_camera_front_shbuf_get_dir_start(struct xen_camera_front_shbuf *buf);

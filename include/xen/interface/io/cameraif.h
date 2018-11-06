@@ -674,6 +674,7 @@ struct xencamera_buf_request {
  * index can be re-used after destroying the corresponding camera buffer.
  *
  * index - uint8_t, index of the buffer to be created.
+ * data_offset - uint16_t, start of the data from the buffer start
  * gref_directory - grant_ref_t, a reference to the first shared page
  *   describing shared buffer references. The size of the buffer is equal to
  *   XENCAMERA_OP_GET_BUF_DETAILS.size response. At least one page exists. If
@@ -697,7 +698,8 @@ struct xencamera_buf_request {
  */
 struct xencamera_buf_create_req {
     uint8_t index;
-    uint8_t reserved[3];
+    uint8_t reserved;
+    uint16_t data_offset;
     grant_ref_t gref_directory;
 };
 

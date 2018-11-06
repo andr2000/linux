@@ -19,7 +19,6 @@
 
 #include "xen_camera_front_cfg.h"
 #include "xen_camera_front_evtchnl.h"
-#include "xen_camera_front_shbuf.h"
 
 struct xen_camera_front_info {
 	struct xenbus_device *xb_dev;
@@ -31,27 +30,9 @@ struct xen_camera_front_info {
 	spinlock_t io_lock;
 
 	struct xen_camera_front_cfg_card cfg;
-
-	/* camera buffers */
-	struct list_head cbuf_list;
 };
 
-struct xen_camera_front_v4l2_info {
-	struct xen_camera_front_info *front_info;
-	struct v4l2_device v4l2_dev;
-	struct video_device vdev;
-	struct v4l2_ctrl_handler ctrl_handler;
-	/* ioctl serialization mutex. */
-	struct mutex lock;
-
-	struct vb2_queue queue;
-	spinlock_t qlock;
-	struct list_head buf_list;
-	unsigned sequence;
-
-	/* Size of a camera buffer. */
-	size_t v4l2_buffer_sz;
-};
+struct xen_camera_front_shbuf;
 
 int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
 				struct xencamera_config *cfg,
@@ -73,15 +54,19 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 				 int num_bufs);
 
 int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
+				struct xen_camera_front_shbuf *shbuf,
 				u8 index, u64 size, struct sg_table *sgt);
 
 int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
+				 struct xen_camera_front_shbuf *shbuf,
 				 u8 index);
 
 int xen_camera_front_buf_queue(struct xen_camera_front_info *front_info,
-			       int index);
+			       u8 index);
 
 int xen_camera_front_buf_dequeue(struct xen_camera_front_info *front_info,
-				 int index);
+				 u8 index);
+
+void xen_camera_front_destroy_shbuf(struct xen_camera_front_shbuf *shbuf);
 
 #endif /* __XEN_CAMERA_FRONT_H */

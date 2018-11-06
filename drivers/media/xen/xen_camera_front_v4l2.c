@@ -11,17 +11,16 @@
  */
 
 #include <linux/videodev2.h>
-#include <linux/v4l2-dv-timings.h>
+//#include <linux/v4l2-dv-timings.h>
 
 #include <media/v4l2-device.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
-#include <media/v4l2-dv-timings.h>
+//#include <media/v4l2-dv-timings.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-event.h>
-#include <media/videobuf2-v4l2.h>
-
 #include <media/videobuf2-dma-sg.h>
+#include <media/videobuf2-v4l2.h>
 
 #include <xen/xenbus.h>
 
@@ -29,9 +28,32 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_v4l2.h"
+#include "xen_camera_front_shbuf.h"
+
+struct xen_camera_front_v4l2_info {
+	struct xen_camera_front_info *front_info;
+	struct v4l2_device v4l2_dev;
+	struct video_device vdev;
+	struct v4l2_ctrl_handler ctrl_handler;
+	/* ioctl serialization mutex. */
+	struct mutex lock;
+
+	struct vb2_queue queue;
+	spinlock_t qlock;
+	struct list_head buf_list;
+	unsigned sequence;
+
+	/* Size of a camera buffer. */
+	size_t v4l2_buffer_sz;
+};
 
 struct xen_camera_buffer {
 	struct vb2_v4l2_buffer vb;
+	/* Xen shared buffer backing this V4L2 buffer's memory. */
+	struct xen_camera_front_shbuf shbuf;
+	/* Is this buffer queued or not. */
+	bool is_queued;
+
 	struct list_head list;
 };
 
@@ -224,6 +246,66 @@ static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
 	return 0;
 }
 
+static void buf_list_add(struct xen_camera_front_v4l2_info *v4l2_info,
+			 struct xen_camera_buffer *xen_buf)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_add(&xen_buf->list, &v4l2_info->buf_list);
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
+static void buf_list_remove(struct xen_camera_front_v4l2_info *v4l2_info,
+			    struct xen_camera_buffer *xen_buf)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_del(&xen_buf->list);
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
+static void
+buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
+{
+	struct xen_camera_buffer *buf, *node;
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
+		list_del(&buf->list);
+		xen_camera_front_destroy_shbuf(&buf->shbuf);
+	}
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
+static void buf_list_set_queued(struct xen_camera_front_v4l2_info *v4l2_info,
+				struct xen_camera_buffer *xen_buf, bool state)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	xen_buf->is_queued = state;
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
+static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
+				   enum vb2_buffer_state state)
+{
+	struct xen_camera_buffer *buf, *node;
+	unsigned long flags;
+
+	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
+		if (buf->is_queued) {
+			vb2_buffer_done(&buf->vb.vb2_buf, state);
+			buf->is_queued = false;
+		}
+	}
+	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+}
+
 /*
  * Setup the constraints of the queue: besides setting the number of planes
  * per buffer and the size and allocation context of each plane, it also
@@ -266,8 +348,8 @@ static int queue_setup(struct vb2_queue *vq,
 
 /*
  * Called once after allocating a buffer (in MMAP case)
- * or after acquiring a new USERPTR buffer; drivers may
- * perform additional buffer-related initialization;
+ * or after acquiring a new USERPTR buffer or queueing a new
+ * dma-buf; drivers may perform additional buffer-related initialization;
  * initialization failure (return != 0) will prevent
  * queue setup from completing successfully; optional.
  */
@@ -275,7 +357,9 @@ static int buffer_init(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	struct sg_table *sgt;
+	int ret;
 
 	printk("%s\n", __FUNCTION__);
 	/* We only support a single plane. */
@@ -283,8 +367,14 @@ static int buffer_init(struct vb2_buffer *vb)
 	if (!sgt)
 		return -EFAULT;
 
-	return xen_camera_front_buf_create(v4l2_info->front_info, vb->index,
-					   v4l2_info->v4l2_buffer_sz, sgt);
+	ret = xen_camera_front_buf_create(v4l2_info->front_info,
+					  &xen_buf->shbuf, vb->index,
+					  v4l2_info->v4l2_buffer_sz, sgt);
+	if (ret < 0)
+		return ret;
+
+	buf_list_add(v4l2_info, xen_buf);
+	return 0;
 }
 
 /*
@@ -295,14 +385,17 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	int ret;
 
 	printk("%s\n", __FUNCTION__);
-	ret = xen_camera_front_buf_destroy(v4l2_info->front_info, vb->index);
+	ret = xen_camera_front_buf_destroy(v4l2_info->front_info,
+					   &xen_buf->shbuf, vb->index);
 	if (ret < 0)
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
 			"Failed to cleanup buffer with index %d: %d\n",
 			vb->index, ret);
+	buf_list_remove(v4l2_info, xen_buf);
 }
 
 /*
@@ -319,7 +412,7 @@ static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
-	unsigned long size = v4l2_info->v4l2_buffer_sz;
+	size_t size = v4l2_info->v4l2_buffer_sz;
 	int ret;
 
 	printk("%s\n", __FUNCTION__);
@@ -332,6 +425,11 @@ static int buffer_prepare(struct vb2_buffer *vb)
 
 	vb2_set_plane_payload(vb, 0, size);
 
+	/*
+	 * FIXME: we might have an error here while communicating to
+	 * the backend, but .buf_queue callback doesn't allow us to return
+	 * any error code: queue the buffer to the backend now.
+	 */
 	ret = xen_camera_front_buf_queue(v4l2_info->front_info, vb->index);
 	if (ret < 0)
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
@@ -381,27 +479,9 @@ static void buffer_queue(struct vb2_buffer *vb)
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
-	unsigned long flags;
 
 	printk("%s\n", __FUNCTION__);
-
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	list_add_tail(&xen_buf->list, &v4l2_info->buf_list);
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
-}
-
-static void return_all_buffers(struct xen_camera_front_v4l2_info *v4l2_info,
-			       enum vb2_buffer_state state)
-{
-	struct xen_camera_buffer *buf, *node;
-	unsigned long flags;
-
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
-		vb2_buffer_done(&buf->vb.vb2_buf, state);
-		list_del(&buf->list);
-	}
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	buf_list_set_queued(v4l2_info, xen_buf, true);
 }
 
 /*
@@ -420,7 +500,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	v4l2_info->sequence = 0;
 
 	if (ret)
-		return_all_buffers(v4l2_info, VB2_BUF_STATE_QUEUED);
+		buf_list_return_queued(v4l2_info, VB2_BUF_STATE_QUEUED);
 	return ret;
 }
 
@@ -433,7 +513,7 @@ static void stop_streaming(struct vb2_queue *vq)
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 
 	printk("%s\n", __FUNCTION__);
-	return_all_buffers(v4l2_info, VB2_BUF_STATE_ERROR);
+	buf_list_return_queued(v4l2_info, VB2_BUF_STATE_ERROR);
 }
 
 /*
@@ -909,6 +989,8 @@ void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 	if (vb2_is_busy(&v4l2_info->queue))
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
 			"Unplugging while streaming!!!!\n");
+
+	buf_list_destroy_all_shbuf(v4l2_info);
 
 	video_unregister_device(&v4l2_info->vdev);
 	if (v4l2_info->v4l2_dev.ctrl_handler)

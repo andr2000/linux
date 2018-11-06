@@ -361,15 +361,20 @@ static int buffer_init(struct vb2_buffer *vb)
 	struct sg_table *sgt;
 	int ret;
 
-	printk("%s\n", __FUNCTION__);
+	if (vb2_plane_size(vb, 0) < v4l2_info->v4l2_buffer_sz) {
+		dev_err(&v4l2_info->front_info->xb_dev->dev,
+			"Buffer too small (%lu < %lu)\n",
+			vb2_plane_size(vb, 0), v4l2_info->v4l2_buffer_sz);
+		return -EINVAL;
+	}
+
 	/* We only support a single plane. */
 	sgt = vb2_dma_sg_plane_desc(vb, 0);
 	if (!sgt)
 		return -EFAULT;
 
 	ret = xen_camera_front_buf_create(v4l2_info->front_info,
-					  &xen_buf->shbuf, vb->index,
-					  v4l2_info->v4l2_buffer_sz, sgt);
+					  &xen_buf->shbuf, vb->index, sgt);
 	if (ret < 0)
 		return ret;
 

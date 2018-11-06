@@ -296,7 +296,7 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 
 int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 				struct xen_camera_front_shbuf *shbuf,
-				u8 index, u64 size, struct sg_table *sgt)
+				u8 index, struct sg_table *sgt)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -312,7 +312,6 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 	buf_cfg.xb_dev = front_info->xb_dev;
 	buf_cfg.buf = shbuf;
 	buf_cfg.sgt = sgt;
-	buf_cfg.size = size;
 	buf_cfg.be_alloc = front_info->cfg.be_alloc;
 
 	ret = xen_camera_front_shbuf_alloc(&buf_cfg);
@@ -326,6 +325,7 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 	req->req.buf_create.gref_directory =
 		xen_camera_front_shbuf_get_dir_start(shbuf);
 	req->req.buf_create.index = index;
+	req->req.buf_create.data_offset = shbuf->data_offset;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);

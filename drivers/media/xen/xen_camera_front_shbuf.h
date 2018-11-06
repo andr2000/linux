@@ -29,6 +29,7 @@ struct xen_camera_front_shbuf {
 	grant_ref_t *grefs;
 	unsigned char *directory;
 
+	unsigned int data_offset;
 	int num_pages;
 	struct page **pages;
 
@@ -46,7 +47,6 @@ struct xen_camera_front_shbuf {
 struct xen_camera_front_shbuf_cfg {
 	struct xen_camera_front_shbuf *buf;
 	struct xenbus_device *xb_dev;
-	size_t size;
 	struct sg_table *sgt;
 	bool be_alloc;
 };

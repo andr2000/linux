@@ -339,10 +339,20 @@ static int grant_references(struct xen_camera_front_shbuf *buf)
 	return 0;
 }
 
+static int get_num_pages(struct sg_table *sgt)
+{
+	struct sg_page_iter sg_iter;
+	int nr = 0;
+
+	for_each_sg_page(sgt->sgl, &sg_iter, sgt->nents, 0)
+		nr++;
+	return nr;
+}
+
 static int alloc_storage(struct xen_camera_front_shbuf *buf)
 {
-	struct scatterlist *sg;
-	u32 index, count;
+	struct sg_page_iter sg_iter;
+	u32 index;
 
 	buf->pages = kvmalloc_array(buf->num_pages,
 				    sizeof(struct page *), GFP_KERNEL);
@@ -351,21 +361,11 @@ static int alloc_storage(struct xen_camera_front_shbuf *buf)
 
 	/* Get pages of the buffer. */
 	index = 0;
-	for_each_sg(buf->sgt->sgl, sg, buf->sgt->nents, count) {
-		struct page *page;
-		u32 len;
+	for_each_sg_page(buf->sgt->sgl, &sg_iter, buf->sgt->nents, 0)
+		buf->pages[index] = sg_page_iter_page(&sg_iter);
 
-		len = sg->length;
-		page = sg_page(sg);
-		while (len > 0) {
-			if (WARN_ON(index >= buf->num_pages))
-				return -EINVAL;
-			buf->pages[index] = page;
-			page++;
-			len -= PAGE_SIZE;
-			index++;
-		}
-	}
+	/* Remember the offset of the data of the buffer. */
+	buf->data_offset = buf->sgt->sgl->offset;
 
 	buf->grefs = kcalloc(buf->num_grefs, sizeof(*buf->grefs), GFP_KERNEL);
 	if (!buf->grefs)
@@ -407,7 +407,7 @@ int xen_camera_front_shbuf_alloc(struct xen_camera_front_shbuf_cfg *cfg)
 		buf->ops = &local_ops;
 
 	buf->xb_dev = cfg->xb_dev;
-	buf->num_pages = DIV_ROUND_UP(cfg->size, PAGE_SIZE);
+	buf->num_pages = get_num_pages(cfg->sgt);
 	buf->sgt = cfg->sgt;
 
 	buf->ops->calc_num_grefs(buf);

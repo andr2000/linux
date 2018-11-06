@@ -55,7 +55,7 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 
 int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 				struct xen_camera_front_shbuf *shbuf,
-				u8 index, u64 size, struct sg_table *sgt);
+				u8 index, struct sg_table *sgt);
 
 int xen_camera_front_buf_destroy(struct xen_camera_front_info *front_info,
 				 struct xen_camera_front_shbuf *shbuf,

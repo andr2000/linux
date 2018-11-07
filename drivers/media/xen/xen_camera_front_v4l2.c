@@ -239,7 +239,12 @@ static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
 	if (ret < 0)
 		return ret;
 
-	WARN_ON(buf_layout.num_planes != 1);
+	if (buf_layout.num_planes != 1) {
+		dev_err(&front_info->xb_dev->dev,
+			"Unsupported number of planes %d\n",
+			buf_layout.num_planes);
+		return -EINVAL;
+	}
 
 	sp->bytesperline = buf_layout.plane_stride[0];
 	sp->sizeimage = buf_layout.plane_size[0];

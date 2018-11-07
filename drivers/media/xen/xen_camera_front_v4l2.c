@@ -898,6 +898,9 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	strlcpy(v4l2_info->v4l2_dev.name, XENCAMERA_DRIVER_NAME,
 		sizeof(v4l2_info->v4l2_dev.name));
 
+	INIT_LIST_HEAD(&v4l2_info->buf_list);
+	spin_lock_init(&v4l2_info->qlock);
+
 	ret = v4l2_device_register(dev, &v4l2_info->v4l2_dev);
 	if (ret < 0)
 		return ret;
@@ -941,9 +944,6 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	ret = vb2_queue_init(q);
 	if (ret)
 		goto fail_unregister_ctrl;
-
-	INIT_LIST_HEAD(&v4l2_info->buf_list);
-	spin_lock_init(&v4l2_info->qlock);
 
 	vdev = &v4l2_info->vdev;
 	strlcpy(vdev->name, KBUILD_MODNAME, sizeof(vdev->name));

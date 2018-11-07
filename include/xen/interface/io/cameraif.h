@@ -87,6 +87,7 @@
  *
  *---------------------------- Device 0 configuration -------------------------
  *
+ * /local/domain/1/device/vcamera/0/max-buffers = "3"
  * /local/domain/1/device/vcamera/0/controls = "contrast,hue"
  * /local/domain/1/device/vcamera/0/formats/YUYV/640x480/frame-rates = "30/1,15/1"
  * /local/domain/1/device/vcamera/0/formats/YUYV/1920x1080/frame-rates = "15/2"
@@ -100,6 +101,7 @@
  *
  *---------------------------- Device 1 configuration -------------------------
  *
+ * /local/domain/1/device/vcamera/1/max-buffers = "8"
  * /local/domain/1/device/vcamera/1/controls = "brightness,saturation,hue"
  * /local/domain/1/device/vcamera/1/formats/YUYV/640x480/frame-rates = "30/1,15/2"
  * /local/domain/1/device/vcamera/1/formats/YUYV/1920x1080/frame-rates = "15/2"
@@ -164,6 +166,11 @@
  *      After device instance initialization each camera is assigned a
  *      unique ID, so it can be identified by the backend by this ID.
  *      This can be UUID or such.
+ *
+ * max-buffers
+ *      Values:         <uint8_t>
+ *
+ *      Maximum number of camera buffers this frontend may use.
  *
  * controls
  *      Values:         <list of string>
@@ -427,6 +434,7 @@
 #define XENCAMERA_FIELD_REQ_CHANNEL    "req-event-channel"
 #define XENCAMERA_FIELD_EVT_RING_REF   "evt-ring-ref"
 #define XENCAMERA_FIELD_EVT_CHANNEL    "evt-event-channel"
+#define XENCAMERA_FIELD_MAX_BUFFERS    "max-buffers"
 #define XENCAMERA_FIELD_CONTROLS       "controls"
 #define XENCAMERA_FIELD_FORMATS        "formats"
 #define XENCAMERA_FIELD_FRAME_RATES    "frame-rates"

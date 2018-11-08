@@ -312,9 +312,27 @@ static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 }
 
 /*
- * Setup the constraints of the queue: besides setting the number of planes
- * per buffer and the size and allocation context of each plane, it also
- * checks if sufficient buffers have been allocated.
+ * Called from VIDIOC_REQBUFS() and VIDIOC_CREATE_BUFS()
+ * handlers before memory allocation. It can be called
+ * twice: if the original number of requested buffers
+ * could not be allocated, then it will be called a
+ * second time with the actually allocated number of
+ * buffers to verify if that is OK.
+ * The driver should return the required number of buffers
+ * in \*num_buffers, the required number of planes per
+ * buffer in \*num_planes, the size of each plane should be
+ * set in the sizes\[\] array and optional per-plane
+ * allocator specific device in the alloc_devs\[\] array.
+ * When called from VIDIOC_REQBUFS(), \*num_planes == 0,
+ * the driver has to use the currently configured format to
+ * determine the plane sizes and \*num_buffers is the total
+ * number of buffers that are being allocated. When called
+ * from VIDIOC_CREATE_BUFS(), \*num_planes != 0 and it
+ * describes the requested number of planes and sizes\[\]
+ * contains the requested plane sizes. In this case
+ * \*num_buffers are being allocated additionally to
+ * q->num_buffers. If either \*num_planes or the requested
+ * sizes are invalid callback must return %-EINVAL.
  */
 static int queue_setup(struct vb2_queue *vq,
 		       unsigned int *nbuffers, unsigned int *nplanes,

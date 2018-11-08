@@ -207,6 +207,11 @@ int xen_camera_front_cfg_init(struct xen_camera_front_info *front_info)
 		cfg->be_alloc = true;
 	}
 
+	cfg->max_buffers = xenbus_read_unsigned(xb_dev->nodename,
+						XENCAMERA_FIELD_MAX_BUFFERS,
+						2);
+	dev_info(dev, "Maximum allowed buffers: %d\n", cfg->max_buffers);
+
 	cfg->num_formats = 0;
 	/* Find out how many formats are configured. */
 	dir_nodes = xenbus_directory(XBT_NIL, xb_dev->nodename,

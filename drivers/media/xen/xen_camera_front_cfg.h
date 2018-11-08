@@ -46,6 +46,8 @@ struct xen_camera_front_cfg_format {
 struct xen_camera_front_cfg_card {
 	bool be_alloc;
 
+	int max_buffers;
+
 	int num_formats;
 	struct xen_camera_front_cfg_format *format;
 	int num_controls;

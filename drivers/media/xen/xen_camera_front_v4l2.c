@@ -322,15 +322,19 @@ static int queue_setup(struct vb2_queue *vq,
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 	struct v4l2_pix_format sp;
-	int ret;
+	int min_bufs, max_bufs, ret;
 
 	printk("%s\n", __FUNCTION__);
 	ret = xen_buf_layout_to_format(v4l2_info->front_info, &sp);
 	if (ret < 0)
 		return ret;
 
-	if (vq->num_buffers + *nbuffers < 2)
-		*nbuffers = 2;
+	min_bufs = vq->min_buffers_needed;
+	max_bufs = v4l2_info->front_info->cfg.max_buffers;
+	if (*nbuffers < min_bufs)
+		*nbuffers = min_bufs;
+	if (*nbuffers > max_bufs)
+		*nbuffers = max_bufs;
 
 	/* Check if backend can handle that many buffers. */
 	ret = xen_camera_front_buf_request(v4l2_info->front_info, *nbuffers);

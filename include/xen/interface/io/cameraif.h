@@ -669,9 +669,17 @@ struct xencamera_buf_request {
  * +----------------+----------------+----------------+----------------+
  * |      index     |                     reserved                     | 12
  * +----------------+----------------+----------------+----------------+
- * |                           gref_directory                          | 16
+ * |                           plane_offset[0]                         | 16
  * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 20
+ * |                           plane_offset[1]                         | 20
+ * +----------------+----------------+----------------+----------------+
+ * |                           plane_offset[2]                         | 24
+ * +----------------+----------------+----------------+----------------+
+ * |                           plane_offset[3]                         | 28
+ * +----------------+----------------+----------------+----------------+
+ * |                           gref_directory                          | 32
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 36
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
@@ -682,10 +690,12 @@ struct xencamera_buf_request {
  * index can be re-used after destroying the corresponding camera buffer.
  *
  * index - uint8_t, index of the buffer to be created.
- * data_offset - uint16_t, start of the data from the buffer start
+ * plane_offset - array of uint32_t, offset of the corresponding plane
+ *   in octets from the buffer start. Number of offsets returned is
+ *   equal to the value returned in XENCAMERA_OP_BUF_GET_LAYOUT.num_planes.
  * gref_directory - grant_ref_t, a reference to the first shared page
  *   describing shared buffer references. The size of the buffer is equal to
- *   XENCAMERA_OP_GET_BUF_DETAILS.size response. At least one page exists. If
+ *   XENCAMERA_OP_BUF_GET_LAYOUT.size response. At least one page exists. If
  *   shared buffer size exceeds what can be addressed by this single page,
  *   then reference to the next shared page must be supplied (see
  *   gref_dir_next_page below).
@@ -706,8 +716,8 @@ struct xencamera_buf_request {
  */
 struct xencamera_buf_create_req {
     uint8_t index;
-    uint8_t reserved;
-    uint16_t data_offset;
+    uint8_t reserved[3];
+    uint32_t plane_offset[XENCAMERA_MAX_PLANE];
     grant_ref_t gref_directory;
 };
 
@@ -987,46 +997,43 @@ struct xencamera_get_ctrl_req {
  * +----------------+----------------+----------------+----------------+
  * |                                size                               | 16
  * +----------------+----------------+----------------+----------------+
- * |                          plane_offset[0]                          | 20
+ * |                           plane_size[0]                           | 20
  * +----------------+----------------+----------------+----------------+
- * |                          plane_offset[1]                          | 24
+ * |                           plane_size[1]                           | 24
  * +----------------+----------------+----------------+----------------+
- * |                          plane_offset[2]                          | 28
+ * |                           plane_size[2]                           | 28
  * +----------------+----------------+----------------+----------------+
- * |                          plane_offset[3]                          | 32
+ * |                           plane_size[3]                           | 32
  * +----------------+----------------+----------------+----------------+
- * |                           plane_size[0]                           | 36
+ * |                          plane_stride[0]                          | 36
  * +----------------+----------------+----------------+----------------+
- * |                           plane_size[1]                           | 40
+ * |                          plane_stride[1]                          | 40
  * +----------------+----------------+----------------+----------------+
- * |                           plane_size[2]                           | 44
+ * |                          plane_stride[2]                          | 44
  * +----------------+----------------+----------------+----------------+
- * |                           plane_size[3]                           | 48
+ * |                          plane_stride[3]                          | 48
  * +----------------+----------------+----------------+----------------+
- * |                          plane_stride[0]                          | 52
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                          plane_stride[1]                          | 56
- * +----------------+----------------+----------------+----------------+
- * |                          plane_stride[2]                          | 60
- * +----------------+----------------+----------------+----------------+
- * |                          plane_stride[3]                          | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * num_planes - uint8_t, number of planes of the buffer.
  * size - uint32_t, overall size of the buffer including sizes of the
  *   individual planes and padding if applicable.
- * plane_offset - array of uint32_t, offset of the corresponding plane
- *   in octets from the buffer start.
  * plane_size - array of uint32_t, size in octets of the corresponding plane
  *   including padding.
  * plane_stride - array of uint32_t, size in octets occupied by the
  *   corresponding single image line including padding if applicable.
+ *
+ * Note! The sizes and strides in this response apply to all buffers created
+ * with XENCAMERA_OP_BUF_CREATE command, but individual buffers may have
+ * different plane offsets.
  */
 struct xencamera_buf_get_layout_resp {
     uint8_t num_planes;
     uint8_t reserved[3];
     uint32_t size;
-    uint32_t plane_offset[XENCAMERA_MAX_PLANE];
     uint32_t plane_size[XENCAMERA_MAX_PLANE];
     uint32_t plane_stride[XENCAMERA_MAX_PLANE];
 };

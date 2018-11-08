@@ -339,13 +339,9 @@ static int queue_setup(struct vb2_queue *vq,
 		       unsigned int sizes[], struct device *alloc_devs[])
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
-	struct v4l2_pix_format sp;
 	int min_bufs, max_bufs, ret;
 
 	printk("%s\n", __FUNCTION__);
-	ret = xen_buf_layout_to_format(v4l2_info->front_info, &sp);
-	if (ret < 0)
-		return ret;
 
 	min_bufs = vq->min_buffers_needed;
 	max_bufs = v4l2_info->front_info->cfg.max_buffers;
@@ -361,14 +357,11 @@ static int queue_setup(struct vb2_queue *vq,
 	*nbuffers = ret;
 
 	if (*nplanes)
-		return sizes[0] < sp.sizeimage ? -EINVAL : 0;
+		return sizes[0] < v4l2_info->v4l2_buffer_sz ? -EINVAL : 0;
 
 	*nplanes = 1;
 
-	sizes[0] = sp.sizeimage;
-
-	/* Remember the negotiated buffer size. */
-	v4l2_info->v4l2_buffer_sz = sp.sizeimage;
+	sizes[0] = v4l2_info->v4l2_buffer_sz;
 
 	return 0;
 }
@@ -713,7 +706,13 @@ static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 	if (ret < 0)
 		return ret;
 
-	return xen_buf_layout_to_format(v4l2_info->front_info, sp);
+	ret = xen_buf_layout_to_format(v4l2_info->front_info, sp);
+	if (ret < 0)
+		return ret;
+
+	/* Remember the negotiated buffer size. */
+	v4l2_info->v4l2_buffer_sz = sp->sizeimage;
+	return 0;
 }
 
 static int ioctl_g_fmt_vid_cap(struct file *file,

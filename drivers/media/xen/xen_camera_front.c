@@ -325,7 +325,7 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 	req->req.buf_create.gref_directory =
 		xen_camera_front_shbuf_get_dir_start(shbuf);
 	req->req.buf_create.index = index;
-	req->req.buf_create.data_offset = shbuf->data_offset;
+	req->req.buf_create.plane_offset[0] = shbuf->data_offset;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);

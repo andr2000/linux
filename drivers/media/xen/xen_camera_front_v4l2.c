@@ -547,9 +547,8 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	v4l2_info->sequence = 0;
 
-	/* Send request to the backend. */
-
-	if (ret)
+	ret = xen_camera_front_stream_start(v4l2_info->front_info);
+	if (ret < 0)
 		buf_list_return_queued(v4l2_info, VB2_BUF_STATE_QUEUED);
 	return ret;
 }
@@ -565,9 +564,8 @@ static void stop_streaming(struct vb2_queue *vq)
 	printk("%s\n", __FUNCTION__);
 	buf_list_return_queued(v4l2_info, VB2_BUF_STATE_ERROR);
 
-	if (likely(!v4l2_info->unplugged)) {
-		/* Send request to the backend. */
-	}
+	if (likely(!v4l2_info->unplugged))
+		xen_camera_front_stream_stop(v4l2_info->front_info);
 }
 
 /*

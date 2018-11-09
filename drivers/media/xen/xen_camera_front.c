@@ -437,6 +437,42 @@ int xen_camera_front_buf_dequeue(struct xen_camera_front_info *front_info,
 	return buf_queue_helper(front_info, index, XENCAMERA_OP_BUF_DEQUEUE);
 }
 
+static int buf_stream_helper(struct xen_camera_front_info *front_info, u8 op)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, op);
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
+int xen_camera_front_stream_start(struct xen_camera_front_info *front_info)
+{
+	return buf_stream_helper(front_info, XENCAMERA_OP_STREAM_START);
+}
+
+int xen_camera_front_stream_stop(struct xen_camera_front_info *front_info)
+{
+	return buf_stream_helper(front_info, XENCAMERA_OP_STREAM_STOP);
+}
+
 int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 				    struct xencamera_buf_get_layout_resp *resp)
 {

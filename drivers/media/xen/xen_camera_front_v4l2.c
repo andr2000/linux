@@ -32,15 +32,22 @@
 
 struct xen_camera_front_v4l2_info {
 	struct xen_camera_front_info *front_info;
+	/* This will be set if device has been unplugged. */
+	bool unplugged;
+
 	struct v4l2_device v4l2_dev;
 	struct video_device vdev;
 	struct v4l2_ctrl_handler ctrl_handler;
-	/* ioctl serialization mutex. */
-	struct mutex lock;
-
 	struct vb2_queue queue;
-	spinlock_t qlock;
-	struct list_head buf_list;
+
+	/* IOCTL serialization and the rest. */
+	struct mutex v4l2_lock;
+	/* Queue serialization. */
+	struct mutex vb_queue_lock;
+
+	/* Queued buffer list lock. */
+	struct mutex bufs_lock;
+	struct list_head bufs_list;
 	unsigned sequence;
 
 	/* Size of a camera buffer. */
@@ -254,61 +261,51 @@ static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
 static void buf_list_add(struct xen_camera_front_v4l2_info *v4l2_info,
 			 struct xen_camera_buffer *xen_buf)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	list_add(&xen_buf->list, &v4l2_info->buf_list);
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_add(&xen_buf->list, &v4l2_info->bufs_list);
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 static void buf_list_remove(struct xen_camera_front_v4l2_info *v4l2_info,
 			    struct xen_camera_buffer *xen_buf)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
+	mutex_lock(&v4l2_info->bufs_lock);
 	list_del(&xen_buf->list);
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 static void
 buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
 {
 	struct xen_camera_buffer *buf, *node;
-	unsigned long flags;
 
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
-		list_del(&buf->list);
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list)
 		xen_camera_front_destroy_shbuf(&buf->shbuf);
-	}
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 static void buf_list_set_queued(struct xen_camera_front_v4l2_info *v4l2_info,
-				struct xen_camera_buffer *xen_buf, bool state)
+				struct xen_camera_buffer *xen_buf)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	xen_buf->is_queued = state;
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	mutex_lock(&v4l2_info->bufs_lock);
+	xen_buf->is_queued = true;
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 				   enum vb2_buffer_state state)
 {
 	struct xen_camera_buffer *buf, *node;
-	unsigned long flags;
 
-	spin_lock_irqsave(&v4l2_info->qlock, flags);
-	list_for_each_entry_safe(buf, node, &v4l2_info->buf_list, list) {
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list) {
 		if (buf->is_queued) {
 			vb2_buffer_done(&buf->vb.vb2_buf, state);
 			buf->is_queued = false;
 		}
 	}
-	spin_unlock_irqrestore(&v4l2_info->qlock, flags);
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 /*
@@ -351,9 +348,16 @@ static int queue_setup(struct vb2_queue *vq,
 		*nbuffers = max_bufs;
 
 	/* Check if backend can handle that many buffers. */
-	ret = xen_camera_front_buf_request(v4l2_info->front_info, *nbuffers);
-	if (ret < 0)
-		return ret;
+	if (likely(!v4l2_info->unplugged)) {
+		ret = xen_camera_front_buf_request(v4l2_info->front_info,
+						   *nbuffers);
+		if (ret < 0)
+			return ret;
+		*nbuffers = ret;
+	} else {
+		ret = 0;
+	}
+
 	*nbuffers = ret;
 
 	if (*nplanes)
@@ -380,6 +384,9 @@ static int buffer_init(struct vb2_buffer *vb)
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	struct sg_table *sgt;
 	int ret;
+
+	if (unlikely(v4l2_info->unplugged))
+		return -ENODEV;
 
 	if (vb2_plane_size(vb, 0) < v4l2_info->v4l2_buffer_sz) {
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
@@ -414,12 +421,14 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 	int ret;
 
 	printk("%s\n", __FUNCTION__);
-	ret = xen_camera_front_buf_destroy(v4l2_info->front_info,
-					   &xen_buf->shbuf, vb->index);
-	if (ret < 0)
-		dev_err(&v4l2_info->front_info->xb_dev->dev,
-			"Failed to cleanup buffer with index %d: %d\n",
-			vb->index, ret);
+	if (likely(!v4l2_info->unplugged)) {
+		ret = xen_camera_front_buf_destroy(v4l2_info->front_info,
+						   &xen_buf->shbuf, vb->index);
+		if (ret < 0)
+			dev_err(&v4l2_info->front_info->xb_dev->dev,
+				"Failed to cleanup buffer with index %d: %d\n",
+				vb->index, ret);
+	}
 	buf_list_remove(v4l2_info, xen_buf);
 }
 
@@ -441,6 +450,9 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	int ret;
 
 	printk("%s\n", __FUNCTION__);
+	if (unlikely(v4l2_info->unplugged))
+		return -ENODEV;
+
 	if (vb2_plane_size(vb, 0) < size) {
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
 			"Buffer too small (%lu < %lu)\n",
@@ -483,6 +495,9 @@ static void buffer_finish(struct vb2_buffer *vb)
 		vb2_get_drv_priv(vb->vb2_queue);
 	int ret;
 
+	if (unlikely(v4l2_info->unplugged))
+		return;
+
 	ret = xen_camera_front_buf_dequeue(v4l2_info->front_info, vb->index);
 	if (ret < 0)
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
@@ -506,7 +521,12 @@ static void buffer_queue(struct vb2_buffer *vb)
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 
 	printk("%s\n", __FUNCTION__);
-	buf_list_set_queued(v4l2_info, xen_buf, true);
+	if (unlikely(v4l2_info->unplugged)) {
+		vb2_buffer_done(&xen_buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
+		return;
+	}
+
+	buf_list_set_queued(v4l2_info, xen_buf);
 }
 
 /*
@@ -522,7 +542,12 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	printk("%s\n", __FUNCTION__);
 
+	if (unlikely(v4l2_info->unplugged))
+		return -ENODEV;
+
 	v4l2_info->sequence = 0;
+
+	/* Send request to the backend. */
 
 	if (ret)
 		buf_list_return_queued(v4l2_info, VB2_BUF_STATE_QUEUED);
@@ -539,6 +564,10 @@ static void stop_streaming(struct vb2_queue *vq)
 
 	printk("%s\n", __FUNCTION__);
 	buf_list_return_queued(v4l2_info, VB2_BUF_STATE_ERROR);
+
+	if (likely(!v4l2_info->unplugged)) {
+		/* Send request to the backend. */
+	}
 }
 
 /*
@@ -881,10 +910,9 @@ static const struct v4l2_ctrl_ops ctrl_ops = {
 	.s_ctrl = s_ctrl,
 };
 
-static int init_controls(struct xen_camera_front_info *front_info)
+static int init_controls(struct xen_camera_front_cfg_card *cfg,
+			 struct xen_camera_front_v4l2_info *v4l2_info)
 {
-	struct xen_camera_front_cfg_card *cfg = &front_info->cfg;
-	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
 	struct v4l2_ctrl_handler *hdl = &v4l2_info->ctrl_handler;
 	int i, ret;
 
@@ -906,6 +934,19 @@ static int init_controls(struct xen_camera_front_info *front_info)
 	return 0;
 }
 
+static void xen_video_device_release(struct video_device *vdev)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_get_drvdata(vdev);
+
+	dev_err(&v4l2_info->front_info->xb_dev->dev,
+		"%s\n", __FUNCTION__);
+
+	v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
+	v4l2_info->v4l2_dev.ctrl_handler = NULL;
+	v4l2_device_unregister(&v4l2_info->v4l2_dev);
+	kfree(v4l2_info);
+}
+
 int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 {
 	struct device *dev = &front_info->xb_dev->dev;
@@ -914,30 +955,27 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	struct vb2_queue *q;
 	int ret;
 
-	v4l2_info = devm_kzalloc(dev, sizeof(*v4l2_info), GFP_KERNEL);
+	v4l2_info = kzalloc(sizeof(*v4l2_info), GFP_KERNEL);
 	if (!v4l2_info)
 		return -ENOMEM;
 
 	v4l2_info->front_info = front_info;
-	front_info->v4l2_info = v4l2_info;
 
-	strlcpy(v4l2_info->v4l2_dev.name, XENCAMERA_DRIVER_NAME,
-		sizeof(v4l2_info->v4l2_dev.name));
+	mutex_init(&v4l2_info->v4l2_lock);
+	mutex_init(&v4l2_info->vb_queue_lock);
 
-	INIT_LIST_HEAD(&v4l2_info->buf_list);
-	spin_lock_init(&v4l2_info->qlock);
+	INIT_LIST_HEAD(&v4l2_info->bufs_list);
+	mutex_init(&v4l2_info->bufs_lock);
 
 	ret = v4l2_device_register(dev, &v4l2_info->v4l2_dev);
 	if (ret < 0)
-		return ret;
-
-	mutex_init(&v4l2_info->lock);
+		goto fail_device_register;
 
 	/* Add the controls if any. */
 	if (front_info->cfg.num_controls) {
-		ret = init_controls(front_info);
+		ret = init_controls(&front_info->cfg, v4l2_info);
 		if (ret < 0)
-			goto fail_unregister_v4l2;
+			goto fail_init_controls;
 	}
 
 	/* Initialize the vb2 queue. */
@@ -957,55 +995,43 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	q->mem_ops = &vb2_dma_sg_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->min_buffers_needed = 2;
-	/*
-	 * The serialization lock for the streaming ioctls. This is the same
-	 * as the main serialization lock, but if some of the non-streaming
-	 * ioctls could take a long time to execute, then you might want to
-	 * have a different lock here to prevent VIDIOC_DQBUF from being
-	 * blocked while waiting for another action to finish. This is
-	 * generally not needed for PCI devices, but USB devices usually do
-	 * want a separate lock here.
-	 */
-	q->lock = &v4l2_info->lock;
+	/* Use dedicated queue lock. */
+	q->lock = &v4l2_info->vb_queue_lock;
 	ret = vb2_queue_init(q);
 	if (ret)
-		goto fail_unregister_ctrl;
+		goto fail_queue_init;
 
 	vdev = &v4l2_info->vdev;
 	strlcpy(vdev->name, KBUILD_MODNAME, sizeof(vdev->name));
-	/*
-	 * There is nothing to clean up, so release is set to an empty release
-	 * function. The release callback must be non-NULL.
-	 */
-	vdev->release = video_device_release_empty;
+	vdev->release = xen_video_device_release;
 	vdev->fops = &fops;
 	vdev->ioctl_ops = &ioctl_ops;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
-	/*
-	 * The main serialization lock. All ioctls are serialized by this
-	 * lock. Exception: if q->lock is set, then the streaming ioctls
-	 * are serialized by that separate lock.
-	 */
-	vdev->lock = &v4l2_info->lock;
+	/* The main serialization lock. */
+	vdev->lock = &v4l2_info->v4l2_lock;
 	vdev->queue = q;
 	vdev->v4l2_dev = &v4l2_info->v4l2_dev;
 	video_set_drvdata(vdev, v4l2_info);
 
 	ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);
 	if (ret < 0)
-		goto fail;
+		goto fail_register_video;
+
+	front_info->v4l2_info = v4l2_info;
 
 	dev_info(dev, "V4L2 " XENCAMERA_DRIVER_NAME " driver loaded\n");
 
 	return 0;
 
-fail:
-	video_unregister_device(&front_info->v4l2_info->vdev);
-fail_unregister_ctrl:
+fail_register_video:
+	vb2_queue_release(q);
+fail_queue_init:
 	v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
 	v4l2_info->v4l2_dev.ctrl_handler = NULL;
-fail_unregister_v4l2:
+fail_init_controls:
 	v4l2_device_unregister(&v4l2_info->v4l2_dev);
+fail_device_register:
+	kfree(v4l2_info);
 	return ret;
 }
 
@@ -1016,16 +1042,22 @@ void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 	if (!v4l2_info)
 		return;
 
-	/* TODO: queue might not be initialized because of init errors. */
-	if (vb2_is_busy(&v4l2_info->queue))
-		dev_err(&v4l2_info->front_info->xb_dev->dev,
-			"Unplugging while streaming!!!!\n");
+	mutex_lock(&v4l2_info->vb_queue_lock);
+	mutex_lock(&v4l2_info->v4l2_lock);
+
+	if (v4l2_info->unplugged) {
+		mutex_unlock(&v4l2_info->v4l2_lock);
+		mutex_unlock(&v4l2_info->vb_queue_lock);
+	}
+	v4l2_info->unplugged = true;
+	v4l2_device_disconnect(&v4l2_info->v4l2_dev);
 
 	buf_list_destroy_all_shbuf(v4l2_info);
-
 	video_unregister_device(&v4l2_info->vdev);
-	if (v4l2_info->v4l2_dev.ctrl_handler)
-		v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
-	v4l2_device_unregister(&v4l2_info->v4l2_dev);
+
+	mutex_unlock(&v4l2_info->v4l2_lock);
+	mutex_unlock(&v4l2_info->vb_queue_lock);
+
+	v4l2_device_put(&v4l2_info->v4l2_dev);
 }
 

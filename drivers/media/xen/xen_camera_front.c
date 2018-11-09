@@ -468,8 +468,18 @@ int xen_camera_front_get_buf_layout(struct xen_camera_front_info *front_info,
 
 static void xen_camera_drv_fini(struct xen_camera_front_info *front_info)
 {
+	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+
+	if (!v4l2_info)
+		return;
+
 	xen_camera_front_v4l2_fini(front_info);
+
+	front_info->v4l2_info = NULL;
+
 	xen_camera_front_evtchnl_free_all(front_info);
+
+	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
 }
 
 static int cameraback_initwait(struct xen_camera_front_info *front_info)
@@ -507,8 +517,13 @@ static int cameraback_connect(struct xen_camera_front_info *front_info)
 
 static void cameraback_disconnect(struct xen_camera_front_info *front_info)
 {
+	if (!front_info->v4l2_info)
+		return;
+
+	/* Tell the backend to wait until we release the V4L2 driver. */
+	xenbus_switch_state(front_info->xb_dev, XenbusStateReconfiguring);
+
 	xen_camera_drv_fini(front_info);
-	xenbus_switch_state(front_info->xb_dev, XenbusStateInitialising);
 }
 
 static void cameraback_changed(struct xenbus_device *xb_dev,

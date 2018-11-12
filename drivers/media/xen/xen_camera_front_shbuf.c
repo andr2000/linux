@@ -362,7 +362,7 @@ static int alloc_storage(struct xen_camera_front_shbuf *buf)
 	/* Get pages of the buffer. */
 	index = 0;
 	for_each_sg_page(buf->sgt->sgl, &sg_iter, buf->sgt->nents, 0)
-		buf->pages[index] = sg_page_iter_page(&sg_iter);
+		buf->pages[index++] = sg_page_iter_page(&sg_iter);
 
 	/* Remember the offset of the data of the buffer. */
 	buf->data_offset = buf->sgt->sgl->offset;

@@ -21,4 +21,7 @@ int xen_camera_front_v4l2_to_v4l2_cid(int xen_type);
 
 int xen_camera_front_v4l2_to_xen_type(int v4l2_cid);
 
+void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
+				    struct xencamera_frame_avail_evt *evt);
+
 #endif /*__XEN_CAMERA_FRONT_V4L2_H */

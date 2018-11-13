@@ -15,6 +15,7 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_evtchnl.h"
+#include "xen_camera_front_v4l2.h"
 
 static irqreturn_t evtchnl_interrupt_req(int irq, void *dev_id)
 {
@@ -134,7 +135,8 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 
 		switch (event->type) {
 		case XENCAMERA_EVT_FRAME_AVAIL:
-			/* Do nothing at the moment. */
+			xen_camera_front_v4l2_on_frame(channel->front_info,
+						       &event->evt.frame_avail);
 			break;
 		}
 	}

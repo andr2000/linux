@@ -48,7 +48,6 @@ struct xen_camera_front_v4l2_info {
 	/* Queued buffer list lock. */
 	struct mutex bufs_lock;
 	struct list_head bufs_list;
-	unsigned sequence;
 
 	/* Size of a camera buffer. */
 	size_t v4l2_buffer_sz;
@@ -274,6 +273,20 @@ static void buf_list_remove(struct xen_camera_front_v4l2_info *v4l2_info,
 	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
+static struct xen_camera_buffer *
+buf_list_get(struct xen_camera_front_v4l2_info *v4l2_info, int index)
+{
+	struct xen_camera_buffer *buf = NULL, *node;
+
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list) {
+		if (buf->vb.vb2_buf.index == index)
+			break;
+	}
+	mutex_unlock(&v4l2_info->bufs_lock);
+	return buf;
+}
+
 static void
 buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
 {
@@ -286,10 +299,11 @@ buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
 }
 
 static void buf_list_set_queued(struct xen_camera_front_v4l2_info *v4l2_info,
-				struct xen_camera_buffer *xen_buf)
+				struct xen_camera_buffer *xen_buf,
+				bool state)
 {
 	mutex_lock(&v4l2_info->bufs_lock);
-	xen_buf->is_queued = true;
+	xen_buf->is_queued = state;
 	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
@@ -306,6 +320,27 @@ static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 		}
 	}
 	mutex_unlock(&v4l2_info->bufs_lock);
+}
+
+void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
+				    struct xencamera_frame_avail_evt *evt)
+{
+	struct xen_camera_buffer *xen_buf;
+
+	printk("Frame %llu\n", evt->seq_num);
+
+	/* TODO: delete from queued bufs list. */
+	xen_buf = buf_list_get(front_info->v4l2_info, evt->index);
+	if (unlikely(!xen_buf)) {
+		return;
+	}
+
+	buf_list_set_queued(front_info->v4l2_info, xen_buf, false);
+
+	xen_buf->vb.vb2_buf.timestamp = ktime_get_ns();
+	xen_buf->vb.sequence = evt->seq_num;
+
+	vb2_buffer_done(&xen_buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
 }
 
 /*
@@ -526,7 +561,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 		return;
 	}
 
-	buf_list_set_queued(v4l2_info, xen_buf);
+	buf_list_set_queued(v4l2_info, xen_buf, true);
 }
 
 /*
@@ -544,8 +579,6 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	if (unlikely(v4l2_info->unplugged))
 		return -ENODEV;
-
-	v4l2_info->sequence = 0;
 
 	ret = xen_camera_front_stream_start(v4l2_info->front_info);
 	if (ret < 0)

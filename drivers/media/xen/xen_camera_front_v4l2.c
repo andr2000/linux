@@ -273,27 +273,13 @@ static void buf_list_remove(struct xen_camera_front_v4l2_info *v4l2_info,
 	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
-static struct xen_camera_buffer *
-buf_list_get(struct xen_camera_front_v4l2_info *v4l2_info, int index)
-{
-	struct xen_camera_buffer *buf = NULL, *node;
-
-	mutex_lock(&v4l2_info->bufs_lock);
-	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list) {
-		if (buf->vb.vb2_buf.index == index)
-			break;
-	}
-	mutex_unlock(&v4l2_info->bufs_lock);
-	return buf;
-}
-
 static void
 buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
 {
-	struct xen_camera_buffer *buf, *node;
+	struct xen_camera_buffer *buf;
 
 	mutex_lock(&v4l2_info->bufs_lock);
-	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list)
+	list_for_each_entry(buf, &v4l2_info->bufs_list, list)
 		xen_camera_front_destroy_shbuf(&buf->shbuf);
 	mutex_unlock(&v4l2_info->bufs_lock);
 }
@@ -310,10 +296,10 @@ static void buf_list_set_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 				   enum vb2_buffer_state state)
 {
-	struct xen_camera_buffer *buf, *node;
+	struct xen_camera_buffer *buf;
 
 	mutex_lock(&v4l2_info->bufs_lock);
-	list_for_each_entry_safe(buf, node, &v4l2_info->bufs_list, list) {
+	list_for_each_entry(buf, &v4l2_info->bufs_list, list) {
 		if (buf->is_queued) {
 			vb2_buffer_done(&buf->vb.vb2_buf, state);
 			buf->is_queued = false;
@@ -325,22 +311,31 @@ static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
 				    struct xencamera_frame_avail_evt *evt)
 {
-	struct xen_camera_buffer *xen_buf;
+	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+	struct xen_camera_buffer *buf, *xen_buf = NULL;
 
 	printk("Frame %llu\n", evt->seq_num);
 
-	/* TODO: delete from queued bufs list. */
-	xen_buf = buf_list_get(front_info->v4l2_info, evt->index);
-	if (unlikely(!xen_buf)) {
-		return;
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_for_each_entry(buf, &v4l2_info->bufs_list, list) {
+		if (buf->vb.vb2_buf.index == evt->index) {
+			xen_buf = buf;
+			break;
+		}
 	}
 
-	buf_list_set_queued(front_info->v4l2_info, xen_buf, false);
+	if (unlikely(!xen_buf || !xen_buf->is_queued)) {
+		dev_err(&front_info->xb_dev->dev,
+			"Buffer with index %d was not queued\n", evt->index);
+		goto out;
+	}
 
 	xen_buf->vb.vb2_buf.timestamp = ktime_get_ns();
 	xen_buf->vb.sequence = evt->seq_num;
-
 	vb2_buffer_done(&xen_buf->vb.vb2_buf, VB2_BUF_STATE_DONE);
+
+out:
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
 /*
@@ -481,6 +476,7 @@ static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		vb2_get_drv_priv(vb->vb2_queue);
+	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	size_t size = v4l2_info->v4l2_buffer_sz;
 	int ret;
 
@@ -503,11 +499,15 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	 * any error code: queue the buffer to the backend now.
 	 */
 	ret = xen_camera_front_buf_queue(v4l2_info->front_info, vb->index);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(&v4l2_info->front_info->xb_dev->dev,
 			"Failed to queue buffer with index %d: %d\n",
 			vb->index, ret);
-	return ret;
+		return ret;
+	}
+
+	buf_list_set_queued(v4l2_info, xen_buf, true);
+	return 0;
 }
 
 /*
@@ -530,6 +530,7 @@ static void buffer_finish(struct vb2_buffer *vb)
 		vb2_get_drv_priv(vb->vb2_queue);
 	int ret;
 
+	printk("%s\n", __FUNCTION__);
 	if (unlikely(v4l2_info->unplugged))
 		return;
 
@@ -561,7 +562,10 @@ static void buffer_queue(struct vb2_buffer *vb)
 		return;
 	}
 
-	buf_list_set_queued(v4l2_info, xen_buf, true);
+	mutex_lock(&v4l2_info->bufs_lock);
+	xen_buf->is_queued = true;
+	mutex_unlock(&v4l2_info->bufs_lock);
+
 }
 
 /*

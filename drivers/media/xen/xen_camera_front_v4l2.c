@@ -38,6 +38,7 @@ struct xen_camera_front_v4l2_info {
 	struct v4l2_device v4l2_dev;
 	struct video_device vdev;
 	struct v4l2_ctrl_handler ctrl_handler;
+	struct v4l2_ctrl *ctrls[XENCAMERA_MAX_CTRL];
 	struct vb2_queue queue;
 
 	/* IOCTL serialization and the rest. */
@@ -335,6 +336,26 @@ void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
 
 out:
 	mutex_unlock(&v4l2_info->bufs_lock);
+}
+
+void xen_camera_front_v4l2_on_ctrl(struct xen_camera_front_info *front_info,
+				   struct xencamera_ctrl_value *evt)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+	struct xen_camera_front_cfg_card *cfg = &front_info->cfg;
+	int v4l2_cid, i;
+
+	v4l2_cid = xen_camera_front_v4l2_to_v4l2_cid(evt->type);
+	if (v4l2_cid < 0) {
+		dev_err(&front_info->xb_dev->dev,
+			"Drop event with wrong Xen control type: %d\n",
+			evt->type);
+		return;
+	}
+
+	for (i = 0; i < cfg->num_controls; i++)
+		if (v4l2_info->ctrls[i]->id == v4l2_cid)
+			v4l2_ctrl_s_ctrl(v4l2_info->ctrls[i], evt->value);
 }
 
 /*
@@ -1017,6 +1038,7 @@ static int s_ctrl(struct v4l2_ctrl *ctrl)
 	struct xen_camera_front_v4l2_info *v4l2_info =
 		container_of(ctrl->handler, struct xen_camera_front_v4l2_info,
 			     ctrl_handler);
+
 	switch (ctrl->id) {
 	case V4L2_CID_BRIGHTNESS:
 		/* fall-through */
@@ -1048,12 +1070,13 @@ static int init_controls(struct xen_camera_front_cfg_card *cfg,
 	v4l2_ctrl_handler_init(hdl, cfg->num_controls);
 
 	for (i = 0; i < cfg->num_controls; i++)
-		v4l2_ctrl_new_std(hdl, &ctrl_ops,
-				  cfg->ctrl[i].v4l2_cid,
-				  cfg->ctrl[i].minimum,
-				  cfg->ctrl[i].maximum,
-				  cfg->ctrl[i].step,
-				  cfg->ctrl[i].default_value);
+		v4l2_info->ctrls[i] =
+			v4l2_ctrl_new_std(hdl, &ctrl_ops,
+					  cfg->ctrl[i].v4l2_cid,
+					  cfg->ctrl[i].minimum,
+					  cfg->ctrl[i].maximum,
+					  cfg->ctrl[i].step,
+					  cfg->ctrl[i].default_value);
 	if (hdl->error) {
 		ret = hdl->error;
 		v4l2_ctrl_handler_free(&v4l2_info->ctrl_handler);

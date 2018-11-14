@@ -634,7 +634,7 @@ static int ioctl_querycap(struct file *file, void *fh,
 }
 
 static struct xen_camera_front_cfg_format *
-get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
+enum_get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
 {
 	int i;
 
@@ -648,8 +648,8 @@ get_format(struct xen_camera_front_cfg_card *cfg, u32 pixel_format)
 }
 
 static struct xen_camera_front_cfg_resolution *
-get_resolution(struct xen_camera_front_cfg_format *format,
-	       int width, int height)
+enum_get_resolution(struct xen_camera_front_cfg_format *format,
+		    int width, int height)
 {
 	int i;
 
@@ -818,7 +818,7 @@ int ioctl_enum_framesizes(struct file *file, void *fh,
 	struct xen_camera_front_cfg_card *cfg = &v4l2_info->front_info->cfg;
 	struct xen_camera_front_cfg_format *format;
 
-	format = get_format(cfg, fsize->pixel_format);
+	format = enum_get_format(cfg, fsize->pixel_format);
 	if (!format || (fsize->index >= format->num_resolutions))
 		return -EINVAL;
 
@@ -836,11 +836,11 @@ int ioctl_enum_frameintervals(struct file *file, void *fh,
 	struct xen_camera_front_cfg_format *format;
 	struct xen_camera_front_cfg_resolution *resolution;
 
-	format = get_format(cfg, fival->pixel_format);
+	format = enum_get_format(cfg, fival->pixel_format);
 	if (!format)
 		return -EINVAL;
 
-	resolution = get_resolution(format, fival->width, fival->height);
+	resolution = enum_get_resolution(format, fival->width, fival->height);
 	if (!resolution || (fival->index >= resolution->num_frame_rates))
 		return -EINVAL;
 

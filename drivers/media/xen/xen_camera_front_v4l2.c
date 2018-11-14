@@ -742,12 +742,32 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 	return 0;
 }
 
-static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
-			       struct v4l2_format *f)
+static int set_get_fmt_tail(struct xen_camera_front_v4l2_info *v4l2_info,
+			    struct xencamera_config *cfg,
+			    struct v4l2_format *f,
+			    bool with_layout)
 {
-	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xencamera_config cfg;
 	struct v4l2_pix_format *sp = &f->fmt.pix;
+	int ret;
+
+	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, cfg, f);
+	if (ret < 0)
+		return ret;
+
+	if (with_layout) {
+		ret = xen_buf_layout_to_format(v4l2_info->front_info, sp);
+		if (ret < 0)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int set_format(struct xen_camera_front_v4l2_info *v4l2_info,
+		      struct xencamera_config *cfg,
+		      struct v4l2_format *f,
+		      bool with_layout)
+{
 	int ret;
 
 	/*
@@ -757,26 +777,47 @@ static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 	if (vb2_is_busy(&v4l2_info->queue))
 		return -EBUSY;
 
-	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, &cfg);
+	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, cfg);
 	if (ret < 0)
 		return ret;
 
 	/* Ask the backend to validate and set the configuration. */
-	ret = xen_camera_front_set_config(v4l2_info->front_info, &cfg, &cfg);
+	ret = xen_camera_front_set_config(v4l2_info->front_info, cfg, cfg);
 	if (ret < 0)
 		return ret;
 
-	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, &cfg, f);
-	if (ret < 0)
-		return ret;
-
-	ret = xen_buf_layout_to_format(v4l2_info->front_info, sp);
+	ret = set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
 	if (ret < 0)
 		return ret;
 
 	/* Remember the negotiated buffer size. */
-	v4l2_info->v4l2_buffer_sz = sp->sizeimage;
+	if (with_layout)
+		v4l2_info->v4l2_buffer_sz = f->fmt.pix.sizeimage;
+
 	return 0;
+}
+
+static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
+			       struct v4l2_format *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xencamera_config cfg;
+
+	return set_format(v4l2_info, &cfg, f, true);
+}
+
+static int get_format(struct xen_camera_front_v4l2_info *v4l2_info,
+			   struct xencamera_config *cfg,
+			   struct v4l2_format *f,
+			   bool with_layout)
+{
+	int ret;
+
+	ret = xen_camera_front_get_config(v4l2_info->front_info, cfg);
+	if (ret < 0)
+		return ret;
+
+	return set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
 }
 
 static int ioctl_g_fmt_vid_cap(struct file *file,
@@ -784,18 +825,8 @@ static int ioctl_g_fmt_vid_cap(struct file *file,
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
 	struct xencamera_config cfg;
-	struct v4l2_pix_format *sp = &f->fmt.pix;
-	int ret;
 
-	ret = xen_camera_front_get_config(v4l2_info->front_info, &cfg);
-	if (ret < 0)
-		return ret;
-
-	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, &cfg, f);
-	if (ret < 0)
-		return ret;
-
-	return xen_buf_layout_to_format(v4l2_info->front_info, sp);
+	return get_format(v4l2_info, &cfg, f, true);
 }
 
 static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
@@ -845,9 +876,10 @@ int ioctl_enum_frameintervals(struct file *file, void *fh,
 		return -EINVAL;
 
 	fival->type = V4L2_FRMIVAL_TYPE_DISCRETE;
-	fival->discrete.numerator =
-		resolution->frame_rate[fival->index].numerator;
+	/* Interval is inverse to frame rate. */
 	fival->discrete.denominator =
+		resolution->frame_rate[fival->index].numerator;
+	fival->discrete.numerator =
 		resolution->frame_rate[fival->index].denominator;
 	return 0;
 }
@@ -874,6 +906,65 @@ static int ioctl_s_input(struct file *file, void *fh, unsigned int i)
 	return (i > 0) ? -EINVAL : 0;
 }
 
+static void set_get_param_tail(struct xencamera_config *cfg,
+			       struct v4l2_streamparm *parm)
+{
+	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
+	/* Interval is inverse to frame rate. */
+	parm->parm.capture.timeperframe.denominator = cfg->frame_rate_numer;
+	parm->parm.capture.timeperframe.numerator = cfg->frame_rate_denom;
+	parm->parm.capture.readbuffers = 0;
+}
+
+static int ioctl_g_parm(struct file *file, void *priv,
+			struct v4l2_streamparm *parm)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xencamera_config cfg;
+	struct v4l2_format f;
+	int ret;
+
+	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	ret = get_format(v4l2_info, &cfg, &f, false);
+	if (ret < 0)
+		return ret;
+
+	set_get_param_tail(&cfg, parm);
+	return 0;
+}
+
+static int ioctl_s_parm(struct file *file, void *priv,
+			struct v4l2_streamparm *parm)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+	struct xencamera_config cfg;
+	struct v4l2_format f;
+	int ret;
+
+	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	if (vb2_is_busy(&v4l2_info->queue))
+		return -EBUSY;
+
+	ret = get_format(v4l2_info, &cfg, &f, false);
+	if (ret < 0)
+		return ret;
+
+	/* Interval is inverse to frame rate. */
+	cfg.frame_rate_denom = parm->parm.capture.timeperframe.numerator;
+	cfg.frame_rate_numer = parm->parm.capture.timeperframe.denominator;
+
+	ret = set_format(v4l2_info, &cfg, &f, false);
+	if (ret < 0)
+		return ret;
+
+	set_get_param_tail(&cfg, parm);
+	return 0;
+}
+
 static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_querycap = ioctl_querycap,
 	/*
@@ -893,6 +984,9 @@ static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_enum_input = ioctl_enum_input,
 	.vidioc_g_input = ioctl_g_input,
 	.vidioc_s_input = ioctl_s_input,
+
+	.vidioc_g_parm = ioctl_g_parm,
+	.vidioc_s_parm = ioctl_s_parm,
 
 	.vidioc_reqbufs = vb2_ioctl_reqbufs,
 	.vidioc_create_bufs = vb2_ioctl_create_bufs,

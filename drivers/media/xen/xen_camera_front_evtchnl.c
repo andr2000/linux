@@ -107,6 +107,7 @@ again:
 static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 {
 	struct xen_camera_front_evtchnl *channel = dev_id;
+	struct xen_camera_front_info *front_info = channel->front_info;
 	struct xencamera_event_page *page = channel->u.evt.page;
 	u32 cons, prod;
 
@@ -137,6 +138,17 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 		case XENCAMERA_EVT_FRAME_AVAIL:
 			xen_camera_front_v4l2_on_frame(channel->front_info,
 						       &event->evt.frame_avail);
+			break;
+
+		case XENCAMERA_EVT_CTRL_CHANGE:
+			xen_camera_front_v4l2_on_ctrl(channel->front_info,
+						      &event->evt.ctrl_value);
+			break;
+
+		default:
+			dev_err(&front_info->xb_dev->dev,
+				"Event %d is not supported\n",
+				event->type);
 			break;
 		}
 	}

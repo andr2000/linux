@@ -774,6 +774,20 @@ static int set_get_fmt_tail(struct xen_camera_front_v4l2_info *v4l2_info,
 	return 0;
 }
 
+static int get_format(struct xen_camera_front_v4l2_info *v4l2_info,
+			   struct xencamera_config *cfg,
+			   struct v4l2_format *f,
+			   bool with_layout)
+{
+	int ret;
+
+	ret = xen_camera_front_get_config(v4l2_info->front_info, cfg);
+	if (ret < 0)
+		return ret;
+
+	return set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
+}
+
 static int set_format(struct xen_camera_front_v4l2_info *v4l2_info,
 		      struct xencamera_config *cfg,
 		      struct v4l2_format *f,
@@ -789,13 +803,29 @@ static int set_format(struct xen_camera_front_v4l2_info *v4l2_info,
 		return -EBUSY;
 
 	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, cfg);
+	/*
+	 * If the requested format is obviously wrong, then return
+	 * the current format as seen by the backend.
+	 */
 	if (ret < 0)
-		return ret;
+		return get_format(v4l2_info, cfg, f, with_layout);
 
 	/* Ask the backend to validate and set the configuration. */
 	ret = xen_camera_front_set_config(v4l2_info->front_info, cfg, cfg);
-	if (ret < 0)
-		return ret;
+
+	/*
+	 * If we fail because of backend communication error, then
+	 * return this error as is. If the format is not accepted by the
+	 * backend then comply to V4L2 spec, which says we shouldn't
+	 * return an error here, but instead provide the user-space with
+	 * what we think is ok.
+	 */
+	if (ret < 0) {
+		if (ret == -EIO || ret == -ETIMEDOUT)
+			return ret;
+
+		return get_format(v4l2_info, cfg, f, with_layout);
+	}
 
 	ret = set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
 	if (ret < 0)
@@ -815,20 +845,6 @@ static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 	struct xencamera_config cfg;
 
 	return set_format(v4l2_info, &cfg, f, true);
-}
-
-static int get_format(struct xen_camera_front_v4l2_info *v4l2_info,
-			   struct xencamera_config *cfg,
-			   struct v4l2_format *f,
-			   bool with_layout)
-{
-	int ret;
-
-	ret = xen_camera_front_get_config(v4l2_info->front_info, cfg);
-	if (ret < 0)
-		return ret;
-
-	return set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
 }
 
 static int ioctl_g_fmt_vid_cap(struct file *file,

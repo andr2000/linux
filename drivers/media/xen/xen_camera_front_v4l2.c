@@ -306,8 +306,6 @@ void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
 	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
 	struct xen_camera_buffer *buf, *xen_buf = NULL;
 
-	printk("Frame %llu\n", evt->seq_num);
-
 	mutex_lock(&v4l2_info->bufs_lock);
 	list_for_each_entry(buf, &v4l2_info->bufs_list, list) {
 		if (buf->vb.vb2_buf.index == evt->index) {
@@ -387,8 +385,6 @@ static int queue_setup(struct vb2_queue *vq,
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 	int min_bufs, max_bufs, ret;
-
-	printk("%s\n", __FUNCTION__);
 
 	min_bufs = vq->min_buffers_needed;
 	max_bufs = v4l2_info->front_info->cfg.max_buffers;
@@ -470,7 +466,6 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 	int ret;
 
-	printk("%s index %d\n", __FUNCTION__, vb->index);
 	if (likely(!v4l2_info->unplugged)) {
 		ret = xen_camera_front_buf_destroy(v4l2_info->front_info,
 						   &xen_buf->shbuf, vb->index);
@@ -500,7 +495,6 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	size_t size = v4l2_info->v4l2_buffer_sz;
 	int ret;
 
-	printk("%s\n", __FUNCTION__);
 	if (unlikely(v4l2_info->unplugged))
 		return -ENODEV;
 
@@ -552,7 +546,6 @@ static void buffer_finish(struct vb2_buffer *vb)
 		vb2_get_drv_priv(vb->vb2_queue);
 	int ret;
 
-	printk("%s\n", __FUNCTION__);
 	if (unlikely(v4l2_info->unplugged))
 		return;
 
@@ -578,7 +571,6 @@ static void buffer_queue(struct vb2_buffer *vb)
 		vb2_get_drv_priv(vb->vb2_queue);
 	struct xen_camera_buffer *xen_buf = to_xen_camera_buffer(vb);
 
-	printk("%s\n", __FUNCTION__);
 	if (unlikely(v4l2_info->unplugged)) {
 		vb2_buffer_done(&xen_buf->vb.vb2_buf, VB2_BUF_STATE_ERROR);
 		return;
@@ -600,7 +592,6 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 	int ret;
 
-	printk("%s\n", __FUNCTION__);
 
 	if (unlikely(v4l2_info->unplugged))
 		return -ENODEV;
@@ -619,7 +610,6 @@ static void stop_streaming(struct vb2_queue *vq)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 
-	printk("%s\n", __FUNCTION__);
 	buf_list_return_queued(v4l2_info, VB2_BUF_STATE_ERROR);
 
 	if (likely(!v4l2_info->unplugged))

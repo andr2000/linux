@@ -15,6 +15,9 @@
 #include <media/v4l2-device.h>
 #include <media/videobuf2-v4l2.h>
 
+#include <xen/grant_table.h>
+#include <xen/xen-front-pgdir-shbuf.h>
+
 #include <xen/interface/io/cameraif.h>
 
 #include "xen_camera_front_cfg.h"
@@ -32,7 +35,14 @@ struct xen_camera_front_info {
 	struct xen_camera_front_cfg_card cfg;
 };
 
-struct xen_camera_front_shbuf;
+struct xen_camera_front_shbuf {
+	struct xen_front_pgdir_shbuf pgdir;
+
+	unsigned int data_offset;
+
+	struct sg_table *sgt;
+	struct page **pages;
+};
 
 int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
 				struct xencamera_config *cfg,

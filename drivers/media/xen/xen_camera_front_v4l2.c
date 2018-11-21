@@ -28,7 +28,6 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_v4l2.h"
-#include "xen_camera_front_shbuf.h"
 
 struct xen_camera_front_v4l2_info {
 	struct xen_camera_front_info *front_info;

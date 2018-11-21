@@ -18,13 +18,15 @@
 
 #include "xen_camera_front.h"
 #include "xen_camera_front_evtchnl.h"
-#include "xen_camera_front_shbuf.h"
 #include "xen_camera_front_v4l2.h"
 
 void xen_camera_front_destroy_shbuf(struct xen_camera_front_shbuf *shbuf)
 {
-	xen_camera_front_shbuf_unmap(shbuf);
-	xen_camera_front_shbuf_free(shbuf);
+	xen_front_pgdir_shbuf_unmap(&shbuf->pgdir);
+	xen_front_pgdir_shbuf_free(&shbuf->pgdir);
+
+	kfree(shbuf->pages);
+	shbuf->pages = NULL;
 }
 
 static struct xencamera_req *
@@ -294,36 +296,70 @@ int xen_camera_front_buf_request(struct xen_camera_front_info *front_info,
 	return num_bufs;
 }
 
+static int shbuf_setup_pages(struct xen_camera_front_shbuf *shbuf)
+{
+	struct sg_page_iter sg_iter;
+	int i, num_pages;
+
+	num_pages = 0;
+	for_each_sg_page(shbuf->sgt->sgl, &sg_iter, shbuf->sgt->nents, 0)
+		num_pages++;
+	if (!num_pages)
+		return -EINVAL;
+
+	shbuf->pages = kcalloc(num_pages, sizeof(struct page *),
+			       GFP_KERNEL);
+	if (!shbuf->pages)
+		return -ENOMEM;
+
+	i = 0;
+	for_each_sg_page(shbuf->sgt->sgl, &sg_iter, shbuf->sgt->nents, 0)
+		shbuf->pages[i++] = sg_page_iter_page(&sg_iter);
+
+	return num_pages;
+}
+
 int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 				struct xen_camera_front_shbuf *shbuf,
 				u8 index, struct sg_table *sgt)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
-	struct xen_camera_front_shbuf_cfg buf_cfg;
+	struct xen_front_pgdir_shbuf_cfg buf_cfg;
 	unsigned long flags;
-	int ret;
+	int ret, num_pages;
+
+	memset(shbuf, 0, sizeof(*shbuf));
 
 	evtchnl = &front_info->evt_pair.req;
 	if (unlikely(!evtchnl))
 		return -EIO;
 
+	shbuf->sgt = sgt;
+	num_pages = shbuf_setup_pages(shbuf);
+	if (num_pages < 0)
+		return num_pages;
+
+	/* Remember the offset to the data of this buffer. */
+	shbuf->data_offset = sgt->sgl->offset;
+
 	memset(&buf_cfg, 0, sizeof(buf_cfg));
 	buf_cfg.xb_dev = front_info->xb_dev;
-	buf_cfg.buf = shbuf;
-	buf_cfg.sgt = sgt;
+	buf_cfg.pgdir = &shbuf->pgdir;
+	buf_cfg.num_pages = num_pages;
+	buf_cfg.pages = shbuf->pages;
 	buf_cfg.be_alloc = front_info->cfg.be_alloc;
 
-	ret = xen_camera_front_shbuf_alloc(&buf_cfg);
+	ret = xen_front_pgdir_shbuf_alloc(&buf_cfg);
 	if (ret < 0)
-		return ret;
+		goto fail_pgdir_alloc;
 
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
 	req = be_prepare_req(evtchnl, XENCAMERA_OP_BUF_CREATE);
 	req->req.buf_create.gref_directory =
-		xen_camera_front_shbuf_get_dir_start(shbuf);
+		xen_front_pgdir_shbuf_get_dir_start(&shbuf->pgdir);
 	req->req.buf_create.index = index;
 	req->req.buf_create.plane_offset[0] = shbuf->data_offset;
 
@@ -337,7 +373,7 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 	if (ret < 0)
 		goto fail;
 
-	ret = xen_camera_front_shbuf_map(shbuf);
+	ret = xen_front_pgdir_shbuf_map(&shbuf->pgdir);
 	if (ret < 0)
 		goto fail;
 
@@ -346,6 +382,7 @@ int xen_camera_front_buf_create(struct xen_camera_front_info *front_info,
 
 fail:
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
+fail_pgdir_alloc:
 	xen_camera_front_destroy_shbuf(shbuf);
 	return ret;
 }

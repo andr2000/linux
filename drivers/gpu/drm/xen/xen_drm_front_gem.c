@@ -33,8 +33,11 @@ struct xen_gem_object {
 	/* set for buffers allocated by the backend */
 	bool be_alloc;
 
-	/* this is for imported PRIME buffer */
-	struct sg_table *sgt_imported;
+	/*
+	 * this is for imported PRIME buffer or the one allocated via
+	 * drm_gem_get_pages.
+	 */
+	struct sg_table *sgt;
 };
 
 static inline struct xen_gem_object *
@@ -77,10 +80,21 @@ static struct xen_gem_object *gem_create_obj(struct drm_device *dev,
 	return xen_obj;
 }
 
+struct sg_table *xen_drm_front_gem_get_sg_table(struct drm_gem_object *gem_obj)
+{
+	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
+
+	if (!xen_obj->pages)
+		return ERR_PTR(-ENOMEM);
+
+	return drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
+}
+
 static struct xen_gem_object *gem_create(struct drm_device *dev, size_t size)
 {
 	struct xen_drm_front_drm_info *drm_info = dev->dev_private;
 	struct xen_gem_object *xen_obj;
+	struct address_space *mapping;
 	int ret;
 
 	size = round_up(size, PAGE_SIZE);
@@ -113,10 +127,14 @@ static struct xen_gem_object *gem_create(struct drm_device *dev, size_t size)
 		xen_obj->be_alloc = true;
 		return xen_obj;
 	}
+
 	/*
 	 * need to allocate backing pages now, so we can share those
 	 * with the backend
 	 */
+	mapping = xen_obj->base.filp->f_mapping;
+	mapping_set_gfp_mask(mapping, GFP_USER | __GFP_DMA32);
+
 	xen_obj->num_pages = DIV_ROUND_UP(size, PAGE_SIZE);
 	xen_obj->pages = drm_gem_get_pages(&xen_obj->base);
 	if (IS_ERR_OR_NULL(xen_obj->pages)) {
@@ -125,8 +143,27 @@ static struct xen_gem_object *gem_create(struct drm_device *dev, size_t size)
 		goto fail;
 	}
 
+	xen_obj->sgt = xen_drm_front_gem_get_sg_table(&xen_obj->base);
+	if (IS_ERR_OR_NULL(xen_obj->sgt)){
+		ret = PTR_ERR(xen_obj->sgt);
+		xen_obj->sgt = NULL;
+		goto fail_put_pages;
+	}
+
+	if (!dma_map_sg(dev->dev, xen_obj->sgt->sgl, xen_obj->sgt->nents,
+			DMA_BIDIRECTIONAL)) {
+		ret = -EFAULT;
+		goto fail_free_sgt;
+	}
+
 	return xen_obj;
 
+fail_free_sgt:
+	sg_free_table(xen_obj->sgt);
+	xen_obj->sgt = NULL;
+fail_put_pages:
+	drm_gem_put_pages(&xen_obj->base, xen_obj->pages, true, false);
+	xen_obj->pages = NULL;
 fail:
 	DRM_ERROR("Failed to allocate buffer with size %zu\n", size);
 	return ERR_PTR(ret);
@@ -149,7 +186,7 @@ void xen_drm_front_gem_free_object_unlocked(struct drm_gem_object *gem_obj)
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	if (xen_obj->base.import_attach) {
-		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt_imported);
+		drm_prime_gem_destroy(&xen_obj->base, xen_obj->sgt);
 		gem_free_pages_array(xen_obj);
 	} else {
 		if (xen_obj->pages) {
@@ -158,6 +195,13 @@ void xen_drm_front_gem_free_object_unlocked(struct drm_gem_object *gem_obj)
 							xen_obj->pages);
 				gem_free_pages_array(xen_obj);
 			} else {
+				if (xen_obj->sgt) {
+					dma_unmap_sg(xen_obj->base.dev->dev,
+						     xen_obj->sgt->sgl,
+						     xen_obj->sgt->nents,
+						     DMA_BIDIRECTIONAL);
+					sg_free_table(xen_obj->sgt);
+				}
 				drm_gem_put_pages(&xen_obj->base,
 						  xen_obj->pages, true, false);
 			}
@@ -172,16 +216,6 @@ struct page **xen_drm_front_gem_get_pages(struct drm_gem_object *gem_obj)
 	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
 
 	return xen_obj->pages;
-}
-
-struct sg_table *xen_drm_front_gem_get_sg_table(struct drm_gem_object *gem_obj)
-{
-	struct xen_gem_object *xen_obj = to_xen_gem_obj(gem_obj);
-
-	if (!xen_obj->pages)
-		return ERR_PTR(-ENOMEM);
-
-	return drm_prime_pages_to_sg(xen_obj->pages, xen_obj->num_pages);
 }
 
 struct drm_gem_object *
@@ -203,7 +237,7 @@ xen_drm_front_gem_import_sg_table(struct drm_device *dev,
 	if (ret < 0)
 		return ERR_PTR(ret);
 
-	xen_obj->sgt_imported = sgt;
+	xen_obj->sgt = sgt;
 
 	ret = drm_prime_sg_to_page_addr_arrays(sgt, xen_obj->pages,
 					       NULL, xen_obj->num_pages);

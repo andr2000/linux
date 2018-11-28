@@ -62,9 +62,10 @@ static int be_stream_wait_io(struct xen_camera_front_evtchnl *evtchnl)
 	return evtchnl->u.req.resp_status;
 }
 
-int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
-				struct xencamera_config *cfg,
-				struct xencamera_config *resp)
+static int set_config_helper(struct xen_camera_front_info *front_info,
+			     struct xencamera_config_req *cfg_req,
+			     struct xencamera_config_resp *cfg_resp,
+			     u8 op)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -78,8 +79,8 @@ int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
 	mutex_lock(&evtchnl->u.req.req_io_lock);
 
 	spin_lock_irqsave(&front_info->io_lock, flags);
-	req = be_prepare_req(evtchnl, XENCAMERA_OP_CONFIG_SET);
-	req->req.config = *cfg;
+	req = be_prepare_req(evtchnl, op);
+	req->req.config = *cfg_req;
 
 	ret = be_stream_do_io(evtchnl, req);
 	spin_unlock_irqrestore(&front_info->io_lock, flags);
@@ -87,14 +88,30 @@ int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
 	if (ret == 0)
 		ret = be_stream_wait_io(evtchnl);
 
-	*resp = evtchnl->u.req.resp.resp.config;
+	*cfg_resp = evtchnl->u.req.resp.resp.config;
 
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
 	return ret;
 }
 
+int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
+				struct xencamera_config_req *cfg_req,
+				struct xencamera_config_resp *cfg_resp)
+{
+	return set_config_helper(front_info, cfg_req, cfg_resp,
+				 XENCAMERA_OP_CONFIG_SET);
+}
+
+int xen_camera_front_validate_config(struct xen_camera_front_info *front_info,
+				     struct xencamera_config_req *cfg_req,
+				     struct xencamera_config_resp *cfg_resp)
+{
+	return set_config_helper(front_info, cfg_req, cfg_resp,
+				 XENCAMERA_OP_CONFIG_VALIDATE);
+}
+
 int xen_camera_front_get_config(struct xen_camera_front_info *front_info,
-				struct xencamera_config *resp)
+				struct xencamera_config_resp *cfg_resp)
 {
 	struct xen_camera_front_evtchnl *evtchnl;
 	struct xencamera_req *req;
@@ -116,7 +133,35 @@ int xen_camera_front_get_config(struct xen_camera_front_info *front_info,
 	if (ret == 0)
 		ret = be_stream_wait_io(evtchnl);
 
-	*resp = evtchnl->u.req.resp.resp.config;
+	*cfg_resp = evtchnl->u.req.resp.resp.config;
+
+	mutex_unlock(&evtchnl->u.req.req_io_lock);
+	return ret;
+}
+
+int xen_camera_front_set_frame_rate(struct xen_camera_front_info *front_info,
+				    struct xencamera_frame_rate_req *frame_rate)
+{
+	struct xen_camera_front_evtchnl *evtchnl;
+	struct xencamera_req *req;
+	unsigned long flags;
+	int ret;
+
+	evtchnl = &front_info->evt_pair.req;
+	if (unlikely(!evtchnl))
+		return -EIO;
+
+	mutex_lock(&evtchnl->u.req.req_io_lock);
+
+	spin_lock_irqsave(&front_info->io_lock, flags);
+	req = be_prepare_req(evtchnl, XENCAMERA_OP_FRAME_RATE_SET);
+	req->req.frame_rate = *frame_rate;
+
+	ret = be_stream_do_io(evtchnl, req);
+	spin_unlock_irqrestore(&front_info->io_lock, flags);
+
+	if (ret == 0)
+		ret = be_stream_wait_io(evtchnl);
 
 	mutex_unlock(&evtchnl->u.req.req_io_lock);
 	return ret;

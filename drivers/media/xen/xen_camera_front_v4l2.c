@@ -674,38 +674,38 @@ enum_get_resolution(struct xen_camera_front_cfg_format *format,
 }
 
 static int xen_cfg_to_v4l2_fmt(struct xen_camera_front_v4l2_info *v4l2_info,
-			       struct xencamera_config *cfg,
+			       struct xencamera_config_resp *cfg_resp,
 			       struct v4l2_format *f)
 {
 	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
-	sp->width = cfg->width;
-	sp->height = cfg->height;
-	sp->pixelformat = cfg->pixel_format;
+	sp->width = cfg_resp->width;
+	sp->height = cfg_resp->height;
+	sp->pixelformat = cfg_resp->pixel_format;
 
 	/* Always progressive image. */
 	sp->field = V4L2_FIELD_NONE;
 
-	ret = xen_to_v4l2(cfg->colorspace, XEN_COLORSPACE_TO_V4L2,
+	ret = xen_to_v4l2(cfg_resp->colorspace, XEN_COLORSPACE_TO_V4L2,
 			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	sp->colorspace = ret;
 
-	ret = xen_to_v4l2(cfg->xfer_func, XEN_XFER_FUNC_TO_V4L2,
+	ret = xen_to_v4l2(cfg_resp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
 			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	sp->xfer_func = ret;
 
-	ret = xen_to_v4l2(cfg->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
+	ret = xen_to_v4l2(cfg_resp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
 			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
 	if (ret < 0)
 		return ret;
 	sp->ycbcr_enc = ret;
 
-	ret = xen_to_v4l2(cfg->quantization, XEN_QUANTIZATION_TO_V4L2,
+	ret = xen_to_v4l2(cfg_resp->quantization, XEN_QUANTIZATION_TO_V4L2,
 			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
 	if (ret < 0)
 		return ret;
@@ -716,51 +716,51 @@ static int xen_cfg_to_v4l2_fmt(struct xen_camera_front_v4l2_info *v4l2_info,
 
 static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 			       struct v4l2_format *f,
-			       struct xencamera_config *cfg)
+			       struct xencamera_config_req *cfg_req)
 {
 	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
-	cfg->width = sp->width;
-	cfg->height = sp->height;
-	cfg->pixel_format = sp->pixelformat;
+	cfg_req->width = sp->width;
+	cfg_req->height = sp->height;
+	cfg_req->pixel_format = sp->pixelformat;
 
 	ret = v4l2_to_xen(sp->colorspace, XEN_COLORSPACE_TO_V4L2,
 			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	cfg->colorspace = ret;
+	cfg_req->colorspace = ret;
 
 	ret = v4l2_to_xen(sp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
 			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	cfg->xfer_func = ret;
+	cfg_req->xfer_func = ret;
 
 	ret = v4l2_to_xen(sp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
 			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	cfg->ycbcr_enc = ret;
+	cfg_req->ycbcr_enc = ret;
 
 	ret = v4l2_to_xen(sp->quantization, XEN_QUANTIZATION_TO_V4L2,
 			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
 	if (ret < 0)
 		return ret;
-	cfg->quantization = ret;
+	cfg_req->quantization = ret;
 
 	return 0;
 }
 
 static int set_get_fmt_tail(struct xen_camera_front_v4l2_info *v4l2_info,
-			    struct xencamera_config *cfg,
+			    struct xencamera_config_resp *cfg_resp,
 			    struct v4l2_format *f,
 			    bool with_layout)
 {
 	struct v4l2_pix_format *sp = &f->fmt.pix;
 	int ret;
 
-	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, cfg, f);
+	ret =  xen_cfg_to_v4l2_fmt(v4l2_info, cfg_resp, f);
 	if (ret < 0)
 		return ret;
 
@@ -773,66 +773,69 @@ static int set_get_fmt_tail(struct xen_camera_front_v4l2_info *v4l2_info,
 	return 0;
 }
 
-static int get_format(struct xen_camera_front_v4l2_info *v4l2_info,
-			   struct xencamera_config *cfg,
-			   struct v4l2_format *f,
-			   bool with_layout)
+static int get_format_helper(struct xen_camera_front_v4l2_info *v4l2_info,
+			     struct xencamera_config_resp *cfg_resp,
+			     struct v4l2_format *f, bool with_layout)
 {
 	int ret;
 
-	ret = xen_camera_front_get_config(v4l2_info->front_info, cfg);
+	ret = xen_camera_front_get_config(v4l2_info->front_info, cfg_resp);
 	if (ret < 0)
 		return ret;
 
-	return set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
+	return set_get_fmt_tail(v4l2_info, cfg_resp, f, with_layout);
 }
 
 static int set_format(struct xen_camera_front_v4l2_info *v4l2_info,
-		      struct xencamera_config *cfg,
 		      struct v4l2_format *f,
-		      bool with_layout)
+		      bool is_cfg_validate)
 {
+	struct xencamera_config_req cfg_req;
+	struct xencamera_config_resp cfg_resp;
 	int ret;
 
 	/*
-	 * It is not allowed to change the format while buffers for use with
+	 * It is not allowed to change the format while buffers used for
 	 * streaming have already been allocated.
 	 */
-	if (vb2_is_busy(&v4l2_info->queue))
+	if (!is_cfg_validate && vb2_is_busy(&v4l2_info->queue))
 		return -EBUSY;
 
-	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, cfg);
+	ret = v4l2_fmt_to_xen_cfg(v4l2_info, f, &cfg_req);
 	/*
 	 * If the requested format is obviously wrong, then return
 	 * the current format as seen by the backend.
 	 */
 	if (ret < 0)
-		return get_format(v4l2_info, cfg, f, with_layout);
-
-	/* Ask the backend to validate and set the configuration. */
-	ret = xen_camera_front_set_config(v4l2_info->front_info, cfg, cfg);
+		return get_format_helper(v4l2_info, &cfg_resp, f, true);
 
 	/*
-	 * If we fail because of backend communication error, then
-	 * return this error as is. If the format is not accepted by the
-	 * backend then comply to V4L2 spec, which says we shouldn't
-	 * return an error here, but instead provide the user-space with
-	 * what we think is ok.
+	 * N.B. During format set/validate if we fail because of backend
+	 * communication error, then return error code.
+	 * If the format is not accepted by the backend then comply
+	 * to V4L2 spec, which says we shouldn't return an error here,
+	 * but instead provide the user-space with what we think is ok.
 	 */
+	if (is_cfg_validate)
+		ret = xen_camera_front_validate_config(v4l2_info->front_info,
+						       &cfg_req, &cfg_resp);
+	else
+		ret = xen_camera_front_set_config(v4l2_info->front_info,
+						  &cfg_req, &cfg_resp);
+
 	if (ret < 0) {
 		if (ret == -EIO || ret == -ETIMEDOUT)
 			return ret;
 
-		return get_format(v4l2_info, cfg, f, with_layout);
+		return get_format_helper(v4l2_info, &cfg_resp, f, true);
 	}
 
-	ret = set_get_fmt_tail(v4l2_info, cfg, f, with_layout);
+	ret = set_get_fmt_tail(v4l2_info, &cfg_resp, f, true);
 	if (ret < 0)
 		return ret;
 
 	/* Remember the negotiated buffer size. */
-	if (with_layout)
-		v4l2_info->v4l2_buffer_sz = f->fmt.pix.sizeimage;
+	v4l2_info->v4l2_buffer_sz = f->fmt.pix.sizeimage;
 
 	return 0;
 }
@@ -841,18 +844,25 @@ static int ioctl_s_fmt_vid_cap(struct file *file, void *fh,
 			       struct v4l2_format *f)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xencamera_config cfg;
 
-	return set_format(v4l2_info, &cfg, f, true);
+	return set_format(v4l2_info, f, false);
+}
+
+static int ioctl_try_fmt_vid_cap(struct file *file, void *fh,
+				 struct v4l2_format *f)
+{
+	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
+
+	return set_format(v4l2_info, f, true);
 }
 
 static int ioctl_g_fmt_vid_cap(struct file *file,
 			       void *fh, struct v4l2_format *f)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xencamera_config cfg;
+	struct xencamera_config_resp cfg_resp;
 
-	return get_format(v4l2_info, &cfg, f, true);
+	return get_format_helper(v4l2_info, &cfg_resp, f, true);
 }
 
 static int ioctl_enum_fmt_vid_cap(struct file *file, void *fh,
@@ -932,41 +942,48 @@ static int ioctl_s_input(struct file *file, void *fh, unsigned int i)
 	return (i > 0) ? -EINVAL : 0;
 }
 
-static void set_get_param_tail(struct xencamera_config *cfg,
-			       struct v4l2_streamparm *parm)
+static int set_get_param_tail(struct xen_camera_front_v4l2_info *v4l2_info,
+			      struct v4l2_streamparm *parm)
 {
+	struct xencamera_config_resp cfg_resp;
+	struct v4l2_format f;
+	int ret;
+
+	/*
+	 * We are only interested in frame rate, do not request
+	 * buffer layout then.
+	 */
+	ret = get_format_helper(v4l2_info, &cfg_resp, &f, false);
+	if (ret < 0)
+		return ret;
+
 	parm->parm.capture.capability = V4L2_CAP_TIMEPERFRAME;
 	/* Interval is inverse to frame rate. */
-	parm->parm.capture.timeperframe.denominator = cfg->frame_rate_numer;
-	parm->parm.capture.timeperframe.numerator = cfg->frame_rate_denom;
+	parm->parm.capture.timeperframe.denominator =
+		cfg_resp.frame_rate_numer;
+	parm->parm.capture.timeperframe.numerator =
+		cfg_resp.frame_rate_denom;
 	parm->parm.capture.readbuffers = 0;
+
+	return 0;
 }
 
 static int ioctl_g_parm(struct file *file, void *priv,
 			struct v4l2_streamparm *parm)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xencamera_config cfg;
-	struct v4l2_format f;
-	int ret;
 
 	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
-	ret = get_format(v4l2_info, &cfg, &f, false);
-	if (ret < 0)
-		return ret;
-
-	set_get_param_tail(&cfg, parm);
-	return 0;
+	return set_get_param_tail(v4l2_info, parm);
 }
 
 static int ioctl_s_parm(struct file *file, void *priv,
 			struct v4l2_streamparm *parm)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_drvdata(file);
-	struct xencamera_config cfg;
-	struct v4l2_format f;
+	struct xencamera_frame_rate_req frame_rate_req;
 	int ret;
 
 	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
@@ -975,32 +992,27 @@ static int ioctl_s_parm(struct file *file, void *priv,
 	if (vb2_is_streaming(&v4l2_info->queue))
 		return -EBUSY;
 
-	ret = get_format(v4l2_info, &cfg, &f, false);
-	if (ret < 0)
-		return ret;
-
 	/* Interval is inverse to frame rate. */
-	cfg.frame_rate_denom = parm->parm.capture.timeperframe.numerator;
-	cfg.frame_rate_numer = parm->parm.capture.timeperframe.denominator;
+	frame_rate_req.frame_rate_denom =
+		parm->parm.capture.timeperframe.numerator;
+	frame_rate_req.frame_rate_numer =
+		parm->parm.capture.timeperframe.denominator;
 
-	ret = set_format(v4l2_info, &cfg, &f, false);
+	ret = xen_camera_front_set_frame_rate(v4l2_info->front_info,
+					      &frame_rate_req);
 	if (ret < 0)
 		return ret;
 
-	set_get_param_tail(&cfg, parm);
-	return 0;
+	/*
+	 * Read back the configuration and report the actual frame rate set.
+	 */
+	return set_get_param_tail(v4l2_info, parm);
 }
 
 static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_querycap = ioctl_querycap,
-	/*
-	 * vidioc_try_fmt_vid_cap is not supported intentionally due to
-	 * possible race conditions when frontends in different VMs
-	 * may try configuration and then this configuration becomes
-	 * unavailble, because some other frontend allocates buffers
-	 * and starts streaming with different settings.
-	 */
 	.vidioc_s_fmt_vid_cap = ioctl_s_fmt_vid_cap,
+	.vidioc_try_fmt_vid_cap = ioctl_try_fmt_vid_cap,
 	.vidioc_g_fmt_vid_cap = ioctl_g_fmt_vid_cap,
 	.vidioc_enum_fmt_vid_cap = ioctl_enum_fmt_vid_cap,
 

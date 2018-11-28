@@ -44,10 +44,11 @@ again:
 		if (resp->id != channel->evt_id)
 			continue;
 		switch (resp->operation) {
-
 		case XENCAMERA_OP_CONFIG_SET:
 			/* fall through */
 		case XENCAMERA_OP_CONFIG_GET:
+			/* fall through */
+		case XENCAMERA_OP_CONFIG_VALIDATE:
 			/* fall through */
 		case XENCAMERA_OP_BUF_GET_LAYOUT:
 			/* fall through */
@@ -62,6 +63,8 @@ again:
 			 * usually.
 			 */
 			channel->u.req.resp = *resp;
+			/* fall through */
+		case XENCAMERA_OP_FRAME_RATE_SET:
 			/* fall through */
 		case XENCAMERA_OP_BUF_CREATE:
 			/* fall through */
@@ -79,7 +82,6 @@ again:
 			channel->u.req.resp_status = resp->status;
 			complete(&channel->u.req.completion);
 			break;
-
 		default:
 			dev_err(&front_info->xb_dev->dev,
 				"Operation %d is not supported\n",
@@ -139,12 +141,10 @@ static irqreturn_t evtchnl_interrupt_evt(int irq, void *dev_id)
 			xen_camera_front_v4l2_on_frame(channel->front_info,
 						       &event->evt.frame_avail);
 			break;
-
 		case XENCAMERA_EVT_CTRL_CHANGE:
 			xen_camera_front_v4l2_on_ctrl(channel->front_info,
 						      &event->evt.ctrl_value);
 			break;
-
 		default:
 			dev_err(&front_info->xb_dev->dev,
 				"Event %d is not supported\n",

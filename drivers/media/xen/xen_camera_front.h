@@ -45,11 +45,18 @@ struct xen_camera_front_shbuf {
 };
 
 int xen_camera_front_set_config(struct xen_camera_front_info *front_info,
-				struct xencamera_config *cfg,
-				struct xencamera_config *resp);
+				struct xencamera_config_req *cfg_req,
+				struct xencamera_config_resp *cfg_resp);
 
 int xen_camera_front_get_config(struct xen_camera_front_info *front_info,
-				struct xencamera_config *resp);
+				struct xencamera_config_resp *cfg_resp);
+
+int xen_camera_front_validate_config(struct xen_camera_front_info *front_info,
+				     struct xencamera_config_req *cfg_req,
+				     struct xencamera_config_resp *cfg_resp);
+
+int xen_camera_front_set_frame_rate(struct xen_camera_front_info *front_info,
+				    struct xencamera_frame_rate_req *frame_rate);
 
 int xen_camera_front_set_control(struct xen_camera_front_info *front_info,
 				 int v4l2_cid, s64 value);

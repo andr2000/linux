@@ -347,17 +347,19 @@
  */
 #define XENCAMERA_OP_CONFIG_SET        0x00
 #define XENCAMERA_OP_CONFIG_GET        0x01
-#define XENCAMERA_OP_BUF_GET_LAYOUT    0x02
-#define XENCAMERA_OP_BUF_REQUEST       0x03
-#define XENCAMERA_OP_BUF_CREATE        0x04
-#define XENCAMERA_OP_BUF_DESTROY       0x05
-#define XENCAMERA_OP_BUF_QUEUE         0x06
-#define XENCAMERA_OP_BUF_DEQUEUE       0x07
-#define XENCAMERA_OP_CTRL_ENUM         0x08
-#define XENCAMERA_OP_CTRL_SET          0x09
-#define XENCAMERA_OP_CTRL_GET          0x0a
-#define XENCAMERA_OP_STREAM_START      0x0b
-#define XENCAMERA_OP_STREAM_STOP       0x0c
+#define XENCAMERA_OP_CONFIG_VALIDATE   0x02
+#define XENCAMERA_OP_FRAME_RATE_SET    0x03
+#define XENCAMERA_OP_BUF_GET_LAYOUT    0x04
+#define XENCAMERA_OP_BUF_REQUEST       0x05
+#define XENCAMERA_OP_BUF_CREATE        0x06
+#define XENCAMERA_OP_BUF_DESTROY       0x07
+#define XENCAMERA_OP_BUF_QUEUE         0x08
+#define XENCAMERA_OP_BUF_DEQUEUE       0x09
+#define XENCAMERA_OP_CTRL_ENUM         0x0a
+#define XENCAMERA_OP_CTRL_SET          0x0b
+#define XENCAMERA_OP_CTRL_GET          0x0c
+#define XENCAMERA_OP_STREAM_START      0x0d
+#define XENCAMERA_OP_STREAM_STOP       0x0e
 
 #define XENCAMERA_CTRL_BRIGHTNESS      0
 #define XENCAMERA_CTRL_CONTRAST        1
@@ -514,11 +516,13 @@
  *   operation - uint8_t, operation code, XENCAMERA_OP_XXX.
  *
  *
- * Request to set configuration - request to set the configuration/mode
- * of the camera:
+ * Request to set/validate the configuration - request to set the
+ * configuration/mode of the camera (XENCAMERA_OP_CONFIG_SET) or to
+ * check if the configuration is valid and can be used
+ * (XENCAMERA_OP_CONFIG_VALIDATE):
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                | _OP_CONFIG_SET |   reserved     | 4
+ * |               id                | _OP_CONFIG_XXX |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
@@ -536,19 +540,11 @@
  * +----------------+----------------+----------------+----------------+
  * |                            quantization                           | 36
  * +----------------+----------------+----------------+----------------+
- * |                       displ_asp_ratio_numer                       | 40
- * +----------------+----------------+----------------+----------------+
- * |                       displ_asp_ratio_denom                       | 44
- * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_numer                         | 48
- * +----------------+----------------+----------------+----------------+
- * |                          frame_rate_denom                         | 52
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 56
+ * |                             reserved                              | 40
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * pixel_format - uint32_t, pixel format to be used, FOURCC code.
@@ -563,22 +559,25 @@
  *   valid for YCbCr pixelformats and should be ignored otherwise.
  * quantization - uint32_t, this supplements colorspace parameter,
  *   one of the XENCAMERA_QUANTIZATION_XXX.
- * displ_asp_ratio_numer - uint32_t, numerator of the display aspect ratio.
- * displ_asp_ratio_denom - uint32_t, denominator of the display aspect ratio.
- * frame_rate_numer - uint32_t, numerator of the frame rate.
- * frame_rate_denom - uint32_t, denominator of the frame rate.
  *
  * See response format for this request.
  *
  * Notes:
+ *  - the only difference between XENCAMERA_OP_CONFIG_VALIDATE and
+ *    XENCAMERA_OP_CONFIG_SET is that the former doesn't actually change
+ *    camera configuration, but queries if the configuration is valid.
+ *    This can be used while stream is active and/or buffers allocated.
  *  - frontend must check the corresponding response in order to see
  *    if the values reported back by the backend do match the desired ones
  *    and can be accepted.
  *  - frontend may send multiple XENCAMERA_OP_CONFIG_SET requests before
  *    sending XENCAMERA_OP_STREAM_START request to update or tune the
- *    configuration.
+ *    final stream configuration.
+ *  - configuration cannot be changed during active streaming, e.g.
+ *    after XENCAMERA_OP_STREAM_START and before XENCAMERA_OP_STREAM_STOP
+ *    requests.
  */
-struct xencamera_config {
+struct xencamera_config_req {
     uint32_t pixel_format;
     uint32_t width;
     uint32_t height;
@@ -586,10 +585,6 @@ struct xencamera_config {
     uint32_t xfer_func;
     uint32_t ycbcr_enc;
     uint32_t quantization;
-    uint32_t displ_asp_ratio_numer;
-    uint32_t displ_asp_ratio_denom;
-    uint32_t frame_rate_numer;
-    uint32_t frame_rate_denom;
 };
 
 /*
@@ -598,11 +593,66 @@ struct xencamera_config {
  * +----------------+----------------+----------------+----------------+
  * |               id                | _OP_CONFIG_GET |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 8
+ * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * See response format for this request.
+ *
+ *
+ * Request to set the frame rate of the stream:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _FRAME_RATE_SET|   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_numer                         | 12
+ * +----------------+----------------+----------------+----------------+
+ * |                          frame_rate_denom                         | 16
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 20
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
+ * +----------------+----------------+----------------+----------------+
+ *
+ * frame_rate_numer - uint32_t, numerator of the frame rate.
+ * frame_rate_denom - uint32_t, denominator of the frame rate.
+ *
+ * Notes:
+ *  - to query the current (actual) frame rate use XENCAMERA_OP_CONFIG_GET
+ *    request.
+ *  - this request can be used with camera buffers allocated, but stream
+ *    stopped, e.g. frontend is allowed to stop the stream with
+ *    XENCAMERA_OP_STREAM_STOP, hold the buffers allocated (e.g. keep the
+ *    configuration set with XENCAMERA_OP_CONFIG_SET), change the
+ *    frame rate of the stream and (re)start the stream again with
+ *    XENCAMERA_OP_STREAM_START.
+ *  - frame rate cannot be changed during active streaming, e.g.
+ *    after XENCAMERA_OP_STREAM_START and before XENCAMERA_OP_STREAM_STOP
+ *    commands.
+ */
+struct xencamera_frame_rate_req {
+    uint32_t frame_rate_numer;
+    uint32_t frame_rate_denom;
+};
+
+/*
+ * Request camera buffer's layout:
+ *         0                1                 2               3        octet
+ * +----------------+----------------+----------------+----------------+
+ * |               id                | _BUF_GET_LAYOUT|   reserved     | 4
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 8
+ * +----------------+----------------+----------------+----------------+
+ * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
+ * +----------------+----------------+----------------+----------------+
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * See response format for this request.
@@ -638,28 +688,13 @@ struct xencamera_config {
  *  - after this request camera configuration cannot be changed, unless
  *    streaming is stopped and buffers destroyed
  *  - passing zero num_bufs in this request (after streaming has stopped
- *    and all buffers destroyed) unblocks camera configuration changes
+ *    and all buffers destroyed) unblocks camera configuration changes.
  */
 struct xencamera_buf_request {
     uint8_t num_bufs;
 };
 
 /*
- * Request camera buffer's layout:
- *         0                1                 2               3        octet
- * +----------------+----------------+----------------+----------------+
- * |               id                | _BUF_GET_LAYOUT|   reserved     | 4
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 8
- * +----------------+----------------+----------------+----------------+
- * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 64
- * +----------------+----------------+----------------+----------------+
- *
- * See response format for this request.
- *
- *
  * Request camera buffer creation:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
@@ -944,11 +979,11 @@ struct xencamera_get_ctrl_req {
  * status - int32_t, response status, zero on success and -XEN_EXX on failure.
  *
  *
- * Set/get configuration response - response for XENCAMERA_OP_CONFIG_SET
- * and XENCAMERA_OP_CONFIG_GET
+ * Configuration response - response for XENCAMERA_OP_CONFIG_SET,
+ * XENCAMERA_OP_CONFIG_GET and XENCAMERA_OP_CONFIG_VALIDATE requests:
  *         0                1                 2               3        octet
  * +----------------+----------------+----------------+----------------+
- * |               id                | _OP_CONFIG_?ET |    reserved    | 4
+ * |               id                | _OP_CONFIG_XXX |    reserved    | 4
  * +----------------+----------------+----------------+----------------+
  * |                               status                              | 8
  * +----------------+----------------+----------------+----------------+
@@ -978,13 +1013,30 @@ struct xencamera_get_ctrl_req {
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * Meaning of the corresponding values in this response is the same as for
- * XENCAMERA_OP_CONFIG_SET request.
+ * XENCAMERA_OP_CONFIG_SET and XENCAMERA_OP_FRAME_RATE_SET requests.
  *
- *
+ * displ_asp_ratio_numer - uint32_t, numerator of the display aspect ratio.
+ * displ_asp_ratio_denom - uint32_t, denominator of the display aspect ratio.
+ */
+struct xencamera_config_resp {
+    uint32_t pixel_format;
+    uint32_t width;
+    uint32_t height;
+    uint32_t colorspace;
+    uint32_t xfer_func;
+    uint32_t ycbcr_enc;
+    uint32_t quantization;
+    uint32_t displ_asp_ratio_numer;
+    uint32_t displ_asp_ratio_denom;
+    uint32_t frame_rate_numer;
+    uint32_t frame_rate_denom;
+};
+
+/*
  * Request buffer response - response for XENCAMERA_OP_BUF_GET_LAYOUT
  * request:
  *         0                1                 2               3        octet
@@ -1028,7 +1080,7 @@ struct xencamera_get_ctrl_req {
  *
  * Note! The sizes and strides in this response apply to all buffers created
  * with XENCAMERA_OP_BUF_CREATE command, but individual buffers may have
- * different plane offsets.
+ * different plane offsets, see XENCAMERA_OP_BUF_REQUEST.plane_offset.
  */
 struct xencamera_buf_get_layout_resp {
     uint8_t num_planes;
@@ -1090,7 +1142,7 @@ struct xencamera_buf_get_layout_resp {
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * index - uint8_t, index of the camera control in response.
@@ -1153,7 +1205,7 @@ struct xencamera_ctrl_enum_resp {
  * +----------------+----------------+----------------+----------------+
  * |               id                |      type      |   reserved     | 4
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 8
+ * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
  *
  * id - uint16_t, event id, may be used by front.
@@ -1166,13 +1218,13 @@ struct xencamera_ctrl_enum_resp {
  * +----------------+----------------+----------------+----------------+
  * |               id                |_EVT_FRAME_AVAIL|   reserved     | 4
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 8
+ * |                             reserved                              | 8
  * +----------------+----------------+----------------+----------------+
  * |      index     |                     reserved                     | 12
  * +----------------+----------------+----------------+----------------+
  * |                              used_sz                              | 16
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 20
+ * |                             reserved                              | 20
  * +----------------+----------------+----------------+----------------+
  * |                        seq_num low 32-bits                        | 24
  * +----------------+----------------+----------------+----------------+
@@ -1182,7 +1234,7 @@ struct xencamera_ctrl_enum_resp {
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
- * |                              reserved                             | 64
+ * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
  * index - uint8_t, index of the buffer that contains new captured frame.
@@ -1239,7 +1291,8 @@ struct xencamera_req {
     uint8_t operation;
     uint8_t reserved[5];
     union {
-        struct xencamera_config config;
+        struct xencamera_config_req config;
+        struct xencamera_frame_rate_req frame_rate;
         struct xencamera_buf_request buf_request;
         struct xencamera_buf_create_req buf_create;
         struct xencamera_index index;
@@ -1255,7 +1308,7 @@ struct xencamera_resp {
     uint8_t reserved;
     int32_t status;
     union {
-        struct xencamera_config config;
+        struct xencamera_config_resp config;
         struct xencamera_buf_get_layout_resp buf_layout;
         struct xencamera_buf_request buf_request;
         struct xencamera_ctrl_enum_resp ctrl_enum;

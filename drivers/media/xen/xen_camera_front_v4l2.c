@@ -972,7 +972,7 @@ static int ioctl_s_parm(struct file *file, void *priv,
 	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
-	if (vb2_is_busy(&v4l2_info->queue))
+	if (vb2_is_streaming(&v4l2_info->queue))
 		return -EBUSY;
 
 	ret = get_format(v4l2_info, &cfg, &f, false);

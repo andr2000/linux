@@ -11,12 +11,10 @@
  */
 
 #include <linux/videodev2.h>
-//#include <linux/v4l2-dv-timings.h>
 
 #include <media/v4l2-device.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
-//#include <media/v4l2-dv-timings.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-event.h>
 #include <media/videobuf2-dma-sg.h>
@@ -257,33 +255,6 @@ static int xen_buf_layout_to_format(struct xen_camera_front_info *front_info,
 	return 0;
 }
 
-static void buf_list_add(struct xen_camera_front_v4l2_info *v4l2_info,
-			 struct xen_camera_buffer *xen_buf)
-{
-	mutex_lock(&v4l2_info->bufs_lock);
-	list_add(&xen_buf->list, &v4l2_info->bufs_list);
-	mutex_unlock(&v4l2_info->bufs_lock);
-}
-
-static void buf_list_remove(struct xen_camera_front_v4l2_info *v4l2_info,
-			    struct xen_camera_buffer *xen_buf)
-{
-	mutex_lock(&v4l2_info->bufs_lock);
-	list_del(&xen_buf->list);
-	mutex_unlock(&v4l2_info->bufs_lock);
-}
-
-static void
-buf_list_destroy_all_shbuf(struct xen_camera_front_v4l2_info *v4l2_info)
-{
-	struct xen_camera_buffer *buf;
-
-	mutex_lock(&v4l2_info->bufs_lock);
-	list_for_each_entry(buf, &v4l2_info->bufs_list, list)
-		xen_camera_front_destroy_shbuf(&buf->shbuf);
-	mutex_unlock(&v4l2_info->bufs_lock);
-}
-
 static void buf_list_return_queued(struct xen_camera_front_v4l2_info *v4l2_info,
 				   enum vb2_buffer_state state)
 {
@@ -321,7 +292,8 @@ void xen_camera_front_v4l2_on_frame(struct xen_camera_front_info *front_info,
 
 	/*
 	 * This is not an error, but because we can temporarily get
-	 * out of sync with the backend, so just drop this event.
+	 * out of sync with the backend (for example when we disconnect),
+	 * so then just drop the event.
 	 */
 	if (unlikely(!xen_buf->is_queued))
 		goto out;
@@ -415,13 +387,6 @@ static int queue_setup(struct vb2_queue *vq,
 	return 0;
 }
 
-/*
- * Called once after allocating a buffer (in MMAP case)
- * or after acquiring a new USERPTR buffer or queueing a new
- * dma-buf; drivers may perform additional buffer-related initialization;
- * initialization failure (return != 0) will prevent
- * queue setup from completing successfully; optional.
- */
 static int buffer_init(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
@@ -450,14 +415,12 @@ static int buffer_init(struct vb2_buffer *vb)
 	if (ret < 0)
 		return ret;
 
-	buf_list_add(v4l2_info, xen_buf);
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_add(&xen_buf->list, &v4l2_info->bufs_list);
+	mutex_unlock(&v4l2_info->bufs_lock);
 	return 0;
 }
 
-/*
- * Called once before the buffer is freed; drivers may
- * perform any additional cleanup; optional.
- */
 static void buffer_cleanup(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
@@ -473,19 +436,12 @@ static void buffer_cleanup(struct vb2_buffer *vb)
 				"Failed to cleanup buffer with index %d: %d\n",
 				vb->index, ret);
 	}
-	buf_list_remove(v4l2_info, xen_buf);
+
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_del(&xen_buf->list);
+	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
-/*
- * Called every time the buffer is queued from userspace
- * and from the VIDIOC_PREPARE_BUF() ioctl; drivers may
- * perform any initialization required before each
- * hardware operation in this callback; drivers can
- * access/modify the buffer here as it is still synced for
- * the CPU; drivers that support VIDIOC_CREATE_BUFS() must
- * also validate the buffer size; if an error is returned,
- * the buffer will not be queued in driver; optional.
- */
 static int buffer_prepare(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
@@ -507,9 +463,10 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	vb2_set_plane_payload(vb, 0, size);
 
 	/*
-	 * FIXME: we might have an error here while communicating to
+	 * FIXME: we can have an error here while communicating to
 	 * the backend, but .buf_queue callback doesn't allow us to return
-	 * any error code: queue the buffer to the backend now.
+	 * any error code: queue the buffer to the backend now, so we can
+	 * make sure we do not fail later on.
 	 */
 	ret = xen_camera_front_buf_queue(v4l2_info->front_info, vb->index);
 	if (ret < 0) {
@@ -525,20 +482,6 @@ static int buffer_prepare(struct vb2_buffer *vb)
 	return 0;
 }
 
-/*
- * Called before every dequeue of the buffer back to
- * userspace; the buffer is synced for the CPU, so drivers
- * can access/modify the buffer contents; drivers may
- * perform any operations required before userspace
- * accesses the buffer; optional. The buffer state can be
- * one of the following: %DONE and %ERROR occur while
- * streaming is in progress, and the %PREPARED state occurs
- * when the queue has been canceled and all pending
- * buffers are being returned to their default %DEQUEUED
- * state. Typically you only have to do something if the
- * state is %VB2_BUF_STATE_DONE, since in all other cases
- * the buffer contents will be ignored anyway.
- */
 static void buffer_finish(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
@@ -555,15 +498,6 @@ static void buffer_finish(struct vb2_buffer *vb)
 			vb->index, ret);
 }
 
-/*
- * Passes buffer vb to the driver; driver may start
- * hardware operation on this buffer; driver should give
- * the buffer back by calling vb2_buffer_done() function;
- * it is allways called after calling VIDIOC_STREAMON()
- * ioctl; might be called before @start_streaming callback
- * if user pre-queued buffers before calling
- * VIDIOC_STREAMON().
- */
 static void buffer_queue(struct vb2_buffer *vb)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info =
@@ -580,13 +514,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 	mutex_unlock(&v4l2_info->bufs_lock);
 }
 
-/*
- * Start streaming. First check if the minimum number of buffers have been
- * queued. If not, then return -ENOBUFS and the vb2 framework will call
- * this function again the next time a buffer has been queued until enough
- * buffers are available to actually start the DMA engine.
- */
-static int start_streaming(struct vb2_queue *vq, unsigned int count)
+static int streaming_start(struct vb2_queue *vq, unsigned int count)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 	int ret;
@@ -601,11 +529,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	return ret;
 }
 
-/*
- * Stop the DMA engine. Any remaining buffers in the DMA queue are dequeued
- * and passed on to the vb2 framework marked as STATE_ERROR.
- */
-static void stop_streaming(struct vb2_queue *vq)
+static void streaming_stop(struct vb2_queue *vq)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = vb2_get_drv_priv(vq);
 
@@ -615,21 +539,18 @@ static void stop_streaming(struct vb2_queue *vq)
 		xen_camera_front_stream_stop(v4l2_info->front_info);
 }
 
-/*
- * The vb2 queue ops. Note that since q->lock is set we can use the standard
- * vb2_ops_wait_prepare/finish helper functions. If q->lock would be NULL,
- * then this driver would have to provide these ops.
- */
 static const struct vb2_ops qops = {
 	.queue_setup		= queue_setup,
+
 	.buf_prepare		= buffer_prepare,
 	.buf_queue		= buffer_queue,
 	.buf_finish		= buffer_finish,
 	.buf_init		= buffer_init,
 	.buf_cleanup		= buffer_cleanup,
 
-	.start_streaming	= start_streaming,
-	.stop_streaming		= stop_streaming,
+	.start_streaming	= streaming_start,
+	.stop_streaming		= streaming_stop,
+
 	.wait_prepare		= vb2_ops_wait_prepare,
 	.wait_finish		= vb2_ops_wait_finish,
 };
@@ -684,7 +605,6 @@ static int xen_cfg_to_v4l2_fmt(struct xen_camera_front_v4l2_info *v4l2_info,
 	sp->height = cfg_resp->height;
 	sp->pixelformat = cfg_resp->pixel_format;
 
-	/* Always progressive image. */
 	sp->field = V4L2_FIELD_NONE;
 
 	ret = xen_to_v4l2(cfg_resp->colorspace, XEN_COLORSPACE_TO_V4L2,
@@ -813,7 +733,7 @@ static int set_format(struct xen_camera_front_v4l2_info *v4l2_info,
 	 * N.B. During format set/validate if we fail because of backend
 	 * communication error, then return error code.
 	 * If the format is not accepted by the backend then comply
-	 * to V4L2 spec, which says we shouldn't return an error here,
+	 * to V4L2 spec which says we shouldn't return an error here,
 	 * but instead provide the user-space with what we think is ok.
 	 */
 	if (is_cfg_validate)
@@ -950,7 +870,7 @@ static int set_get_param_tail(struct xen_camera_front_v4l2_info *v4l2_info,
 	int ret;
 
 	/*
-	 * We are only interested in frame rate, do not request
+	 * We are only interested in the frame rate, no need to request
 	 * buffer layout then.
 	 */
 	ret = get_format_helper(v4l2_info, &cfg_resp, &f, false);
@@ -1003,9 +923,7 @@ static int ioctl_s_parm(struct file *file, void *priv,
 	if (ret < 0)
 		return ret;
 
-	/*
-	 * Read back the configuration and report the actual frame rate set.
-	 */
+	/* Read back the configuration and report the actual frame rate set. */
 	return set_get_param_tail(v4l2_info, parm);
 }
 
@@ -1107,9 +1025,6 @@ static void xen_video_device_release(struct video_device *vdev)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = video_get_drvdata(vdev);
 
-	dev_err(&v4l2_info->front_info->xb_dev->dev,
-		"%s\n", __FUNCTION__);
-
 	v4l2_ctrl_handler_free(v4l2_info->v4l2_dev.ctrl_handler);
 	v4l2_info->v4l2_dev.ctrl_handler = NULL;
 	v4l2_device_unregister(&v4l2_info->v4l2_dev);
@@ -1140,14 +1055,12 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	if (ret < 0)
 		goto fail_device_register;
 
-	/* Add the controls if any. */
 	if (front_info->cfg.num_controls) {
 		ret = init_controls(&front_info->cfg, v4l2_info);
 		if (ret < 0)
 			goto fail_init_controls;
 	}
 
-	/* Initialize the vb2 queue. */
 	q = &v4l2_info->queue;
 
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -1157,14 +1070,13 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	q->buf_struct_size = sizeof(struct xen_camera_buffer);
 	q->ops = &qops;
 	/*
-	 * It is easier for us to work with vb2_dma_sg_memops
+	 * It is better for us to work with vb2_dma_sg_memops
 	 * rather than vb2_dma_contig_memops as this might relax
-	 * requirements for memory subsystem.
+	 * memory subsystem pressure.
 	 */
 	q->mem_ops = &vb2_dma_sg_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->min_buffers_needed = 2;
-	/* Use dedicated queue lock. */
 	q->lock = &v4l2_info->vb_queue_lock;
 	ret = vb2_queue_init(q);
 	if (ret)
@@ -1176,7 +1088,6 @@ int xen_camera_front_v4l2_init(struct xen_camera_front_info *front_info)
 	vdev->fops = &fops;
 	vdev->ioctl_ops = &ioctl_ops;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
-	/* The main serialization lock. */
 	vdev->lock = &v4l2_info->v4l2_lock;
 	vdev->queue = q;
 	vdev->v4l2_dev = &v4l2_info->v4l2_dev;
@@ -1207,6 +1118,7 @@ fail_device_register:
 void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 {
 	struct xen_camera_front_v4l2_info *v4l2_info = front_info->v4l2_info;
+	struct xen_camera_buffer *buf;
 
 	if (!v4l2_info)
 		return;
@@ -1221,7 +1133,12 @@ void xen_camera_front_v4l2_fini(struct xen_camera_front_info *front_info)
 	v4l2_info->unplugged = true;
 	v4l2_device_disconnect(&v4l2_info->v4l2_dev);
 
-	buf_list_destroy_all_shbuf(v4l2_info);
+	/* Destroy all shared buffers if any. */
+	mutex_lock(&v4l2_info->bufs_lock);
+	list_for_each_entry(buf, &v4l2_info->bufs_list, list)
+		xen_camera_front_destroy_shbuf(&buf->shbuf);
+	mutex_unlock(&v4l2_info->bufs_lock);
+
 	video_unregister_device(&v4l2_info->vdev);
 
 	mutex_unlock(&v4l2_info->v4l2_lock);

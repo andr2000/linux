@@ -46,14 +46,13 @@ static int cfg_read_framerates(struct xenbus_device *xb_dev,
 	/*
 	 * At the first pass find out how many frame rates are there.
 	 * At the second pass read frame rates, validate and store.
-	 * Start from 1 as a single one frame rate configuration will
+	 * Start from 1 as a single entry frame rate configuration will
 	 * have no separators at all.
 	 */
 	num_frame_rates = 1;
 	for (i = 0; list[i]; i++)
 		if (list[i] == XENCAMERA_LIST_SEPARATOR[0])
 			num_frame_rates++;
-	/* We have number of separators, number of frame rates is one more. */
 
 	res->frame_rate = devm_kcalloc(dev, num_frame_rates,
 				       sizeof(*res->frame_rate), GFP_KERNEL);

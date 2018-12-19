@@ -639,36 +639,10 @@ static int v4l2_fmt_to_xen_cfg(struct xen_camera_front_v4l2_info *v4l2_info,
 			       struct xencamera_config_req *cfg_req)
 {
 	struct v4l2_pix_format *sp = &f->fmt.pix;
-	int ret;
 
 	cfg_req->width = sp->width;
 	cfg_req->height = sp->height;
 	cfg_req->pixel_format = sp->pixelformat;
-
-	ret = v4l2_to_xen(sp->colorspace, XEN_COLORSPACE_TO_V4L2,
-			  ARRAY_SIZE(XEN_COLORSPACE_TO_V4L2));
-	if (ret < 0)
-		return ret;
-	cfg_req->colorspace = ret;
-
-	ret = v4l2_to_xen(sp->xfer_func, XEN_XFER_FUNC_TO_V4L2,
-			  ARRAY_SIZE(XEN_XFER_FUNC_TO_V4L2));
-	if (ret < 0)
-		return ret;
-	cfg_req->xfer_func = ret;
-
-	ret = v4l2_to_xen(sp->ycbcr_enc, XEN_YCBCR_ENC_TO_V4L2,
-			  ARRAY_SIZE(XEN_YCBCR_ENC_TO_V4L2));
-	if (ret < 0)
-		return ret;
-	cfg_req->ycbcr_enc = ret;
-
-	ret = v4l2_to_xen(sp->quantization, XEN_QUANTIZATION_TO_V4L2,
-			  ARRAY_SIZE(XEN_QUANTIZATION_TO_V4L2));
-	if (ret < 0)
-		return ret;
-	cfg_req->quantization = ret;
-
 	return 0;
 }
 

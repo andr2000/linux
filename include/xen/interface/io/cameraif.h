@@ -190,7 +190,8 @@
  *      endian format, then the "-BE" suffix must be added. E.g. 'AR15' vs
  *      'AR15-BE'.
  *      If FOURCC string label has spaces then those are only allowed to
- *      be at the end of the label and must be trimmed.
+ *      be at the end of the label and must be trimmed, for example
+ *      'Y16' and 'Y16-BE' will be trimmed.
  *
  * resolution
  *      Values:         <width, uint32_t>x<height, uint32_t>
@@ -532,15 +533,7 @@
  * +----------------+----------------+----------------+----------------+
  * |                               height                              | 20
  * +----------------+----------------+----------------+----------------+
- * |                             colorspace                            | 24
- * +----------------+----------------+----------------+----------------+
- * |                             xfer_func                             | 28
- * +----------------+----------------+----------------+----------------+
- * |                             ycbcr_enc                             | 32
- * +----------------+----------------+----------------+----------------+
- * |                            quantization                           | 36
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 40
+ * |                             reserved                              | 24
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
@@ -550,15 +543,6 @@
  * pixel_format - uint32_t, pixel format to be used, FOURCC code.
  * width - uint32_t, width in pixels.
  * height - uint32_t, height in pixels.
- * colorspace - uint32_t, this supplements pixel_format parameter,
- *   one of the XENCAMERA_COLORSPACE_XXX.
- * xfer_func - uint32_t, this supplements colorspace parameter,
- *   one of the XENCAMERA_XFER_FUNC_XXX.
- * ycbcr_enc - uint32_t, this supplements colorspace parameter,
- *   one of the XENCAMERA_YCBCR_ENC_XXX. Please note, that ycbcr_enc is only
- *   valid for YCbCr pixelformats and should be ignored otherwise.
- * quantization - uint32_t, this supplements colorspace parameter,
- *   one of the XENCAMERA_QUANTIZATION_XXX.
  *
  * See response format for this request.
  *
@@ -581,10 +565,6 @@ struct xencamera_config_req {
     uint32_t pixel_format;
     uint32_t width;
     uint32_t height;
-    uint32_t colorspace;
-    uint32_t xfer_func;
-    uint32_t ycbcr_enc;
-    uint32_t quantization;
 };
 
 /*
@@ -674,7 +654,10 @@ struct xencamera_frame_rate_req {
  * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
- * num_bufs - uint8_t, desired number of buffers to be used.
+ * num_bufs - uint8_t, desired number of buffers to be used. This is
+ *   limited to the value configured in XenStore.max-buffers.
+ *   Passing zero num_bufs in this request (after streaming has stopped
+ *   and all buffers destroyed) unblocks camera configuration changes.
  *
  * See response format for this request.
  *
@@ -687,8 +670,6 @@ struct xencamera_frame_rate_req {
  *    configuration.
  *  - after this request camera configuration cannot be changed, unless
  *    streaming is stopped and buffers destroyed
- *  - passing zero num_bufs in this request (after streaming has stopped
- *    and all buffers destroyed) unblocks camera configuration changes.
  */
 struct xencamera_buf_request {
     uint8_t num_bufs;
@@ -724,7 +705,9 @@ struct xencamera_buf_request {
  * An attempt to create multiple buffers with the same index is an error.
  * index can be re-used after destroying the corresponding camera buffer.
  *
- * index - uint8_t, index of the buffer to be created.
+ * index - uint8_t, index of the buffer to be created in the range
+ *   from 0 to the num_bufs field returned in response for
+ *   XENCAMERA_OP_BUF_REQUEST request
  * plane_offset - array of uint32_t, offset of the corresponding plane
  *   in octets from the buffer start. Number of offsets returned is
  *   equal to the value returned in XENCAMERA_OP_BUF_GET_LAYOUT.num_planes.
@@ -1019,6 +1002,15 @@ struct xencamera_get_ctrl_req {
  * Meaning of the corresponding values in this response is the same as for
  * XENCAMERA_OP_CONFIG_SET and XENCAMERA_OP_FRAME_RATE_SET requests.
  *
+ * colorspace - uint32_t, this supplements pixel_format parameter,
+ *   one of the XENCAMERA_COLORSPACE_XXX.
+ * xfer_func - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_XFER_FUNC_XXX.
+ * ycbcr_enc - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_YCBCR_ENC_XXX. Please note, that ycbcr_enc is only
+ *   valid for YCbCr pixelformats and should be ignored otherwise.
+ * quantization - uint32_t, this supplements colorspace parameter,
+ *   one of the XENCAMERA_QUANTIZATION_XXX.
  * displ_asp_ratio_numer - uint32_t, numerator of the display aspect ratio.
  * displ_asp_ratio_denom - uint32_t, denominator of the display aspect ratio.
  */
@@ -1224,32 +1216,30 @@ struct xencamera_ctrl_enum_resp {
  * +----------------+----------------+----------------+----------------+
  * |                              used_sz                              | 16
  * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 20
+ * |                              seq_num                              | 20
  * +----------------+----------------+----------------+----------------+
- * |                        seq_num low 32-bits                        | 24
- * +----------------+----------------+----------------+----------------+
- * |                        seq_num high 32-bits                       | 28
- * +----------------+----------------+----------------+----------------+
- * |                             reserved                              | 20
+ * |                             reserved                              | 24
  * +----------------+----------------+----------------+----------------+
  * |/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/|
  * +----------------+----------------+----------------+----------------+
  * |                             reserved                              | 64
  * +----------------+----------------+----------------+----------------+
  *
- * index - uint8_t, index of the buffer that contains new captured frame.
+ * index - uint8_t, index of the buffer that contains new captured frame,
+ *   see XENCAMERA_OP_BUF_CREATE description on the range
  * used_sz - uint32_t, number of octets this frame has. This can be less
  * than the XENCAMERA_OP_BUF_REQUEST.size (response) for compressed formats.
- * seq_num - uint64_t, sequential number of the frame. Must be
+ * seq_num - uint32_t, sequential number of the frame. Must be
  *   monotonically increasing. If skips are detected in seq_num then that
- *   means that the frames in-between were dropped.
+ *   means that the frames in-between were dropped. Note however that not
+ *   all video capture hardware is capable of detecting dropped frames.
+ *   In that case there will be no skips in the sequence counter.
  */
 struct xencamera_frame_avail_evt {
     uint8_t index;
-    uint8_t reserved0[3];
+    uint8_t reserved[3];
     uint32_t used_sz;
-    uint8_t reserved1[4];
-    uint64_t seq_num;
+    uint32_t seq_num;
 };
 
 /*

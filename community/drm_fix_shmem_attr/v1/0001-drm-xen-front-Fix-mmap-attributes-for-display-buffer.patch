@@ -1,0 +1,45 @@
+From 79c8cab08fbd58d7b9226bf2b2c7ff6a2318d681 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Tue, 29 Jan 2019 12:54:13 +0200
+Subject: [Xen-devel][PATCH] drm/xen-front: Fix mmap attributes for display
+ buffers
+
+When GEM backing storage is allocated those are normal pages,
+so there is no point using pgprot_writecombine while mmaping.
+This fixes mismatch of buffer pages' memory attributes between
+the frontend and backend which may cause screen artifacts.
+
+Fixes: c575b7eeb89f ("drm/xen-front: Add support for Xen PV display frontend")
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Suggested-by: Julien Grall <julien.grall@arm.com>
+---
+ drivers/gpu/drm/xen/xen_drm_front_gem.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_gem.c b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+index d303a2e17f5e..9d5c03d7668d 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front_gem.c
++++ b/drivers/gpu/drm/xen/xen_drm_front_gem.c
+@@ -235,8 +235,7 @@ static int gem_mmap_obj(struct xen_gem_object *xen_obj,
+ 	vma->vm_flags &= ~VM_PFNMAP;
+ 	vma->vm_flags |= VM_MIXEDMAP;
+ 	vma->vm_pgoff = 0;
+-	vma->vm_page_prot =
+-			pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
++	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+ 
+ 	/*
+ 	 * vm_operations_struct.fault handler will be called if CPU access
+@@ -283,7 +282,7 @@ void *xen_drm_front_gem_prime_vmap(struct drm_gem_object *gem_obj)
+ 		return NULL;
+ 
+ 	return vmap(xen_obj->pages, xen_obj->num_pages,
+-		    VM_MAP, pgprot_writecombine(PAGE_KERNEL));
++		    VM_MAP, PAGE_KERNEL);
+ }
+ 
+ void xen_drm_front_gem_prime_vunmap(struct drm_gem_object *gem_obj,
+-- 
+2.20.1
+

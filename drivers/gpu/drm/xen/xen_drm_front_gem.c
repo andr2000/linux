@@ -21,6 +21,8 @@
 
 #include <xen/balloon.h>
 
+#include <xen/dbg_page_prot.h>
+
 #include "xen_drm_front.h"
 #include "xen_drm_front_shbuf.h"
 
@@ -238,6 +240,15 @@ static int gem_mmap_obj(struct xen_gem_object *xen_obj,
 	vma->vm_pgoff = 0;
 	vma->vm_page_prot =
 			pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
+
+	{
+		int cnt = xen_obj->num_pages > 5 ? 5 : xen_obj->num_pages;
+		printk("-------------------- mmap, num pages %d\n",
+		       xen_obj->num_pages);
+		for (i = 0; i < cnt; i++)
+			xen_dump_page_prot(xen_obj->pages[i]);
+	}
+
 
 	/*
 	 * vm_operations_struct.fault handler will be called if CPU access

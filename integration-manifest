@@ -1,0 +1,30 @@
+drm drm-fixes f0e7ce1eef5854584dfb59b3824a67edee37580f
+	Merge tag 'drm-msm-fixes-2019-01-24' of git://people.freedesktop.org/~robclark/linux into drm-fixes
+drm-misc drm-misc-fixes 053ff09f1a8f2151339f9fda457c5250929d1c49
+	drm/rockchip: rgb: update SPDX license identifier
+drm-intel drm-intel-fixes a49a17226febf314212a25100d2484af67f31428
+	drm/i915: Try to sanitize bogus DPLL state left over by broken SNB BIOSen
+drm-amd drm-amd-fixes 2b702e72e33bbdec0764cfb6e1dd00fe1142ae55
+	Merge tag 'drm-misc-fixes-2017-09-28-1' of git://anongit.freedesktop.org/git/drm-misc into drm-fixes
+drm drm-next f91168f48556486743392b8838e20afbd84b7b7a
+	Merge tag 'drm-misc-next-2019-01-23' of git://anongit.freedesktop.org/drm/drm-misc into drm-next
+drm-misc drm-misc-next-fixes c75ff001f4fe21a8c9f15aad799a8949aea109f7
+	drm: Put damage blob when destroy plane state
+drm-intel drm-intel-next-fixes bfeffd155283772bbe78c6a05dec7c0128ee500c
+	Linux 5.0-rc1
+drm-amd drm-amd-next-fixes 2bd6bf03f4c1c59381d62c61d03f6cc3fe71f66e
+	Linux 4.14-rc1
+drm-misc drm-misc-next f12d0b91affc59d289e1bfdbbc787d27376494f2
+	drm/<drivers>: Don't set FBINFO_(FLAG_)DEFAULT
+drm-intel drm-intel-next-queued 3d6535cbed4a4b029602ff83efb2adec7cb8d28b
+	drm/i915: Enable fastboot by default on Skylake and newer
+drm-intel drm-intel-next 85baa5dbf79163026dcb78f742294c522e176432
+	drm/i915: Update DRIVER_DATE to 20190124
+drm-amd drm-amd-next 754270c7c56292e97d0eff924a5d5d83f92add07
+	Merge branch 'drm-next-4.15' of git://people.freedesktop.org/~agd5f/linux into drm-next
+sound-upstream for-linus e190161f96b88ffae870405fd6c3fdd1d2e7f98d
+	ALSA: pcm: Fix tight loop of OSS capture stream
+sound-upstream for-next 202e69e645545e8dcec5e239658125276a7a315a
+	ALSA: usb-audio: Cleanup DSD whitelist
+drm-intel topic/core-for-CI e3a9af5b306dbedfb2a8d84676269ad39473d644
+	net/phy: Debugging for https://bugzilla.kernel.org/show_bug.cgi?id=202321

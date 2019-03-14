@@ -1422,22 +1422,6 @@ static void xennet_disconnect_backend(struct netfront_info *info)
 	}
 }
 
-/**
- * We are reconnecting to the backend, due to a suspend/resume, or a backend
- * driver restart.  We tear down our netif structure and recreate it, but
- * leave the device-layer structures intact so that this is transparent to the
- * rest of the kernel.
- */
-static int netfront_resume(struct xenbus_device *dev)
-{
-	struct netfront_info *info = dev_get_drvdata(&dev->dev);
-
-	dev_dbg(&dev->dev, "%s\n", dev->nodename);
-
-	xennet_disconnect_backend(info);
-	return 0;
-}
-
 static int xen_net_read_mac(struct xenbus_device *dev, u8 mac[])
 {
 	char *s, *e, *macstr;
@@ -2185,7 +2169,6 @@ static struct xenbus_driver netfront_driver = {
 	.ids = netfront_ids,
 	.probe = netfront_probe,
 	.remove = xennet_remove,
-	.resume = netfront_resume,
 	.otherend_changed = netback_changed,
 };
 

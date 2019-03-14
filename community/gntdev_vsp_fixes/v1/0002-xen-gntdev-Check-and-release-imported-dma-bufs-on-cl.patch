@@ -1,0 +1,46 @@
+From c353ae864a40d06caf9a7047e3331e26db98c230 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Thu, 14 Feb 2019 12:12:01 +0200
+Subject: [Xen-devel][PATCH 2/2] xen/gntdev: Check and release imported
+ dma-bufs on close
+
+Check if there are any imported dma-bufs left not released by
+user-space when grant device's release callback is called and
+free those if this is the case. This can happen if user-space
+leaks the buffers because of a bug or application has been
+terminated for any reason.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/xen/gntdev-dmabuf.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/xen/gntdev-dmabuf.c b/drivers/xen/gntdev-dmabuf.c
+index d97fcfc5e558..2c4f324f8626 100644
+--- a/drivers/xen/gntdev-dmabuf.c
++++ b/drivers/xen/gntdev-dmabuf.c
+@@ -745,6 +745,14 @@ static int dmabuf_imp_release(struct gntdev_dmabuf_priv *priv, u32 fd)
+ 	return 0;
+ }
+ 
++static void dmabuf_imp_release_all(struct gntdev_dmabuf_priv *priv)
++{
++	struct gntdev_dmabuf *q, *gntdev_dmabuf;
++
++	list_for_each_entry_safe(gntdev_dmabuf, q, &priv->imp_list, next)
++		dmabuf_imp_release(priv, gntdev_dmabuf->fd);
++}
++
+ /* DMA buffer IOCTL support. */
+ 
+ long gntdev_ioctl_dmabuf_exp_from_refs(struct gntdev_priv *priv, int use_ptemod,
+@@ -862,5 +870,6 @@ struct gntdev_dmabuf_priv *gntdev_dmabuf_init(struct file *filp)
+ 
+ void gntdev_dmabuf_fini(struct gntdev_dmabuf_priv *priv)
+ {
++	dmabuf_imp_release_all(priv);
+ 	kfree(priv);
+ }
+-- 
+2.20.1
+

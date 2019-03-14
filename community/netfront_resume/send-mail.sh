@@ -1,0 +1,1 @@
+git send-email --to netdev@vger.kernel.org --to xen-devel@lists.xenproject.org --to linux-kernel@vger.kernel.org --to jgross@suse.com --to boris.ostrovsky@oracle.com --to sstabellini@kernel.org --to davem@davemloft.net --cc=andr2000@gmail.com community/netfront_resume/v1/

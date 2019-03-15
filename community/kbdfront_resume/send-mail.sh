@@ -1,0 +1,1 @@
+git send-email --to xen-devel@lists.xenproject.org --to linux-input@vger.kernel.org --to linux-kernel@vger.kernel.org --to dmitry.torokhov@gmail.com --to jgross@suse.com --to boris.ostrovsky@oracle.com --cc=andr2000@gmail.com --cc=Volodymyr_Babchuk@epam.com community/kbdfront_resume/v1

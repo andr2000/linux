@@ -488,6 +488,8 @@ static int xenkbd_connect_backend(struct xenbus_device *dev,
 
 static void xenkbd_disconnect_backend(struct xenkbd_info *info)
 {
+	xenbus_switch_state(info->xbdev, XenbusStateClosing);
+
 	if (info->irq >= 0)
 		unbind_from_irqhandler(info->irq, info);
 	info->irq = -1;

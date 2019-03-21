@@ -344,7 +344,7 @@ config XEN_FRONT_PGDIR_SHBUF
 	tristate
 
 config XEN_COORD_SUSPEND
-    bool
+    def_bool y
     depends on (ARM || ARM64) && SUSPEND
     help
         Enables support for handling of coordinated suspend interrupts. Allows

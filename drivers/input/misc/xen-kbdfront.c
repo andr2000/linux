@@ -626,6 +626,9 @@ static struct xenbus_driver xenkbd_driver = {
 	.remove = xenkbd_remove,
 	.suspend = xenkbd_suspend,
 	.resume = xenkbd_resume,
+	.freeze = xenkbd_suspend,
+	.thaw = xenkbd_resume,
+	.restore = xenkbd_resume,
 	.otherend_changed = xenkbd_backend_changed,
 };
 

@@ -1,0 +1,32 @@
+From 16b444f1307ffb6f85680d44d0bf49066e693a99 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Thu, 4 Apr 2019 15:29:09 +0300
+Subject: [Xen-devel][PATCH] ALSA: xen-front: Do not use stream buffer size
+ before it is set
+
+This fixes the regression introduced while moving to Xen shared
+buffer implementation.
+
+Fixes: 58f9d806d16a ("ALSA: xen-front: Use Xen common shared buffer implementation")
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ sound/xen/xen_snd_front_alsa.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/sound/xen/xen_snd_front_alsa.c b/sound/xen/xen_snd_front_alsa.c
+index a7f413cb704d..b14ab512c2ce 100644
+--- a/sound/xen/xen_snd_front_alsa.c
++++ b/sound/xen/xen_snd_front_alsa.c
+@@ -441,7 +441,7 @@ static int shbuf_setup_backstore(struct xen_snd_front_pcm_stream_info *stream,
+ {
+ 	int i;
+ 
+-	stream->buffer = alloc_pages_exact(stream->buffer_sz, GFP_KERNEL);
++	stream->buffer = alloc_pages_exact(buffer_sz, GFP_KERNEL);
+ 	if (!stream->buffer)
+ 		return -ENOMEM;
+ 
+-- 
+2.21.0
+

@@ -1,0 +1,1 @@
+git send-email --to xen-devel@lists.xenproject.org --to linux-kernel@vger.kernel.org --to linux-media@vger.kernel.org --to konrad.wilk@oracle.com --to jgross@suse.com --to hverkuil@xs4all.nl --to boris.ostrovsky@oracle.com --cc=andr2000@gmail.com community/cameraif/v1

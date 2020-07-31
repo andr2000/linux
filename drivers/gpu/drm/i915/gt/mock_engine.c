@@ -153,7 +153,7 @@ static int mock_context_alloc(struct intel_context *ce)
 		return -ENOMEM;
 
 	GEM_BUG_ON(ce->timeline);
-	ce->timeline = intel_timeline_create(ce->engine->gt, NULL);
+	ce->timeline = intel_timeline_create(ce->engine->gt);
 	if (IS_ERR(ce->timeline)) {
 		kfree(ce->engine);
 		return PTR_ERR(ce->timeline);
@@ -331,6 +331,9 @@ int mock_engine_init(struct intel_engine_cs *engine)
 	ce = create_kernel_context(engine);
 	if (IS_ERR(ce))
 		goto err_breadcrumbs;
+
+	/* We insist the kernel context is using the status_page */
+	engine->status_page.vma = ce->timeline->hwsp_ggtt;
 
 	engine->kernel_context = ce;
 	return 0;

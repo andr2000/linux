@@ -1,0 +1,32 @@
+drm drm-fixes 887c909dd5d557c203a233ebbe238c18438a680a
+	Merge tag 'amd-drm-fixes-5.8-2020-07-30' of git://people.freedesktop.org/~agd5f/linux into drm-fixes
+drm-misc drm-misc-fixes c0001213d195d1bac83e0744c06ff06dd5a8ba53
+	drm/ttm: fix offset in VMAs with a pg_offs in ttm_bo_vm_access
+drm-intel drm-intel-fixes 92ed301919932f777713b9172e525674157e983d
+	Linux 5.8-rc7
+drm-amd drm-amd-fixes 2b702e72e33bbdec0764cfb6e1dd00fe1142ae55
+	Merge tag 'drm-misc-fixes-2017-09-28-1' of git://anongit.freedesktop.org/git/drm-misc into drm-fixes
+drm drm-next 418eda8f3fe292782c150266d693d55d284c0c98
+	Merge tag 'drm-intel-next-2020-07-15' of git://anongit.freedesktop.org/drm/drm-intel into drm-next
+drm-misc drm-misc-next-fixes 2d889db7626d2b6d67f402e2478b11f9a49b44e3
+	drm: xlnx: Fix typo in parameter description
+drm-intel drm-intel-next-fixes 6bd0b413618ffb50f900ec770283d8c2217d069f
+	drm/i915: Filter wake_flags passed to default_wake_function
+drm-amd drm-amd-next-fixes 2bd6bf03f4c1c59381d62c61d03f6cc3fe71f66e
+	Linux 4.14-rc1
+drm-misc drm-misc-next 38ee474fc63f79f66df1bed06c8c952e8258ea90
+	drm/ingenic: ipu: Only enable clock when needed
+drm-intel drm-intel-next-queued 076d686f8d63697ae52ddf342d1f6c2f8d2c384a
+	drm/i915/gt: Pull release of node->age under the spinlock
+drm-intel drm-intel-next e57bd05ec0d2d82d63725dedf9f5a063f879de25
+	drm/i915: Update DRIVER_DATE to 20200715
+drm-amd drm-amd-next 754270c7c56292e97d0eff924a5d5d83f92add07
+	Merge branch 'drm-next-4.15' of git://people.freedesktop.org/~agd5f/linux into drm-next
+sound-upstream for-linus 5649625344fe1f4695eace7c37d011e317bf66d5
+	ALSA: hda/realtek - Fixed HP right speaker no sound
+sound-upstream for-next 2e5a8e1527a8cea26c973ee4aa1840ceb674101e
+	ALSA: usb-audio: endpoint : remove needless check before usb_free_coherent()
+drm-intel topic/core-for-CI 5a88ca3607993082ad90cac768d50c3b1e2b458e
+	HAX sched/core: Paper over the ttwu() race
+drm-misc topic/phy-compliance 8cdf727119289db3a98835662eb28e1c5ad835f1
+	drm/i915/dp: Program vswing, pre-emphasis, test-pattern

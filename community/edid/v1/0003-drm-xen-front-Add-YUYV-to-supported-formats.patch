@@ -1,0 +1,28 @@
+From b857c484c24e3040183e86552287102c09709996 Mon Sep 17 00:00:00 2001
+From: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+Date: Fri, 30 Nov 2018 11:37:20 +0200
+Subject: [PATCH 3/6] drm/xen-front: Add YUYV to supported formats
+
+Add YUYV to supported formats, so the frontend can work with the
+formats used by cameras and other HW.
+
+Signed-off-by: Oleksandr Andrushchenko <oleksandr_andrushchenko@epam.com>
+---
+ drivers/gpu/drm/xen/xen_drm_front_conn.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/xen/xen_drm_front_conn.c b/drivers/gpu/drm/xen/xen_drm_front_conn.c
+index 459702fa990e..44f1f70c0aed 100644
+--- a/drivers/gpu/drm/xen/xen_drm_front_conn.c
++++ b/drivers/gpu/drm/xen/xen_drm_front_conn.c
+@@ -33,6 +33,7 @@ static const u32 plane_formats[] = {
+ 	DRM_FORMAT_ARGB4444,
+ 	DRM_FORMAT_XRGB1555,
+ 	DRM_FORMAT_ARGB1555,
++	DRM_FORMAT_YUYV,
+ };
+ 
+ const u32 *xen_drm_front_conn_get_formats(int *format_count)
+-- 
+2.17.1
+

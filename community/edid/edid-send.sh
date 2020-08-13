@@ -4,4 +4,4 @@ git send-email \
 	--to airlied@linux.ie --to daniel@ffwll.ch \
 	--cc=dan.carpenter@oracle.com \
 	--cc=intel-gfx@lists.freedesktop.org \
-	community/edid/v1
+	community/edid/v2
